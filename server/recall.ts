@@ -1,3 +1,4 @@
+import { localDateKey } from '../src/calendar.ts';
 import type { Memory, MemoryItem, Episode, Entity, RelationType, Topic, Category, Reminder, Cause, Goal } from './memory.ts';
 
 // Recall: what the assistant remembers before an answer. Records are scored by meaning (embedding vectors from
@@ -35,7 +36,7 @@ export function strength(item: MemoryItem, now = Date.now()) {
   const halfLife = (item.kind === 'rule' ? 60 : 30) * (1 + Math.min(item.hits - 1, 6));
   return item.weight * 0.5 ** (age / halfLife);
 }
-export const today = (now = Date.now()) => new Date(now).toISOString().slice(0, 10);
+export const today = (now = Date.now()) => localDateKey(new Date(now));
 // A fact with a date limit («переезжает в ноябре») stops being true after that day.
 export const expired = (item: Pick<MemoryItem, 'until'>, now = Date.now()) => !!item.until && item.until < today(now);
 
@@ -45,7 +46,7 @@ export const episodeText = (e: Episode) => e.topic + (e.outcome ? ' — ' + e.ou
 export const entityText = (e: Entity) => [e.name, ...e.aliases].join(', ') + (e.about ? ': ' + e.about : '');
 export const topicText = (t: Topic) => t.title + (t.summary ? ': ' + t.summary : '');
 export const causeText = (c: Cause) => `${c.cause} → ${c.effect}`;
-export const searchTexts = (memory: Memory) => [...memory.items.map(itemText), ...memory.episodes.map(episodeText), ...memory.entities.map(entityText), ...memory.topics.map(topicText), ...memory.reminders.filter(x => !x.fired).map(x => x.about),
+export const searchTexts = (memory: Memory) => [...memory.items.filter(i=>i.status!=='superseded').map(itemText), ...memory.episodes.map(episodeText), ...memory.entities.map(entityText), ...memory.topics.map(topicText), ...memory.reminders.filter(x => !x.fired).map(x => x.about),
   ...memory.causes.map(causeText), ...memory.goals.filter(g => !g.done).map(g => g.title)];
 
 // Time words in a question («вчера», «на прошлой неделе», «в прошлый вторник», «три дня назад») become a date range.
@@ -135,7 +136,7 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   // The upper levels of memory come first: matching topics lift their facts.
   const topics = memory.topics.map(t => ({ t, score: match(topicText(t)) })).filter(x => x.score > 0.3).sort((a, b) => b.score - a.score).slice(0, 3);
   const inTopic = new Set(topics.flatMap(x => x.t.facts));
-  const live = memory.items.filter(i => !expired(i, now)).map(item => ({ item, power: strength(item, now) })).filter(x => x.power >= FORGET_BELOW);
+  const live = memory.items.filter(i => i.status!=='superseded' && !expired(i, now)).map(item => ({ item, power: strength(item, now) })).filter(x => x.power >= FORGET_BELOW);
   const rules = live.filter(x => x.item.kind === 'rule').sort((a, b) => b.power - a.power);
   const facts = live.filter(x => x.item.kind === 'fact').map(x => { const m = match(x.item.text) + (inTopic.has(x.item.id) ? 0.25 : 0); return { ...x, match: m, score: x.power * (0.3 + m) }; }).sort((a, b) => b.score - a.score);
   const recent = memory.episodes.slice(-3).map(e => e.id);
@@ -188,17 +189,17 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
     else if (add('Что было в это время:')) for (const line of then) if (!add(line)) break;
     add('');
   }
-  if (memory.understanding) { add('Твоё общее понимание пользователя:'); add(memory.understanding.text); }
-  if (topics.length) { add('\nТемы его жизни, к которым относится разговор:'); for (const { t } of topics) add(`- ${t.title} (${categoryNames[t.area].toLocaleLowerCase('ru')})${t.summary ? ': ' + t.summary : ''}`); }
-  if (rules.length) { add((lines.length ? '\n' : '') + 'Как пользователь любит, чтобы ты отвечала и действовала (соблюдай всегда):'); for (const { item } of rules.slice(0, 25)) if (!add('- ' + item.text)) break; }
+  if (memory.understanding) { add('Твоё общее понимание пользователя:'); add('[Сводка модели, может быть устаревшей] '+memory.understanding.text); }
+  if (topics.length) { add('\nТемы его жизни, к которым относится разговор:'); for (const { t } of topics) add(`- ${t.title} (${categoryNames[t.area].toLocaleLowerCase('ru')})${t.summary ? ': [сводка модели] ' + t.summary : ''}`); }
+  if (rules.length) { add((lines.length ? '\n' : '') + 'Подтверждённые пожелания пользователя (учитывай с текущим запросом):'); for (const { item } of rules.filter(x=>x.item.source==='user'||x.item.evidence?.length).slice(0, 25)) if (!add('- ' + item.text)) break; }
   const known = [...chosen.map(c => c.item), ...pulled];
-  if (known.length) { add('\nЧто ты знаешь о пользователе (используй к месту, не перечисляй без просьбы):'); for (const item of known) if (!add('- ' + item.text + until(item) + linked(item.links))) break; }
+  if (known.length) { add('\nЧто ты знаешь о пользователе (используй к месту, не перечисляй без просьбы):'); for (const item of known) if (!add('- ' + (item.status==='inferred'?'[непроверенное предположение] ':item.status==='contested'?'[противоречие: уточнить] ':'') + item.text + until(item) + linked(item.links))) break; }
   if (entities.length) { add('\nЛюди, проекты и темы из разговора:'); for (const { e } of entities) add(`- ${e.name} (${entityNames[e.type]})${e.about ? ': ' + e.about : ''}`); }
   if (episodes.length) { add('\nПрошлые разговоры по теме:'); for (const { e } of episodes) add(`- ${day(e.date)}: ${episodeText(e)}${linked(e.links)}`); }
   if (chain.length) { add('\nСвязи по теме (учитывай всю историю вопроса):'); for (const line of chain) add('- ' + line); }
   // Cause and effect from the user's own life support conclusions about him.
   const causes = memory.causes.map(c => ({ c, score: match(causeText(c)) })).filter(x => x.score > 0.3).sort((a, b) => b.score - a.score || b.c.confidence - a.c.confidence).slice(0, 5);
-  if (causes.length) { add('\nПричины и следствия из жизни пользователя (опирайся на них в выводах, называй уверенность, если она невысока):'); for (const { c } of causes) add(`- ${causeText(c)} (уверенность ${c.confidence}%)`); }
+  if (causes.length) { add('\nПредполагаемые связи из памяти (повтор не доказывает причинность; проверяй альтернативные объяснения):'); for (const { c } of causes) add(`- ${causeText(c)} (уверенность ${c.confidence}%)`); }
   const goals = memory.goals.filter(g => !g.done).map(g => ({ g, score: match(g.title + ' ' + g.steps.map(s => s.text).join(' ')) })).sort((a, b) => b.score - a.score).slice(0, 3);
   if (goals.length) {
     add('\nЦели пользователя и что по ним можно делать сейчас (подсказывай следующий шаг, когда разговор об этом):');

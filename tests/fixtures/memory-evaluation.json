@@ -1,0 +1,316 @@
+{
+  "schema": 1,
+  "purpose": "Фиксированный контроль правил и интеграции. Не измеряет качество живой модели Cloud.ru. Ожидания заданы вручную.",
+  "cases": [
+    {
+      "id": "control-01",
+      "kind": "distinct",
+      "a": "Любит чай",
+      "b": "Не любит чай"
+    },
+    {
+      "id": "control-02",
+      "kind": "distinct",
+      "a": "Можно хранить ключ",
+      "b": "Нельзя хранить ключ"
+    },
+    {
+      "id": "control-03",
+      "kind": "distinct",
+      "a": "Пьёт кофе без сахара",
+      "b": "Пьёт кофе с сахаром"
+    },
+    {
+      "id": "control-04",
+      "kind": "distinct",
+      "a": "Никогда не работает ночью",
+      "b": "Работает ночью"
+    },
+    {
+      "id": "control-05",
+      "kind": "distinct",
+      "a": "Ест не мясо, а рыбу",
+      "b": "Ест не рыбу, а мясо"
+    },
+    {
+      "id": "control-06",
+      "kind": "distinct",
+      "a": "Бюджет 5000 рублей",
+      "b": "Бюджет 9000 рублей"
+    },
+    {
+      "id": "control-07",
+      "kind": "distinct",
+      "a": "Поездка 2026-11-01",
+      "b": "Поездка 2026-11-02"
+    },
+    {
+      "id": "control-08",
+      "kind": "distinct",
+      "a": "Нужно 5 деталей",
+      "b": "Нужно 15 деталей"
+    },
+    {
+      "id": "control-09",
+      "kind": "distinct",
+      "a": "Срок 3 дня",
+      "b": "Срок 30 дней"
+    },
+    {
+      "id": "control-10",
+      "kind": "distinct",
+      "a": "Он не хочет покупать машину",
+      "b": "Он хочет покупать машину"
+    },
+    {
+      "id": "control-11",
+      "kind": "distinct",
+      "a": "Пользователь работает архитектором в проектной организации",
+      "b": "Пользователь работает врачом в проектной организации"
+    },
+    {
+      "id": "control-12",
+      "kind": "distinct",
+      "a": "Андрей любит прогулки по вечерам после работы",
+      "b": "Сергей любит прогулки по вечерам после работы"
+    },
+    {
+      "id": "control-13",
+      "kind": "distinct",
+      "a": "Предпочитает чай утром",
+      "b": "Предпочитает чай вечером"
+    },
+    {
+      "id": "control-14",
+      "kind": "distinct",
+      "a": "Поедет в Москву весной",
+      "b": "Поедет в Казань весной"
+    },
+    {
+      "id": "control-15",
+      "kind": "distinct",
+      "a": "Любит большой автомобиль",
+      "b": "Любит маленький автомобиль"
+    },
+    {
+      "id": "control-16",
+      "kind": "date",
+      "value": "2028-02-29",
+      "expected": true
+    },
+    {
+      "id": "control-17",
+      "kind": "date",
+      "value": "2026-02-29",
+      "expected": false
+    },
+    {
+      "id": "control-18",
+      "kind": "date",
+      "value": "2026-02-31",
+      "expected": false
+    },
+    {
+      "id": "control-19",
+      "kind": "date",
+      "value": "2026-13-01",
+      "expected": false
+    },
+    {
+      "id": "control-20",
+      "kind": "date",
+      "value": "2026-00-01",
+      "expected": false
+    },
+    {
+      "id": "control-21",
+      "kind": "date",
+      "value": "2026-01-00",
+      "expected": false
+    },
+    {
+      "id": "control-22",
+      "kind": "date",
+      "value": "2026-04-31",
+      "expected": false
+    },
+    {
+      "id": "control-23",
+      "kind": "date",
+      "value": "2026-12-31",
+      "expected": true
+    },
+    {
+      "id": "control-24",
+      "kind": "date",
+      "value": "2000-02-29",
+      "expected": true
+    },
+    {
+      "id": "control-25",
+      "kind": "date",
+      "value": "1900-02-29",
+      "expected": false
+    },
+    {
+      "id": "control-26",
+      "kind": "route",
+      "text": "Почему я устаю?",
+      "expected": true
+    },
+    {
+      "id": "control-27",
+      "kind": "route",
+      "text": "Что лучше выбрать?",
+      "expected": true
+    },
+    {
+      "id": "control-28",
+      "kind": "route",
+      "text": "Посчитай расходы",
+      "expected": true
+    },
+    {
+      "id": "control-29",
+      "kind": "route",
+      "text": "Сравни варианты",
+      "expected": true
+    },
+    {
+      "id": "control-30",
+      "kind": "route",
+      "text": "Как решить задачу?",
+      "expected": true
+    },
+    {
+      "id": "control-31",
+      "kind": "math",
+      "expr": "2+2*2",
+      "expected": 6
+    },
+    {
+      "id": "control-32",
+      "kind": "math",
+      "expr": "1000+15%",
+      "expected": 1150
+    },
+    {
+      "id": "control-33",
+      "kind": "math",
+      "expr": "(50+70)*3",
+      "expected": 360
+    },
+    {
+      "id": "control-34",
+      "kind": "math",
+      "expr": "1/0",
+      "expected": null
+    },
+    {
+      "id": "control-35",
+      "kind": "math",
+      "expr": "2^10",
+      "expected": 1024
+    },
+    {
+      "id": "control-36",
+      "kind": "math",
+      "expr": "-2^2",
+      "expected": -4
+    },
+    {
+      "id": "control-37",
+      "kind": "math",
+      "expr": "0.5*8",
+      "expected": 4
+    },
+    {
+      "id": "control-38",
+      "kind": "math",
+      "expr": "150-20%",
+      "expected": 120
+    },
+    {
+      "id": "control-39",
+      "kind": "math",
+      "expr": "7*8",
+      "expected": 56
+    },
+    {
+      "id": "control-40",
+      "kind": "math",
+      "expr": "900/3",
+      "expected": 300
+    },
+    {
+      "id": "control-41",
+      "kind": "answer",
+      "verdict": "supported",
+      "version": "v1",
+      "quote": "Любит чай",
+      "expected": true
+    },
+    {
+      "id": "control-42",
+      "kind": "answer",
+      "verdict": "unknown",
+      "version": "v1",
+      "quote": "Любит чай",
+      "expected": false
+    },
+    {
+      "id": "control-43",
+      "kind": "answer",
+      "verdict": "contradicted",
+      "version": "v1",
+      "quote": "Любит чай",
+      "expected": false
+    },
+    {
+      "id": "control-44",
+      "kind": "answer",
+      "verdict": "supported",
+      "version": "v2",
+      "quote": "Любит чай",
+      "expected": false
+    },
+    {
+      "id": "control-45",
+      "kind": "answer",
+      "verdict": "supported",
+      "version": "v1",
+      "quote": "Любит кофе",
+      "expected": false
+    },
+    {
+      "id": "control-46",
+      "kind": "duplicate",
+      "a": "Любит чай",
+      "b": "любит чай"
+    },
+    {
+      "id": "control-47",
+      "kind": "duplicate",
+      "a": "Пользователь любит кошек",
+      "b": "Пользователь любит кошек"
+    },
+    {
+      "id": "control-48",
+      "kind": "duplicate",
+      "a": "Бюджет 5000 рублей",
+      "b": "Бюджет 5000 рублей"
+    },
+    {
+      "id": "control-49",
+      "kind": "duplicate",
+      "a": "Работает по утрам",
+      "b": "Работает по утрам"
+    },
+    {
+      "id": "control-50",
+      "kind": "duplicate",
+      "a": "Никогда не курит",
+      "b": "Никогда не курит"
+    }
+  ]
+}

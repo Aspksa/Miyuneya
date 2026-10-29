@@ -110,8 +110,8 @@ test('Recall starts from the understanding and topics and carries one open quest
   memory.topics.push({id:'t1',title:'Утренние пробежки',area:'health',summary:'Бегает утром и пишет трекер пробежек',facts:[inTopic.id],created:at,updated:at});
   const context=memoryContext(memory,'Как лучше бегать утром?',new Map(),now,{question:'Как зовут вашу кошку?'});
   assert.ok(context.indexOf('Дизайнер, ценит краткость.')<context.indexOf('Темы его жизни'));
-  assert.match(context,/- Утренние пробежки \(здоровье\): Бегает утром/);
-  assert.match(context,/Что ты знаешь[^\n]*\n- Делает приложение для бега/);
+  assert.match(context,/- Утренние пробежки \(здоровье\): \[сводка модели\] Бегает утром/);
+  assert.match(context,/Что ты знаешь[^\n]*\n- \[непроверенное предположение\] Делает приложение для бега/);
   assert.match(context,/мягко спроси пользователя: «Как зовут вашу кошку\?»/);
   assert.doesNotMatch(memoryContext(memory,'Привет',new Map(),now),/спроси/);
 });
@@ -149,7 +149,7 @@ test('Memory over HTTP answers questions, edits topics and asks once a day', asy
   assert.match(seen.at(-1).messages[0].content,/мягко спроси пользователя: «Вы упоминали «Луна»\. Что это для вас\?»/);
   await chat('И ещё что-нибудь');
   assert.doesNotMatch(seen.at(-1).messages[0].content,/мягко спроси/);
-  assert.match(seen.at(-1).messages[0].content,/Твоё общее понимание пользователя:\nПока знаю немного\./);
+  assert.match(seen.at(-1).messages[0].content,/Твоё общее понимание пользователя:\n\[Сводка модели, может быть устаревшей\] Пока знаю немного\./);
 
   const question=view.questions[0];
   assert.equal((await call('/api/memory/answer','POST',{id:question.id,text:''})).status,400);

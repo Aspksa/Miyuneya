@@ -1,10 +1,10 @@
 // Generated from src/model.ts by npm run build.
-                                                                                                    
-                                                                                                                                                                                                       
+
+
 // Avatar appearance travels with the workspace; its screen position stays in the browser.
 // avatar 5 is the user's own uploaded image; animate, snap and opacity arrived later and stay optional.
-                                                                                                                                                                        
-                                                                                                                                                              
+
+
 export const defaultLook = ()                          => ({ avatar: 1, size: 'm', mirror: false, hidden: false, animate: true, snap: true, opacity: 1 });
 export function emptyWorkspace()            {
   return { version: 1, notes: [], tasks: [], settings: { theme: 'light', name: 'Хозяин' } };
@@ -33,8 +33,8 @@ export function searchNotes(notes        , query        )         {
   const q = query.trim().toLocaleLowerCase('ru');
   return notes.filter(n => `${n.title} ${n.body}`.toLocaleLowerCase('ru').includes(q)).sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
 }
-                                                              
-                                                                                                            
+
+
 // Notes and tasks share one list: newest first, open tasks above finished ones.
 export function combineEntries(data                                    , query        , filter              = 'all')          {
   const q = query.trim().toLocaleLowerCase('ru');

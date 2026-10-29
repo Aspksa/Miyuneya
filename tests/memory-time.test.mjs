@@ -102,13 +102,13 @@ test('Promises and provenance come from reflection and sleep', () => {
 
 test('Memory over HTTP sets a reminder in chat, fires it later and tracks promises', async t => {
   const root=await mkdtemp(join(tmpdir(),'Miyuneya время '));
-  const seen=[];let broken=false;
+  const seen=[];let broken=false,deliver=false;
   const fake=createServer(async(req,res)=>{
     let body='';for await(const c of req)body+=c;
     seen.push(JSON.parse(body||'{}'));
     if(broken){res.writeHead(500,{'Content-Type':'application/json'});return res.end(JSON.stringify({error:{message:'упало'}}));}
     res.writeHead(200,{'Content-Type':'text/event-stream'});
-    res.end(`data: ${JSON.stringify({choices:[{delta:{content:'Хорошо.'}}]})}\n\ndata: [DONE]\n\n`);
+    res.end(`data: ${JSON.stringify({choices:[{delta:{content:deliver?'нужно купить адаптер':'Хорошо.'}}]})}\n\ndata: [DONE]\n\n`);
   });
   fake.listen(0,'127.0.0.1');await once(fake,'listening');
   let server;
@@ -129,7 +129,7 @@ test('Memory over HTTP sets a reminder in chat, fires it later and tracks promis
   let system=seen.at(-1).messages[0].content;
   assert.match(system,/Ты только что поставила напоминание/);assert.doesNotMatch(system,/Напомни сейчас/);
   assert.match(system,/Твои открытые обещания пользователю[^\n]*\n- Проверить курс иены/);
-  await chat([{role:'user',content:set},{role:'assistant',content:'Хорошо.'},{role:'user',content:'Какая погода?'}]);
+  await chat([{role:'user',content:set},{role:'assistant',content:deliver?'нужно купить адаптер':'Хорошо.'},{role:'user',content:'Какая погода?'}]);
   assert.doesNotMatch(seen.at(-1).messages[0].content,/Напомни сейчас/);
   // A failed answer does not use up the reminder.
   broken=true;await chat([{role:'user',content:'Давай обсудим поездку в Японию'}]);broken=false;
@@ -138,8 +138,11 @@ test('Memory over HTTP sets a reminder in chat, fires it later and tracks promis
   await chat([{role:'user',content:'Давай обсудим поездку в Японию'}]);
   assert.match(seen.at(-1).messages[0].content,/когда речь зайдёт о «поездке»\. Напомни сейчас[^\n]*«нужно купить адаптер»/);
   let view=await (await fetch(url+'/api/memory')).json();
-  assert.ok(view.reminders[0].fired);
+  assert.equal(view.reminders[0].fired,null,'a reminder in the prompt is not delivered when the answer omits it');
+  deliver=true;
   await chat([{role:'user',content:'Ещё про поездку'}]);
+  assert.ok((await (await fetch(url+'/api/memory')).json()).reminders[0].fired,'actual reminder text acknowledges delivery');
+  await chat([{role:'user',content:'И снова про поездку'}]);
   assert.doesNotMatch(seen.at(-1).messages[0].content,/Напомни сейчас/,'a reminder fires once');
 
   assert.equal((await call('/api/memory/reminders','POST',{about:'',text:'x'})).status,400);

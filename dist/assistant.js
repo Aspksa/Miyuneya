@@ -1,30 +1,30 @@
 // Generated from src/assistant.ts by npm run build.
-                                                
+
 
 // Floating avatar with a chat window. Appearance is saved in the workspace by the host;
 // screen position, chat geometry and history are per-browser conveniences in localStorage.
-                                                                                                                                                                             
-                                        
-                             
-                                  
-                                               
-                            
-                                           
-                               
-                                                 
-                                                               
-                                                        
-                                                   
-                        
-  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // Short-term memory: the oldest turns of a long dialog fold into a summary that travels with every request.
-                                               
-                                                                               
+
+
 // logic: how the answer was made — a reasoning plan, the stronger model, numbers counted by code.
-                                                                                        
-                                                                                                                     
-                                                                            
-                                                           
+
+
+
+
 
 const sizes                                        = { s: 120, m: 170, l: 240 };
 const sizeNames                                    = [['s', 'Маленький'], ['m', 'Средний'], ['l', 'Большой']];

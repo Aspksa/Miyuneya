@@ -7,6 +7,8 @@ import { validateWorkspace, emptyWorkspace } from '../src/model.ts';
 import type { Workspace } from '../src/model.ts';
 import { openMemory, parseCommand, parseReminder, validDialogId, validDate, transcript, parseJson, goalTree, COMPACT_PROMPT } from './memory.ts';
 import { complexity, exactCalcs, exactLines, readPlan, reasoningBlock, parseGoal, PLAN_PROMPT } from './logic.ts';
+import { VERIFY_PROMPT, reviewAnswer, needsGrounding, digest } from './integrity.ts';
+import type { Source, Review } from './integrity.ts';
 import type { Plan } from './logic.ts';
 
 export const CLOUD_RU_URL = 'https://foundation-models.api.cloud.ru/v1';
@@ -253,6 +255,7 @@ export async function createApp(root: string, instance: string, preview = false,
           const summary = typeof input?.summary === 'string' ? input.summary.slice(0, 6000).trim() : '';
           if (!Array.isArray(messages) || !messages.length || messages.length > 60 || !messages.every((m: ChatMessage) => (m?.role === 'user' || m?.role === 'assistant') && typeof m.content === 'string' && m.content.length > 0 && m.content.length <= 20_000) || messages.at(-1).role !== 'user')
             return send(400, { error: 'Неверный формат сообщений.' });
+          const recordingGeneration=memory.generation;
           memory.touch();
           const last = messages.at(-1).content;
           // «Запомни …» and «забудь …» change the memory before the answer, so the model can confirm it.
@@ -296,6 +299,11 @@ export async function createApp(root: string, instance: string, preview = false,
           }
           const reasoning = reasoningBlock(hard, plan, calcs);
           const model = modelFor(hard);
+          const verifying=exactLines(plan,calcs).length>0 || needsGrounding(last) || (hard && /(?:у меня|мне|мой|моя|мои|моё|(?:^|\s)я(?:\s|$))/i.test(last));
+          const proofSources:Source[]=[...memory.sources(),...messages.filter((m:ChatMessage)=>m.role==='user').slice(-3).map((m:ChatMessage,i:number)=>({source:'current-'+i,version:digest(m.content),text:m.content,quote:'',at:new Date().toISOString(),role:'user' as const})),
+            ...(assistant.context?state.data.notes.filter(n=>n.title.toLocaleLowerCase('ru').includes(last.toLocaleLowerCase('ru')) || last.toLocaleLowerCase('ru').split(/\s+/).some((w:string)=>w.length>=4&&(n.title+' '+n.body).toLocaleLowerCase('ru').includes(w))).slice(0,8).map(n=>{const terms=last.toLocaleLowerCase('ru').split(/\s+/).filter((w:string)=>w.length>=4);const hit=terms.map((w:string)=>n.body.toLocaleLowerCase('ru').indexOf(w)).find((i:number)=>i>=0) ?? 0;return {source:'note-'+n.id,version:digest(n.updatedAt+'\n'+n.body),text:n.title+'\n'+n.body.slice(Math.max(0,hit-500),hit+4500),quote:'',at:n.updatedAt,role:'note' as const};}):[]),
+            ...exactLines(plan,calcs).map((text,i)=>({source:'calculation-'+i,version:digest(text),text,quote:'',at:new Date().toISOString(),role:'note' as const}))].slice(-120);
+          let reviewed:Review|undefined;
           const system = [PERSONA, ACTIONS, assistant.context ? workspaceContext(state.data,new Date(),30_000,last) : 'Доступ к заметкам и задачам пользователя выключен в настройках. Если спросят о них, мягко скажи об этом.',
             recall, summary ? 'Краткое содержание более ранней части этого разговора:\n' + summary : '', reasoning, ...notes].filter(Boolean).join('\n\n');
           let call;
@@ -306,7 +314,7 @@ export async function createApp(root: string, instance: string, preview = false,
           const onClose = () => { if (!res.writableEnded) call.controller.abort(new Error('client closed')); };
           res.on('close', onClose);
           res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8' });
-          const write = (value: unknown) => { if (!res.destroyed) res.write(JSON.stringify(value) + '\n'); };
+          const write = (value: any) => { if (!res.destroyed && !(verifying && value.delta)) res.write(JSON.stringify(value) + '\n'); };
           let received = false, answer = '';
           for (const text of events) write({ memory: text });
           try {
@@ -336,11 +344,17 @@ export async function createApp(root: string, instance: string, preview = false,
               }
             }
             if (!received) throw fail('Модель вернула пустой ответ. Попробуйте переформулировать или выбрать другую модель.', 502);
+            if(verifying) {
+              try { reviewed=reviewAnswer(answer,parseJson(await ask(VERIFY_PROMPT,JSON.stringify({question:last,draft:answer,sources:proofSources}),30000,true)),proofSources,true); }
+              catch { reviewed={status:'uncertain',reasons:['Проверка источников сейчас недоступна.'],checked:0}; }
+              if(reviewed.status!=='supported')answer='Не могу подтвердить этот ответ по доступным источникам. Уточните сведения или укажите нужную заметку.'+(exactLines(plan,calcs).length?'\n\nРасчёты, выполненные кодом:\n'+exactLines(plan,calcs).join('\n'):'');
+              if(!res.destroyed)res.write(JSON.stringify({delta:answer})+'\n');
+            }
             const exact = exactLines(plan, calcs).length;
-            write({ done: true, model, ...(hard ? { reasoning: true } : {}), ...(plan ? { planned: true } : {}), ...(exact ? { exact } : {}) });
+            write({ done: true, model, ...(reviewed?{verification:reviewed.status}:{}), ...(hard ? { reasoning: true } : {}), ...(plan ? { planned: true } : {}), ...(exact ? { exact } : {}) });
             // A reminder counts as given only once the answer that carries it has arrived.
-            await memory.delivered(recall).catch(() => {});
-            if (dialog) await memory.record(dialog, [...messages.map((m: ChatMessage) => ({ role: m.role, content: m.content })), { role: 'assistant', content: answer }], summary).catch(() => {});
+            await memory.delivered(recall,answer).catch(() => {});
+            if (dialog) await memory.record(dialog, [...messages.map((m: ChatMessage) => ({ role: m.role, content: m.content })), { role: 'assistant', content: answer }], summary,recordingGeneration).catch(() => {});
           } catch (e) {
             write({ error: (e as { status?: number }).status ? (e as Error).message : call.explain().message });
           } finally {

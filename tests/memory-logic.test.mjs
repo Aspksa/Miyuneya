@@ -64,7 +64,7 @@ test('Causes, goals, predictions and the errors journal live in memory', () => {
   const memory=emptyMemory();
   const c=addCause(memory,'Поздние встречи','Тяжёлое утро',70,['e1'],at);
   assert.equal(addCause(memory,'Поздние встречи по работе','Тяжёлое утро на следующий день',60,['e2'],at),c);
-  assert.deepEqual([c.hits,c.confidence,c.evidence],[2,75,['e1','e2']]);
+  assert.deepEqual([c.hits,c.confidence,c.evidence],[2,60,['e1','e2']]);
   const goal=addGoal(memory,'Переезд',[{id:'s1',text:'Найти квартиру'},{id:'s2',text:'Посмотреть объявления',parent:'s1'},{id:'s3',text:'Собрать вещи',after:['s1','s9']},{id:'s4',text:'Перевезти',after:['s3','s4']},{text:''}],at);
   assert.equal(goal.steps.length,4);
   const [find,look,pack,move]=goal.steps;
@@ -91,7 +91,7 @@ test('Causes, goals, predictions and the errors journal live in memory', () => {
   assert.ok(check(memory,predict(memory,{text:'Он выберет горы',kind:'cause',confidence:80},at).id,'right','',''));
   assert.equal(mistake(memory,{kind:'calc',text:'Сложила суммы неверно',fix:'Суммы считать кодом'},null,at).kind,'calc');
   const l=growth(memory,now).logic;
-  assert.deepEqual([l.predictions.checked,l.predictions.right,l.predictions.accuracy,l.conclusions.right,l.conclusions.total,l.conclusions.share,l.corrections,l.fixed],[2,1,50,2,3,67,2,2]);
+  assert.deepEqual([l.predictions.checked,l.predictions.right,l.predictions.accuracy,l.conclusions.right,l.conclusions.total,l.conclusions.share,l.corrections,l.fixed],[2,1,50,1,2,50,2,2]);
   assert.deepEqual(l.kinds,[{kind:'cause',checked:1,right:1},{kind:'habit',checked:1,right:0}]);
   // Everything survives a restart; a hand-made loop in a goal is cut.
   const raw=JSON.parse(JSON.stringify(memory));
@@ -103,7 +103,7 @@ test('Causes, goals, predictions and the errors journal live in memory', () => {
   // Recall brings matching causes and the next steps of goals into the answer.
   stepDone(memory,goal,goal.steps[0].id,false,at);
   const context=memoryContext(memory,'Почему у меня тяжёлое утро после встреч?',new Map(),now);
-  assert.match(context,/Причины и следствия из жизни пользователя[^\n]*\n- Поздние встречи → Тяжёлое утро \(уверенность 75%\)/);
+  assert.match(context,/Предполагаемые связи из памяти[^\n]*\n- Поздние встречи → Тяжёлое утро \(уверенность 60%\)/);
   assert.match(context,/Цели пользователя[^\n]*\n- Переезд: сделано 0 из 1; можно сейчас: Заново/);
 });
 
@@ -120,9 +120,10 @@ test('Thinking trains logic; reflection and sleep feed it', () => {
   memory.predictions=memory.predictions.filter(p=>p===old);
   applyThinking(memory,{thoughts:[],checks:[{id:old.id,outcome:'right',note:'перенёс'}],predictions:[{text:'Вечером он спросит про задачи',kind:'habit',confidence:65,due:'2026-11-02'},{text:'',kind:'cause'}],
     causes:[{cause:'Работает по вечерам',effect:'Утром отвечает позже',confidence:60,evidence:[fact.id,'чужой']}]},now);
-  assert.equal(memory.predictions.find(p=>p.id===old.id).outcome,'right');
+  assert.equal(memory.predictions.find(p=>p.id===old.id).outcome,null,'a model cannot verify its own prediction without new evidence');
+  check(memory,old.id,'right','подтвердил пользователь');
   assert.equal(memory.predictions.filter(p=>!p.outcome).length,1);
-  assert.deepEqual(memory.causes[0].evidence,[fact.id]);
+  assert.deepEqual(memory.causes[0].evidence,[],'unverified source ids do not become proof');
   assert.match(thinkInput(memory,null,now),/закономерность \(pattern\): 1 из 1, 100%/);
   const open=memory.predictions.find(p=>!p.outcome);
   const goal=addGoal(memory,'Выучить японский',[{id:'s1',text:'Хирагана'}],at);
@@ -130,9 +131,10 @@ test('Thinking trains logic; reflection and sleep feed it', () => {
   assert.match(reflectInput(memory,dialog,null),/Цели пользователя:\n\[\w+\] Выучить японский: \[\w+\] Хирагана/);
   applyReflection(memory,{episode:{topic:'Бюджет'},logic_errors:[{kind:'calc',text:'Неверно сложила расходы',fix:'Суммы проверять кодом'}],checks:[{id:open.id,outcome:'wrong',note:'не спросил'}],
     causes:[{cause:'Большие траты',effect:'Тревога',confidence:55}],goals:[{title:'Накопить на отпуск',steps:[{id:'s1',text:'Завести копилку'},{id:'s2',text:'Посчитать бюджет'}]}],steps_done:[{goal:goal.id,step:goal.steps[0].id}]},dialog,new Set(),at);
-  assert.deepEqual(memory.mistakes.map(m=>m.kind).sort(),['calc','prediction']);
+  assert.deepEqual(memory.mistakes.map(m=>m.kind).sort(),['calc']);
+  assert.equal(open.outcome,null,'an unquoted reflection cannot close a prediction');
   assert.ok(memory.items.some(i=>i.kind==='rule'&&i.source==='logic'&&i.text==='Суммы проверять кодом'));
-  assert.equal(memory.causes.at(-1).evidence[0],memory.episodes[0].id);
+  assert.deepEqual(memory.causes.at(-1).evidence,[]);
   assert.ok(goal.done);assert.equal(memory.goals.length,2);
   // Talking about a known goal again does not wipe its progress; an explicit replanning keeps what is done.
   const trip=memory.goals.find(g=>g.title==='Накопить на отпуск');stepDone(memory,trip,trip.steps[0].id,true,at);
@@ -141,7 +143,7 @@ test('Thinking trains logic; reflection and sleep feed it', () => {
   addGoal(memory,'Накопить на отпуск',[{id:'a',text:'Завести копилку'},{id:'b',text:'Откладывать 10%'}],at);
   assert.deepEqual(trip.steps.map(s=>[s.text,!!s.done]),[['Завести копилку',true],['Откладывать 10%',false]]);
   applySleep(memory,{causes:[{cause:'Большие траты',effect:'Тревога',confidence:70,evidence:[memory.episodes[0].id]},{cause:'Без доказательств',effect:'Не сохраняется',evidence:['нет']}]},now);
-  assert.deepEqual([memory.causes.length,memory.causes.at(-1).hits],[2,2]);
+  assert.deepEqual([memory.causes.length,memory.causes.at(-1).hits],[2,1],'the same story is not an independent confirmation');
 });
 
 test('Chat routes hard questions to the stronger model with a plan and exact numbers', async t => {
@@ -186,7 +188,7 @@ test('Chat routes hard questions to the stronger model with a plan and exact num
   assert.match(system,/скрытый план[^\n]*\n1\. Сравнить стоимость\n2\. Учесть бюджет/);
   assert.match(system,/- Выгоднее первый — 70%/);assert.match(system,/Проверь перед ответом: Не забыть доставку/);
   assert.match(system,/Точные расчёты, сделанные кодом[^\n]*\n- 12000\*3 = 36 000/);
-  assert.deepEqual(lines.at(-1),{done:true,model:'smart/model',reasoning:true,planned:true,exact:1});
+  assert.deepEqual(lines.at(-1),{done:true,model:'smart/model',verification:'uncertain',reasoning:true,planned:true,exact:1});
   // «Разложи цель …» builds a tree of steps before the answer.
   lines=(await chat('Разложи цель ремонт кухни на шаги')).trim().split('\n').map(l=>JSON.parse(l));
   assert.deepEqual(lines[0],{memory:'Цель разложена на шаги: Ремонт кухни'});
