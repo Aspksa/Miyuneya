@@ -1,7 +1,9 @@
 name: Быстрые проверки
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
 concurrency:
   group: checks-${{ github.ref }}
   cancel-in-progress: true
