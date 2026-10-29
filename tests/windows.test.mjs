@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile, mkdir, cp } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, cp, rm } from 'node:fs/promises';
 import { join, parse, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir, homedir } from 'node:os';
 import { emptyWorkspace } from '../src/model.ts';
-import { fixture, batLaunch, waitReady, stop, launch, deadline } from './helpers/lifecycle.mjs';
+import { retryFile } from '../scripts/runtime.mjs';
+import { fixture, batLaunch, waitReady, stop, launch, deadline, own } from './helpers/lifecycle.mjs';
 const windows=process.platform==='win32';
 if(windows) {
   const powershell=join(process.env.SystemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe');
@@ -55,6 +56,20 @@ if(windows) {
     const restored=await (await fetch(`http://127.0.0.1:${ready.port}/api/workspace`)).json();assert.equal(restored.data.notes[0].body,'Сохранённая запись');
     await stop(destination,next);
     console.log('Drive relocation verified: '+parse(source).root+' -> '+parse(destination).root);
+  });
+
+  test('Windows cleanup retries a real file lock after its owning process closes the handle',async t=>{
+    const root=await fixture(t);const file=join(root,'locked.tmp');await writeFile(file,'temporary');
+    const holder=launch(powershell,['-NoProfile','-Command',"$s=[IO.File]::Open($env:MIYUNEYA_LOCK_TEST,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None); [Console]::WriteLine('LOCKED'); [void][Console]::ReadLine(); $s.Dispose()"],{env:{...process.env,MIYUNEYA_LOCK_TEST:file},stdio:['pipe','pipe','pipe']});
+    own(root,async()=>{if(!holder.ended){holder.process.stdin.end('release\n');await deadline(holder.closed);}});
+    await deadline(new Promise((resolve,reject)=>{holder.process.stdout.on('data',chunk=>{if(chunk.includes('LOCKED'))resolve();});holder.closed.then(({code})=>reject(new Error('File lock holder exited '+code)));}));
+    let attempts=0;
+    await retryFile(async()=>{
+      attempts++;
+      try{await rm(file);}
+      catch(e){if(attempts===1){holder.process.stdin.end('release\n');assert.equal((await deadline(holder.closed)).code,0);}throw e;}
+    });
+    assert.ok(attempts>1 && attempts<=6);
   });
 
 }
