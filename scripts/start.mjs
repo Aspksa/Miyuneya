@@ -1,83 +1,134 @@
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import { createHash } from 'node:crypto';
-import { readFile, writeFile, mkdir, unlink, realpath } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { realpath, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-
-const [major, minor] = process.versions.node.split('.').map(Number);
-if (major < 22 || (major === 22 && minor < 18)) { console.error('Нужен Node.js 22.18 или новее.'); process.exit(1); }
-const root = await realpath(fileURLToPath(new URL('..', import.meta.url)));
-const instance = createHash('sha256').update(root).digest('hex').slice(0, 24);
-const runtime = join(root, '.runtime');
-const pointer = join(runtime, 'server.json');
-const open = process.argv.includes('--open');
-const preview = process.argv.includes('--preview');
+import { setTimeout as delay } from 'node:timers/promises';
+import { atomicWrite, readJSON, healthy, localRequest, acquireLock, makeLogger, retryFile } from './runtime.mjs';
+import { ensureBuild } from './build.mjs';
+import { updateManager } from './update.mjs';
+const [major,minor]=process.versions.node.split('.').map(Number);
+if(major<22 || (major===22 && minor<18)) {console.error('Нужен рабочий Node.js 22.18 или новее. Запустите Miyuneya.bat для подготовки среды.');process.exit(20);}
+const root=await realpath(fileURLToPath(new URL('..',import.meta.url)));
+const identity=process.platform==='win32'?root.toLowerCase():root;
+const instance=createHash('sha256').update(identity).digest('hex').slice(0,24);
+const pointerFile=join(root,'.runtime','server.json');
+const preview=process.argv.includes('--preview');
+const option=name=>{const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1];};
+const open=process.argv.includes('--open') && process.env.MIYUNEYA_NO_OPEN!=='1';
+let stage='lock';let logger;let release;let child;let stopping=false;
+let transaction;
+function show(url,reused=false) {console.log(`\n✦ Miyuneya · ${reused?'уже запущена':'готова'}\n${url}\n\nДанные: папка data рядом с проектом.\nОстановить сервер можно клавишами Ctrl+C.\n`);}
 function openBrowser(url) {
-  if (!open) return;
-  const cmd = process.platform === 'win32' ? 'explorer.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
-  const child = spawn(cmd, [url], { detached: true, stdio: 'ignore' });
-  child.on('error', () => console.log('Откройте адрес выше в браузере.'));
-  child.unref();
+  if(!open) return;
+  const executable=process.platform==='win32'?join(process.env.SystemRoot || 'C:\\Windows','explorer.exe'):process.platform==='darwin'?'open':'xdg-open';
+  const browser=spawn(executable,[url],{detached:true,stdio:'ignore',windowsHide:true});
+  browser.on('error',()=>console.warn('Браузер не открылся. Откройте адрес выше вручную.'));browser.unref();
 }
-try {
-  const saved = JSON.parse(await readFile(pointer, 'utf8'));
-  if (Number.isInteger(saved.port) && saved.port > 0 && saved.port < 65536) {
-    const url = `http://127.0.0.1:${saved.port}`;
-    const response = await fetch(url + '/__miyuneya/health', { signal: AbortSignal.timeout(1000) });
-    const health = await response.json();
-    if (health.app === 'Miyuneya' && health.instance === instance) {
-      console.log(`Miyuneya уже запущена: ${url}`); openBrowser(url); process.exit(0);
-    }
-  }
-} catch { /* Stale or absent server pointer: start normally. */ }
-try {
-  await readFile(join(root, 'dist', 'main.js'));
-  const { createApp } = await import('../server/app.ts');
-  await mkdir(runtime, { recursive: true });
-  // A project lock prevents two simultaneous BAT launches from starting two writers.
-  const lock = join(runtime, 'start.lock');
-  let ownsLock = false;
-  for (let attempt = 0; attempt < 30; attempt++) {
-    try { await writeFile(lock, String(process.pid), { flag: 'wx' }); ownsLock = true; break; }
-    catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      try {
-        const pid = Number(await readFile(lock, 'utf8'));
-        if (!Number.isInteger(pid) || pid <= 0) throw new Error('Некорректный файл блокировки');
-        try { process.kill(pid, 0); } catch (probe) { if (probe.code === 'ESRCH') { await unlink(lock); continue; } }
-        const saved = JSON.parse(await readFile(pointer, 'utf8'));
-        if (Number.isInteger(saved.port) && saved.port > 0 && saved.port < 65536) {
-          const url = `http://127.0.0.1:${saved.port}`;
-          const health = await (await fetch(url + '/__miyuneya/health', { signal: AbortSignal.timeout(500) })).json();
-          if (health.instance === instance) { console.log(`Miyuneya уже запущена: ${url}`); openBrowser(url); process.exit(0); }
-        }
-      } catch { /* Another launch may be writing its pointer. */ }
-      await new Promise(r => setTimeout(r, 100));
-    }
-  }
-  if (!ownsLock) throw new Error('Другой запуск ещё готовится. Повторите через несколько секунд.');
-  let app;
+async function stopChild(processState) {
+  if(!processState || processState.ended) return;
+  if(processState.process.connected) processState.process.send({type:'shutdown'},()=>{});
+  const deadline=setTimeout(()=>{processState.forced=true;processState.process.kill();},15000);
+  try {await processState.closed;} finally {clearTimeout(deadline);}
+  if(processState.forced) throw Object.assign(new Error('Shutdown deadline exceeded'),{code:'SHUTDOWN_TIMEOUT'});
+}
+function requestStop() {stopping=true;if(child) stopChild(child).catch(()=>{process.exitCode=44;});}
+process.on('SIGINT',requestStop);process.on('SIGTERM',requestStop);
+async function runServer() {
+  const launchId=randomUUID();
+  const port=preview?Number(option('--port') || process.env.PORT || 5173):0;
+  const host=preview?(option('--host') || '127.0.0.1'):'127.0.0.1';
+  if(!Number.isInteger(port)||port<0||port>65535)throw Object.assign(new Error('Invalid preview port'),{code:'INVALID_PORT'});
+  const proc=spawn(process.execPath,[join(root,'scripts','serve.mjs')],{cwd:root,stdio:['ignore','pipe','pipe','ipc'],windowsHide:true});
+  const state={process:proc,ended:false,forced:false,closed:null};
+  state.closed=new Promise(resolve=>{proc.once('close',(code,signal)=>{state.ended=true;resolve({code,signal});});});
+  proc.stdout.resume();proc.stderr.resume(); // Never write arbitrary child output or user data into diagnostics.
+  proc.on('message',message=>{if(message?.type==='stop-requested') requestStop();});
+  child=state;
   try {
-    // Read after acquiring the lock so a competing launch cannot leave stale state.
-    app = await createApp(root, instance, preview);
-    const option = name => { const index = process.argv.indexOf(name); return index < 0 ? undefined : process.argv[index+1]; };
-    const requested = preview ? Number(option('--port') || process.env.PORT || 5173) : 0;
-    const host = preview ? (option('--host') || '127.0.0.1') : '127.0.0.1';
-    if (!Number.isInteger(requested) || requested < 0 || requested > 65535) throw new Error('Неверный порт предпросмотра.');
-    await new Promise((resolve, reject) => { app.once('error', reject); app.listen(requested, host, resolve); });
-    const url = `http://127.0.0.1:${app.address().port}`;
-    await writeFile(pointer, JSON.stringify({ port: app.address().port, pid: process.pid }), { mode: 0o600 });
-    console.log(`\n✦ Miyuneya · v0.1.0\n${url}\n\nДанные: папка data рядом с проектом.\nДля остановки нажмите Ctrl+C или закройте это окно.\n`);
-    openBrowser(url);
-    let closing = false;
-    const stop = async () => {
-      if (closing) return; closing = true;
-      app.closeAllConnections();
-      app.close();
-      await Promise.allSettled([unlink(pointer), unlink(lock)]);
-      process.exit(0);
-    };
-    process.on('SIGINT', stop); process.on('SIGTERM', stop);
-    app.on('error', async e => { console.error(e.message); await stop(); });
-  } catch (e) { app?.closeAllConnections(); app?.close(); await unlink(lock).catch(() => {}); throw e; }
-} catch (e) { console.error(`Ошибка запуска: ${e.message}`); process.exitCode = 1; }
+    const ready=await new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>reject(Object.assign(new Error('Startup timeout'),{code:'START_TIMEOUT'})),12000);
+      const finish=(error,message)=>{clearTimeout(timer);proc.removeListener('message',onMessage);proc.removeListener('error',onError);error?reject(error):resolve(message);};
+      const onError=e=>finish(e);
+      const onMessage=message=>{if(message?.type==='ready')finish(null,message);if(message?.type==='failed')finish(Object.assign(new Error('Server failed'),{code:message.code}));};
+      proc.on('message',onMessage);proc.once('error',onError);
+      state.closed.then(({code})=>finish(Object.assign(new Error('Server exited'),{code:'SERVER_EXIT_'+code})));
+      proc.send({type:'init',instance,launchId,port,host,preview},e=>{if(e)finish(e);});
+    });
+    const pointer={port:ready.port,instance,launchId,pid:proc.pid};
+    stage='health';
+    if(!await healthy(pointer,instance)) throw Object.assign(new Error('Invalid health response'),{code:'HEALTH_FAILED'});
+    for(const path of ['/','/main.js','/model.js','/calendar.js','/style.css','/fox.svg','/favicon.svg']) {
+      const response=await localRequest(pointer.port,path);
+      if(response.status!==200 || !response.body.length) throw Object.assign(new Error('Asset readiness failed'),{code:'ASSET_NOT_READY'});
+    }
+    return {state,pointer};
+  } catch(e){await stopChild(state);child=null;throw e;}
+}
+async function legacyInstance() {
+  let saved;try{saved=await readJSON(pointerFile);}catch(e){if(e.code==='ENOENT' || e instanceof SyntaxError)return null;throw e;}
+  if(saved.launchId || !Number.isInteger(saved.port) || saved.port<1 || saved.port>65535)return null;
+  try{
+    const response=await localRequest(saved.port,'/__miyuneya/health');const body=JSON.parse(response.body);
+    const legacy=createHash('sha256').update(root).digest('hex').slice(0,24);
+    if(response.status===200 && body.app==='Miyuneya' && (body.instance===legacy || body.instance===instance))return saved;
+  }catch{}
+  return null;
+}
+async function main() {
+  // The original 0.1.0 launcher used a file lock. Never start a second writer beside it.
+  const legacy=await legacyInstance();
+  if(legacy){const url=`http://127.0.0.1:${legacy.port}`;console.warn('Работает предыдущая версия Miyuneya. Закройте её окно и снова запустите BAT, чтобы применить обновлённый запуск.');show(url,true);openBrowser(url);return;}
+  if(process.platform==='win32' && root.startsWith('\\\\')) throw Object.assign(new Error('UNC path unsupported'),{code:'UNC_NOT_SUPPORTED'});
+  release=await acquireLock(instance);
+  if(!release) {
+    const deadline=Date.now()+30000;
+    do {
+      try {const pointer=await readJSON(pointerFile);if(await healthy(pointer,instance)){const url=`http://127.0.0.1:${pointer.port}`;show(url,true);openBrowser(url);return;}}catch(e){if(e.code!=='ENOENT' && !(e instanceof SyntaxError))throw e;}
+      if(stopping)return;
+      await delay(150);
+    } while(Date.now()<deadline);
+    throw Object.assign(new Error('Another startup did not become healthy'),{code:'INSTANCE_NOT_READY'});
+  }
+  logger=await makeLogger(root);await logger.log('runtime','node-ready');
+  stage='update';transaction=await updateManager(root,logger);
+  let ready;
+  try {
+    stage='build';const rebuilt=await ensureBuild(root);await logger.log('build',rebuilt?'repaired':'intact');
+    if(stopping)return;
+    stage='server';ready=await runServer();
+  } catch(e) {
+    if(!transaction.applied)throw e;
+    await logger.log(stage,'candidate-failed',40);await transaction.rollback();transaction.applied=false;
+    stage='build';await ensureBuild(root);stage='server';ready=await runServer();
+  }
+  if(stopping){await stopChild(ready.state);return;}
+  await atomicWrite(pointerFile,JSON.stringify(ready.pointer));
+  if(transaction.applied)await transaction.commit();
+  await logger.log('health','ready');
+  const url=`http://127.0.0.1:${ready.pointer.port}`;show(url);openBrowser(url);
+  const result=await ready.state.closed;child=null;
+  if(!stopping && result.code!==0)throw Object.assign(new Error('Unexpected server exit'),{code:'SERVER_EXIT_'+result.code});
+  await logger.log('shutdown','writes-drained');
+}
+try {await main();}
+catch(e) {
+  const code=stage==='build'?30:stage==='health'?41:stage==='update'?50:stage==='lock'?24:40;
+  process.exitCode=code;
+  const reason=typeof e.code==='string' && /^[A-Z0-9_]+$/.test(e.code)?e.code:'STAGE_FAILED';
+  console.error(`Ошибка Miyuneya: этап ${stage}, причина ${reason}, код завершения ${code}.`);
+  const actions={lock:'Закройте зависшее окно именно этой копии Miyuneya и повторите запуск. UNC-пути не поддерживаются.',build:'Проверьте файлы src и web и права записи. Повторно распакуйте код проекта, сохранив папку data.',server:'Проверьте целостность кода и data/workspace.json. Не удаляйте пользовательские данные.',health:'Сервер не подтвердил готовность. Повторите запуск; подробности этапа записаны в журнал.',update:'Сохраните .runtime/updates: там находятся журнал и резервная копия для восстановления.'};
+  console.error(actions[stage] || 'Проверьте права записи в папку проекта.');
+  if(logger)await logger.log(stage,reason,code);
+}
+finally {
+  const cleanupErrors=[];
+  try{await stopChild(child);}catch(e){cleanupErrors.push(e);}
+  if(release) {
+    try{const pointer=await readJSON(pointerFile);if(pointer.instance===instance)await retryFile(()=>rm(pointerFile,{force:true}));}catch(e){if(e.code!=='ENOENT' && !(e instanceof SyntaxError))cleanupErrors.push(e);}
+    try{await release();}catch(e){cleanupErrors.push(e);}
+  }
+  try{await logger?.close();}catch(e){cleanupErrors.push(e);}
+  if(cleanupErrors.length){console.error('Не удалось завершить очистку Miyuneya; проверьте права записи и журнал.');process.exitCode=44;}
+  process.removeListener('SIGINT',requestStop);process.removeListener('SIGTERM',requestStop);
+}

@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, cp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, cp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { request } from 'node:http';
+import { removeTemp, fixture, nodeLaunch, waitReady, stop } from './helpers/lifecycle.mjs';
 import { createApp } from '../server/app.ts';
 import { emptyWorkspace, validateWorkspace, searchNotes } from '../src/model.ts';
 
@@ -24,7 +25,7 @@ test('HTTP storage, revision conflicts, restart, allowlist and origin checks', a
   const root=await mkdtemp(join(tmpdir(),'Miyuneya данные '));
   await mkdir(join(root,'dist')); await writeFile(join(root,'dist','index.html'),'<html lang="ru">Miyuneya</html>');
   let server;
-  t.after(async()=>{server?.closeAllConnections();if(server?.listening) await new Promise(r=>server.close(r));await rm(root,{recursive:true,force:true});});
+  t.after(async()=>{await server?.shutdown();await removeTemp(root);});
   async function start(){server=await createApp(root,'test');server.listen(0,'127.0.0.1');await once(server,'listening');return `http://127.0.0.1:${server.address().port}`;}
   let url=await start();
   const get=await fetch(url+'/api/workspace'); const initial=await get.json(); assert.equal(initial.revision,0);
@@ -47,32 +48,21 @@ test('HTTP storage, revision conflicts, restart, allowlist and origin checks', a
   const race=await Promise.all([put(1),put(1)]);assert.deepEqual(race.map(r=>r.status).sort(),[200,409]);
   const saved=JSON.parse(await readFile(join(root,'data','workspace.json'),'utf8'));
   assert.equal(saved.revision,2);assert.equal(saved.data.notes[0].body,'Белый снег 🦊');
-  server.closeAllConnections();await new Promise(r=>server.close(r));
+  await server.shutdown();
   url=await start();assert.deepEqual((await (await fetch(url+'/api/workspace')).json()),saved);
-  server.closeAllConnections();await new Promise(r=>server.close(r));
+  await server.shutdown();
   await writeFile(join(root,'data','workspace.json'),'BROKEN');
   await assert.rejects(createApp(root,'test'),/данные не перезаписаны/);
   assert.equal(await readFile(join(root,'data','workspace.json'),'utf8'),'BROKEN');
 });
 
 test('Launcher works from another cwd in a Cyrillic path and reuses an active server', async t=>{
-  const parent=await mkdtemp(join(tmpdir(),'Miyuneya launch '));
-  const root=join(parent,'Рабочий стол проект');await mkdir(root);
-  for(const dir of ['scripts','server','src','dist']) await cp(new URL('../'+dir,import.meta.url),join(root,dir),{recursive:true});
-  await cp(new URL('../package.json',import.meta.url),join(root,'package.json'));
-  const child=spawn(process.execPath,[join(root,'scripts','start.mjs')],{cwd:tmpdir(),stdio:['ignore','pipe','pipe']});
-  let out='';let errors='';child.stderr.on('data',c=>{errors+=c;});
-  t.after(async()=>{
-    child.kill();if(child.exitCode===null) await once(child,'exit');
-    await rm(parent,{recursive:true,force:true});
-  });
-  const url=await new Promise((resolve,reject)=>{
-    const timer=setTimeout(()=>reject(new Error('Launcher timeout: '+errors)),10000);
-    child.stdout.on('data',chunk=>{out+=chunk;const match=out.match(/http:\/\/127\.0\.0\.1:\d+/);if(match){clearTimeout(timer);resolve(match[0]);}});
-    child.once('exit',code=>{clearTimeout(timer);reject(new Error('Launcher exited: '+code+' '+errors));});
-  });
+  const root=await fixture(t);
+  const child=nodeLaunch(root);
+  t.after(()=>stop(root,child));
+  const ready=await waitReady(root,child);
+  const url=`http://127.0.0.1:${ready.port}`;
   assert.equal((await fetch(url)).status,200);
-  const second=spawn(process.execPath,[join(root,'scripts','start.mjs')],{cwd:tmpdir(),stdio:['ignore','pipe','pipe']});
-  let output='';second.stdout.on('data',c=>{output+=c;});
-  const [code]=await once(second,'exit');assert.equal(code,0);assert.match(output,/уже запущена/);assert.ok(output.includes(url));
+  const second=nodeLaunch(root);
+  assert.equal((await second.closed).code,0);assert.match(second.output,/уже запущена/);assert.ok(second.output.includes(url));
 });

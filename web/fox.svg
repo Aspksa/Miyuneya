@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 430" fill="none">
+<defs><linearGradient id="gold" x1="500" y1="70" x2="200" y2="390" gradientUnits="userSpaceOnUse"><stop stop-color="#eee2c9"/><stop offset="1" stop-color="#cfb382"/></linearGradient><linearGradient id="fur" x1="350" y1="140" x2="420" y2="390" gradientUnits="userSpaceOnUse"><stop stop-color="#fffefa"/><stop offset="1" stop-color="#ede7d9"/></linearGradient></defs>
+<circle cx="362" cy="186" r="126" stroke="#d8c394" stroke-opacity=".65"/><circle cx="362" cy="186" r="110" stroke="#d8c394" stroke-opacity=".25"/><circle cx="399" cy="119" r="59" fill="#f0e4cb"/>
+<path d="M355 349C192 379 101 286 132 213c61 8 120 44 140 95-78-91-65-172-32-208 61 33 81 97 65 163-6-100 39-159 91-170 26 68-5 129-56 179 80-84 142-84 188-58-13 75-77 108-157 112 90-17 141 6 155 51-50 47-114 39-171-28z" fill="url(#gold)"/>
+<path d="M302 314c-45-58-67-102-66-149m85 139c6-83 26-128 56-162m-29 173c55-43 101-67 143-71m-143 88c66-8 112 1 141 21M282 326c-48-26-94-54-126-88" stroke="#fcf7ec" stroke-opacity=".55" stroke-width="2" stroke-linecap="round"/>
+<ellipse cx="355" cy="376" rx="134" ry="13" fill="#c6ad7e" opacity=".13"/>
+<path d="M358 229c-67 2-99 64-84 112 8 23 38 35 85 35 61 0 96-20 97-47-5-51-48-105-98-100z" fill="url(#fur)"/>
+<path d="M321 249l-24-90 57 37 24-3 50-43-14 105-54 39z" fill="url(#fur)" stroke="#d4bf97" stroke-width="1.5"/>
+<path d="M307 176l12 48 22-20zM413 169l-30 34 24 17z" fill="#b75848"/>
+<path d="M315 237c16-3 25 2 30 7m34 0c6-8 16-12 30-12" stroke="#7f6540" stroke-width="3" stroke-linecap="round"/>
+<path d="M355 258h13l-6 7z" fill="#8b7350"/><path d="M362 265v8m-8-1 8 3 8-3" stroke="#8b7350" stroke-width="1.5" stroke-linecap="round"/>
+<path d="M321 287c-7 27-6 52 0 77m61-79c11 28 13 54 9 79" stroke="#d9ccb3" stroke-width="2" stroke-linecap="round"/>
+<path d="M347 207l14 15 14-15" stroke="#b79a5c" stroke-width="1.5"/>
+<path d="M160 122v14m-7-7h14M475 107v18m-9-9h18M522 171v10m-5-5h10M202 316v10m-5-5h10" stroke="#ba9654" stroke-width="1.5" stroke-linecap="round"/>
+<circle cx="199" cy="186" r="2.5" fill="#ba9654"/><circle cx="468" cy="299" r="2" fill="#ba9654"/>
+<path d="M120 369c38 7 66 6 92-1m268 3c29 5 51 3 68-2" stroke="#cbbb9a" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

@@ -1,9 +1,10 @@
-name: Быстрые проверки
+name: Проверки запуска
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 concurrency:
   group: checks-${{ github.ref }}
   cancel-in-progress: true
@@ -11,10 +12,11 @@ permissions:
   contents: read
 jobs:
   quick:
-    name: Проверка (${{ matrix.os }}, Node ${{ matrix.node }})
+    name: Запуск (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
+    timeout-minutes: 8
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -28,4 +30,16 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm test
       - run: npm run check
-        if: matrix.node == '24'
+      - run: npm run diagnose
+  windows-bootstrap:
+    name: Windows — официальная загрузка и автономный повтор
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --test tests/windows-network.test.mjs
+        env:
+          MIYUNEYA_NETWORK_TEST: '1'
