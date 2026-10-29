@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile, mkdir, readdir, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, readdir, rm, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer, request } from 'node:http';
 import { once } from 'node:events';
@@ -107,7 +107,7 @@ test('Diagnostics never persist keys, environment values or note bodies',async t
 });
 
 test('A running 0.1.0 instance is reused instead of starting a second data writer',async t=>{
-  const root=await fixture(t);const instance=createHash('sha256').update(root).digest('hex').slice(0,24);
+  const root=await fixture(t);const instance=createHash('sha256').update(await realpath(root)).digest('hex').slice(0,24);
   const legacy=createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({app:'Miyuneya',instance}));});
   legacy.listen(0,'127.0.0.1');await once(legacy,'listening');own(root,()=>new Promise(r=>legacy.close(r)));
   const pointer=JSON.stringify({port:legacy.address().port,pid:process.pid});await atomicWrite(join(root,'.runtime','server.json'),pointer);
