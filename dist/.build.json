@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "fingerprint": "fa2e317ad83bdcf804a9fc013ae67874e0936a0d6330d6d34b005d144e422197",
+  "fingerprint": "4467fa3c1bb40fd5a8cac43fd1c9b63823ceb746615c26a99c8fcdf7c6e5eeff",
   "outputs": {
-    "main.js": "17ec7f30e2dc48103d8b0d1584e5bec9b9c78181081616ec1e0345400277a592",
+    "main.js": "5dcc54edc121ff1b9773598b6f1c2ab4a453f9b7fdebd6b8bbf9bc65033e3dfe",
     "model.js": "cb244f8c0176dc63e70f7266b054afdd5ef73b23ea6d1647cbbcc1acae62241f",
     "calendar.js": "7d6dedde04a2a4fbbd90f785e0070231a39a533e949ecd1e935f2d377ccba6ee",
     "index.html": "4c902078b29931eb7a9743bc63101ca0ceadea37ed4ab4311c78663f747117fe",
-    "style.css": "9f24a681933147197906a55fe86d8f140d93c799a9c8620609fc169b421c4719",
+    "style.css": "acf1e3a0b24b10a614725521c1d5b1c47ba429c679170e0a5227b3ee94611914",
     "fox.svg": "bef18372e8192a53b6ded46ca31f9c07e4d6735b10c6142d223c64612924e50b",
     "favicon.svg": "8a4ab40e731f2a9b9404ca0a703c2bd65df73e692c258d51158cdec9517634e9"
   }
