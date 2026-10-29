@@ -3,7 +3,7 @@
 
 // Floating avatar with a chat window. Appearance is saved in the workspace by the host;
 // screen position, chat geometry and history are per-browser conveniences in localStorage.
-                                                                                                                                     
+                                                                                                                                                         
                                         
                              
                                   
@@ -177,6 +177,12 @@ export function mountAssistant(host               ) {
       if (response.ok && typeof result.summary === 'string' && id === dialog && at >= 0) { summary = { text: result.summary, count: at + 1 }; remember('chat-summary', summary); }
     } catch {} finally { compacting = false; }
   }
+  // Implicit feedback for the memory: what the user did with an answer says how good it was.
+  function signal(kind                                   , text = '') {
+    const mode = host.memory();
+    if (!mode.enabled || mode.private) return;
+    void fetch('/api/memory/signal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dialog, kind, text: text.slice(0, 120) }) }).catch(() => {});
+  }
   // A cleared chat is a finished dialog: the server turns it into an episode and new facts.
   function endDialog() {
     if (history.some(m => m.role === 'user') && host.memory().enabled && !host.memory().private)
@@ -188,7 +194,7 @@ export function mountAssistant(host               ) {
     const chip = element('div', 'chat-action' + (action.undone ? ' undone' : ''));
     chip.append(element('span', '', `${action.undone ? 'Отменено' : '✓'} ${action.kind === 'task' ? 'Задача' : 'Заметка'}: ${action.title}`));
     if (!action.undone) chip.append(button('Отменить', 'chat-link', () => {
-      host.remove(action.kind, action.id); action.undone = true; saveHistory(); renderChat();
+      host.remove(action.kind, action.id); action.undone = true; signal('undo', action.title); saveHistory(); renderChat();
     }));
     return chip;
   }
@@ -203,8 +209,8 @@ export function mountAssistant(host               ) {
       if (shown) {
         const tools = element('div', 'chat-tools');
         tools.append(button('Копировать', 'chat-link', async () => {
-          try { await navigator.clipboard.writeText(shown); host.toast('Ответ скопирован'); } catch { host.toast('Не удалось скопировать'); }
-        }), button('В заметку', 'chat-link', () => { if (host.addNote(noteTitle(shown), shown)) host.toast('Ответ сохранён в заметки'); }));
+          try { await navigator.clipboard.writeText(shown); host.toast('Ответ скопирован'); signal('copy'); } catch { host.toast('Не удалось скопировать'); }
+        }), button('В заметку', 'chat-link', () => { if (host.addNote(noteTitle(shown), shown)) { host.toast('Ответ сохранён в заметки'); signal('save'); } }));
         item.append(tools);
       }
     }
@@ -293,7 +299,7 @@ export function mountAssistant(host               ) {
       applyActions(message);
       void compact();
     } catch (e) {
-      if (current.abort.signal.aborted) message.stopped = true;
+      if (current.abort.signal.aborted) { message.stopped = true; signal('stop'); }
       else error = e instanceof TypeError ? 'Локальный сервер недоступен. Проверьте окно Miyuneya.bat.' : (e         ).message;
       if (!visibleText(message.content) && !message.stopped) history = history.filter(m => m !== message);
     } finally {

@@ -115,7 +115,7 @@ test('cloud.ru assistant keeps the key on the server and proxies chat', async t 
   const json=(path,method,body)=>fetch(url+path,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const image=await fetch(url+'/avatars/avatar2.png');
   assert.equal(image.headers.get('content-type'),'image/png');assert.equal((await image.arrayBuffer()).byteLength,4);
-  assert.deepEqual(await (await fetch(url+'/api/assistant')).json(),{configured:false,keyHint:'',model:'openai/gpt-oss-120b',context:true,customAvatar:null});
+  assert.deepEqual(await (await fetch(url+'/api/assistant')).json(),{configured:false,keyHint:'',model:'openai/gpt-oss-120b',embedModel:'BAAI/bge-m3',context:true,customAvatar:null});
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'}]})).status,409);
   assert.equal((await json('/api/assistant','PUT',{apiKey:'short'})).status,400);
   assert.equal((await json('/api/assistant','PUT',{model:'плохая модель'})).status,400);
@@ -126,7 +126,7 @@ test('cloud.ru assistant keeps the key on the server and proxies chat', async t 
   assert.equal(rejected.status,502);const rejectedBody=await rejected.json();
   assert.match(rejectedBody.error,/не принял ключ/);assert.ok(!rejectedBody.error.includes('good-key-wrong'));
   saved=await (await json('/api/assistant','PUT',{apiKey:'good-key-123',model:'zeta/model'})).json();
-  assert.deepEqual(saved,{configured:true,keyHint:'••••-123',model:'zeta/model',context:true,customAvatar:null});
+  assert.deepEqual(saved,{configured:true,keyHint:'••••-123',model:'zeta/model',embedModel:'BAAI/bge-m3',context:true,customAvatar:null});
   assert.deepEqual(await (await fetch(url+'/api/assistant/models')).json(),{models:['openai/gpt-oss-120b','zeta/model']});
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'system',content:'x'}]})).status,400);
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'},{role:'assistant',content:'Да?'}]})).status,400);

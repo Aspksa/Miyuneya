@@ -8,7 +8,7 @@ import type { Appearance, Radius, Scale } from './appearance.js';
 import type { Workspace, EntryFilter, AssistantLook } from './model.js';
 import type { AssistantStatus, EntryKind } from './assistant.js';
 
-type Page = 'notes' | 'settings';
+type Page = 'notes' | 'diary' | 'settings';
 const icons: Record<string, string> = {
   notes: '<rect x="5" y="3" width="15" height="18" rx="2"/><path d="M9 8h7M9 12h7M9 16h4M3 7h3M3 12h3M3 17h3"/>',
   tasks: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 8 1 1 2-2m2 2h3m-8 5 1 1 2-2m2 2h3"/>',
@@ -25,6 +25,7 @@ const icons: Record<string, string> = {
   brain: brainIcon,
   // Two-tone navigation marks: a soft filled body with crisp strokes on top.
   navNotes: '<path d="M6.5 3.5h8l4 4v11a2 2 0 0 1-2 2h-10a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z" class="fill"/><path d="M14.5 3.5v4h4"/><path d="M8 11h6M8 14.5h3.5"/><path d="m12.5 18 1.6 1.6L18 15.7" class="accent-stroke"/>',
+  navDiary: '<path d="M5 5a2 2 0 0 1 2-2h11v15H7a2 2 0 0 0-2 2Z" class="fill"/><path d="M5 20a2 2 0 0 0 2 2h11v-4"/><path d="M12 13.8c-1.7-1.1-2.6-2-2.6-3.1a1.3 1.3 0 0 1 2.6-.6 1.3 1.3 0 0 1 2.6.6c0 1.1-.9 2-2.6 3.1Z" class="accent-stroke"/>',
   navSettings: '<path d="M12 3.2 14 5l2.6-.4.9 2.5 2.3 1.3-.6 2.6 1.3 2.3-1.9 1.8-.1 2.7-2.6.5-1.6 2.1L12 19.4l-2.4 1.2L8 18.5l-2.6-.5-.1-2.7-1.9-1.8L4.7 11l-.6-2.6 2.3-1.3.9-2.5L10 5Z" class="fill"/><circle cx="12" cy="12" r="3.2"/>',
 };
 const icon = (name: string) => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.notes}</svg>`;
@@ -43,16 +44,17 @@ let saveError = '';
 let fatal = false;
 let editing: { kind: 'note' | 'task'; id?: string } = { kind: 'note' };
 let toastTimer: ReturnType<typeof setTimeout>;
-let ai: AssistantStatus = { configured: false, keyHint: '', model: '', context: true, customAvatar: null };
+let ai: AssistantStatus = { configured: false, keyHint: '', model: '', embedModel: '', context: true, customAvatar: null };
+let diaryEditing = '';
 let saveAgain = false;
 let appearance: Appearance = loadAppearance();
 let aiModels: string[] | null = null;
 let aiBusy = false;
 let assistant: ReturnType<typeof mountAssistant> | undefined;
 let memoryMode = { enabled: true, private: false };
-const pageNames: Record<Page,string> = { notes:'Заметки и задачи', settings:'Настройки' };
+const pageNames: Record<Page,string> = { notes:'Заметки и задачи', diary:'Дневник Миюнэи', settings:'Настройки' };
 // Old #home and #tasks links land on the shared list.
-function getPage(): Page { return location.hash.slice(1) === 'settings' ? 'settings' : 'notes'; }
+function getPage(): Page { const hash = location.hash.slice(1); return hash === 'settings' || hash === 'diary' ? hash : 'notes'; }
 function toast(message: string) {
   const el = document.querySelector<HTMLDivElement>('#toast')!;
   el.textContent = message; el.classList.add('visible'); clearTimeout(toastTimer);
@@ -91,7 +93,7 @@ function aiCard() {
   const modelField = models
     ? `<select id="ai-model" ${aiBusy?'disabled':''}>${models.map(m=>`<option value="${escape(m)}" ${m===ai.model?'selected':''}>${escape(m)}</option>`).join('')}</select>`
     : `<input id="ai-model" value="${escape(ai.model)}" maxlength="200" autocomplete="off" spellcheck="false" placeholder="например, openai/gpt-oss-120b" ${aiBusy?'disabled':''}>`;
-  return `<section class="settings-card ai-card"><h2>Помощница и cloud.ru</h2><p>Миюнэя отвечает в чате через модели cloud.ru Foundation Models. Ключ хранится только на этом компьютере в <code>data/assistant.json</code>, не попадает в браузер и резервные копии; запросы к cloud.ru отправляет локальный сервер.</p><div class="ai-status ${ai.configured?'on':''}"><i class="dot"></i>${ai.configured?`Подключено · ключ ${escape(ai.keyHint)}`:'Ключ не сохранён'}</div><form id="ai-form" autocomplete="off"><label class="field">API-ключ cloud.ru<input id="ai-key" type="password" maxlength="512" autocomplete="new-password" spellcheck="false" placeholder="${ai.configured?'Сохранён. Введите новый, чтобы заменить':'Вставьте ключ из личного кабинета cloud.ru'}" ${aiBusy?'disabled':''}></label><label class="field">Модель${modelField}</label><div class="ai-actions"><button class="button primary" type="submit" ${aiBusy?'disabled':''}>Сохранить</button><button class="button" type="button" data-ai-models ${aiBusy||!ai.configured?'disabled':''}>${aiModels?'Обновить список моделей':'Загрузить список моделей'}</button>${ai.configured?`<button class="button quiet danger" type="button" data-ai-forget ${aiBusy?'disabled':''}>Удалить ключ</button>`:''}</div></form><label class="switch ai-context"><input type="checkbox" id="ai-context" ${ai.context?'checked':''} ${aiBusy?'disabled':''}><span>Помощница видит заметки и задачи. Они отправляются в cloud.ru вместе с вопросом, чтобы она могла найти запись, напомнить о делах и добавить задачу.</span></label><div class="ai-look"><span class="face"><img src="${avatarSrc(look(),ai)}" alt="" decoding="async"></span><label class="switch"><input type="checkbox" id="ai-avatar-visible" ${look().hidden?'':'checked'}><span>Показывать аватар на экране</span></label></div><p class="ai-hint">Перетаскивайте аватар мышью куда удобно. Левая кнопка открывает чат, правая — меню: образ (можно загрузить свой), размер, прозрачность, анимация и прилипание к краям.</p></section>`;
+  return `<section class="settings-card ai-card"><h2>Помощница и cloud.ru</h2><p>Миюнэя отвечает в чате через модели cloud.ru Foundation Models. Ключ хранится только на этом компьютере в <code>data/assistant.json</code>, не попадает в браузер и резервные копии; запросы к cloud.ru отправляет локальный сервер.</p><div class="ai-status ${ai.configured?'on':''}"><i class="dot"></i>${ai.configured?`Подключено · ключ ${escape(ai.keyHint)}`:'Ключ не сохранён'}</div><form id="ai-form" autocomplete="off"><label class="field">API-ключ cloud.ru<input id="ai-key" type="password" maxlength="512" autocomplete="new-password" spellcheck="false" placeholder="${ai.configured?'Сохранён. Введите новый, чтобы заменить':'Вставьте ключ из личного кабинета cloud.ru'}" ${aiBusy?'disabled':''}></label><label class="field">Модель${modelField}</label><label class="field">Модель для поиска по смыслу<input id="ai-embed" value="${escape(ai.embedModel)}" maxlength="200" autocomplete="off" spellcheck="false" placeholder="например, BAAI/bge-m3; пусто — искать только по словам" ${aiBusy?'disabled':''}></label><div class="ai-actions"><button class="button primary" type="submit" ${aiBusy?'disabled':''}>Сохранить</button><button class="button" type="button" data-ai-models ${aiBusy||!ai.configured?'disabled':''}>${aiModels?'Обновить список моделей':'Загрузить список моделей'}</button>${ai.configured?`<button class="button quiet danger" type="button" data-ai-forget ${aiBusy?'disabled':''}>Удалить ключ</button>`:''}</div></form><label class="switch ai-context"><input type="checkbox" id="ai-context" ${ai.context?'checked':''} ${aiBusy?'disabled':''}><span>Помощница видит заметки и задачи. Они отправляются в cloud.ru вместе с вопросом, чтобы она могла найти запись, напомнить о делах и добавить задачу.</span></label><div class="ai-look"><span class="face"><img src="${avatarSrc(look(),ai)}" alt="" decoding="async"></span><label class="switch"><input type="checkbox" id="ai-avatar-visible" ${look().hidden?'':'checked'}><span>Показывать аватар на экране</span></label></div><p class="ai-hint">Перетаскивайте аватар мышью куда удобно. Левая кнопка открывает чат, правая — меню: образ (можно загрузить свой), размер, прозрачность, анимация и прилипание к краям.</p></section>`;
 }
 function appearanceCard() {
   const custom = accentName(appearance.accent) === 'Свой';
@@ -104,13 +106,23 @@ function appearanceCard() {
     + group('Масштаб', 'Размер текста и элементов всего приложения', `<div class="look-options">${scales.map(([key,label])=>option('data-scale',key,appearance.scale===key,`<span class="scale-preview ${key}">Aa</span>`,label)).join('')}</div>`)
     + `</section>`;
 }
+// Diary entries are written by the assistant herself during sleep; the user may correct or delete any of them.
+function diary() {
+  const entries=[...(memoryPanel.view()?.diary || [])].sort((a,b)=>b.date.localeCompare(a.date));
+  const day=(date: string)=>new Date(date).toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const body=entries.length ? entries.map(e=>`<article class="diary-entry"><h3>${day(e.date)}</h3>${diaryEditing===e.id
+      ? `<form class="diary-form" data-diary-save="${escape(e.id)}"><textarea name="text" maxlength="2000" rows="5" aria-label="Запись дневника">${escape(e.text)}</textarea><div class="dialog-actions"><button class="button quiet" type="button" data-diary-cancel>Отмена</button><button class="button primary" type="submit">Сохранить</button></div></form>`
+      : `<p>${escape(e.text)}</p><div class="diary-actions"><button class="text-link" data-diary-edit="${escape(e.id)}">Изменить</button><button class="text-link danger" data-diary-delete="${escape(e.id)}">Удалить</button></div>`}</article>`).join('')
+    : `<div class="empty">${icon('navDiary')}<h3>Дневник пока пуст</h3><p>Каждый раз во время сна Миюнэя записывает сюда, что узнала о вас и что изменила в себе.</p></div>`;
+  return `<div class="page-heading"><div><span class="eyebrow">ЧТО Я УЗНАЛА</span><h1>Дневник Миюнэи</h1></div><div class="heading-actions"><button class="button" data-open-memory>${icon('brain')}Открыть память</button></div></div><p class="page-description">Записи пишет сама Миюнэя после «сна». Любую можно поправить или удалить.</p><div class="panel diary">${body}</div>`;
+}
 function settings() {
   return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div>${appearanceCard()}<section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. Скачайте копию перед переносом или восстановите её из JSON-файла.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.2.0</span><h2>Место для вашего мира</h2><p>Первая версия личного пространства. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Сейчас доступны заметки и задачи в одном списке, настройки и помощница с чатом через cloud.ru и собственной памятью: значок мозга вверху справа.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
 }
 function render(focus = false) {
   applyTheme();
   const count = data.notes.length + data.tasks.filter(t => !t.done).length;
-  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><a class="brand" href="#notes"><img src="/favicon.svg" alt="" width="37" height="37">Miyuneya</a><p class="brand-caption">ВАШ ТИХИЙ МИР</p><p class="nav-label">ПРОСТРАНСТВО</p><nav class="nav" aria-label="Основная навигация"><a href="#notes" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span><span class="count">${count}</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">Настройки</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Поиск по заметкам и задачам" placeholder="Найти в своём пространстве" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button><button class="icon-button memory-toggle ${memoryMode.private?'private':''} ${memoryMode.enabled?'':'off'}" data-memory-toggle aria-label="Память помощницы" title="Память Миюнэи" aria-haspopup="dialog" aria-expanded="${memoryPanel.isOpen()}">${icon('brain')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${({notes,settings})[page]()}</main></div></div>`;
+  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><a class="brand" href="#notes"><img src="/favicon.svg" alt="" width="37" height="37">Miyuneya</a><p class="brand-caption">ВАШ ТИХИЙ МИР</p><p class="nav-label">ПРОСТРАНСТВО</p><nav class="nav" aria-label="Основная навигация"><a href="#notes" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span><span class="count">${count}</span></a><a href="#diary" class="${page==='diary'?'active':''}" ${page==='diary'?'aria-current="page"':''}>${navIcon('navDiary')}<span class="nav-text">${pageNames.diary}</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">Настройки</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Поиск по заметкам и задачам" placeholder="Найти в своём пространстве" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button><button class="icon-button memory-toggle ${memoryMode.private?'private':''} ${memoryMode.enabled?'':'off'}" data-memory-toggle aria-label="Память помощницы" title="Память Миюнэи" aria-haspopup="dialog" aria-expanded="${memoryPanel.isOpen()}">${icon('brain')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${({notes,diary,settings})[page]()}</main></div></div>`;
   for (const el of app.querySelectorAll<HTMLElement>('[data-swatch]')) el.style.setProperty('--swatch', el.dataset.swatch!);
   if (focus) document.querySelector<HTMLElement>('#content')?.focus();
 }
@@ -156,7 +168,10 @@ app.addEventListener('click', async event => {
   if (target.dataset.new) return showEditor(target.dataset.new as 'note'|'task');
   if (target.dataset.edit) return showEditor('note',target.dataset.edit);
   if (target.hasAttribute('data-export')) return download();
-  if (target.hasAttribute('data-memory-toggle')) return memoryPanel.toggle();
+  if (target.hasAttribute('data-memory-toggle') || target.hasAttribute('data-open-memory')) return memoryPanel.toggle();
+  if (target.dataset.diaryEdit) { diaryEditing=target.dataset.diaryEdit; render(); document.querySelector<HTMLTextAreaElement>('.diary-form textarea')?.focus(); return; }
+  if (target.hasAttribute('data-diary-cancel')) { diaryEditing=''; render(); return; }
+  if (target.dataset.diaryDelete && await confirmDelete('Удалить запись дневника?')) { await memoryPanel.act('/items/'+target.dataset.diaryDelete,{method:'DELETE'},'Запись дневника удалена'); return; }
   if (target.dataset.accent) return setAppearance({accent:target.dataset.accent});
   if (target.dataset.radius) return setAppearance({radius:target.dataset.radius as Radius});
   if (target.dataset.scale) return setAppearance({scale:target.dataset.scale as Scale});
@@ -178,7 +193,7 @@ app.addEventListener('input', event => {
   if (input.id==='accent-custom') { applyAppearance({...appearance,accent:input.value},document.documentElement.dataset.theme==='dark'); return; }
   if (input.id==='search') {
     query=input.value; const caret=input.selectionStart;
-    if(page==='settings') { page='notes'; history.replaceState(null,'','#notes'); }
+    if(page!=='notes') { page='notes'; history.replaceState(null,'','#notes'); }
     render(); const search=document.querySelector<HTMLInputElement>('#search')!; search.focus(); search.setSelectionRange(caret,caret);
   }
 });
@@ -204,12 +219,21 @@ app.addEventListener('change', async event => {
   }
 });
 app.addEventListener('submit', async event => {
-  if ((event.target as HTMLElement).id!=='ai-form') return;
+  const form=event.target as HTMLFormElement;
+  if (form.dataset.diarySave) {
+    event.preventDefault();
+    const text=(form.elements.namedItem('text') as HTMLTextAreaElement).value.trim();
+    if(!text) return toast('Запись не может быть пустой');
+    if(await memoryPanel.act('/items/'+form.dataset.diarySave,{method:'PATCH',json:{text}},'Запись дневника исправлена')) { diaryEditing=''; render(); }
+    return;
+  }
+  if (form.id!=='ai-form') return;
   event.preventDefault();
   const key=document.querySelector<HTMLInputElement>('#ai-key')!.value.trim();
   const model=document.querySelector<HTMLInputElement|HTMLSelectElement>('#ai-model')!.value.trim();
   if(!key && !ai.configured) return toast('Вставьте API-ключ cloud.ru');
-  const change: { apiKey?: string; model?: string } = {};
+  const embedModel=document.querySelector<HTMLInputElement>('#ai-embed')!.value.trim();
+  const change: { apiKey?: string; model?: string; embedModel?: string } = { embedModel };
   if(key) change.apiKey=key;
   if(model) change.model=model;
   if(await saveAi(change)) { toast('Подключение cloud.ru сохранено'); if(key || !aiModels) await loadModels(false,true); }
@@ -219,7 +243,7 @@ async function aiRequest(path: string, init?: RequestInit) {
   if(!response.ok) throw new Error(result.error || 'Сервер вернул ошибку.');
   return result;
 }
-async function saveAi(change: { apiKey?: string | null; model?: string; context?: boolean }) {
+async function saveAi(change: { apiKey?: string | null; model?: string; embedModel?: string; context?: boolean }) {
   if(aiBusy) return false;
   aiBusy=true; render();
   try { ai=await aiRequest('/api/assistant',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(change)}); return true; }
@@ -271,7 +295,7 @@ document.querySelector('#editor-form')!.addEventListener('submit', async event=>
   editor.close(); if(await save()) toast(editing.kind==='note'?'Заметка сохранена':'Задача добавлена');
 });
 for(const id of ['close-editor','cancel-editor']) document.querySelector('#'+id)!.addEventListener('click',()=>editor.close());
-window.addEventListener('hashchange',()=>{page=getPage();query='';render(true);window.scrollTo(0,0);if(page==='settings' && ai.configured && !aiModels) void loadModels(false);});
+window.addEventListener('hashchange',()=>{page=getPage();query='';render(true);window.scrollTo(0,0);if(page==='settings' && ai.configured && !aiModels) void loadModels(false);if(page==='diary') void memoryPanel.load();});
 window.addEventListener('beforeunload', event=>{ if(saving || saveError) {event.preventDefault();event.returnValue='';} });
 document.addEventListener('keydown',event=>{
   const target=event.target as HTMLElement;
@@ -280,6 +304,7 @@ document.addEventListener('keydown',event=>{
 });
 function memoryChanged(view: MemoryView) {
   memoryMode={enabled:view.enabled,private:view.private};
+  if(page==='diary' && !diaryEditing) render();
   const button=document.querySelector('[data-memory-toggle]');
   button?.classList.toggle('private',view.private); button?.classList.toggle('off',!view.enabled);
   assistant?.refresh();
