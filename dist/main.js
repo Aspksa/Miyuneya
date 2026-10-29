@@ -2,6 +2,8 @@
 import { emptyWorkspace, validateWorkspace, combineEntries, defaultLook } from './model.js';
 import { formatNoteDate } from './calendar.js';
 import { mountAssistant, avatarSrc } from './assistant.js';
+import { mountMemory, brainIcon } from './memory.js';
+                                              
 import { accents, radii, scales, accentName, loadAppearance, saveAppearance, applyAppearance, defaultAppearance } from './appearance.js';
                                                                  
                                                                         
@@ -21,6 +23,7 @@ const icons                         = {
   moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/>',
   auto: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16Z" class="fill-solid"/>',
   palette: '<path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.9 1.4-1.9-.5-1.2.3-2.4 1.6-2.4H17a4 4 0 0 0 4-4c0-5.2-4-9.7-9-9.7Z" class="fill"/><circle cx="7.5" cy="11" r="1.3" class="fill-solid"/><circle cx="10" cy="7" r="1.3" class="fill-solid"/><circle cx="14.5" cy="7" r="1.3" class="fill-solid"/>',
+  brain: brainIcon,
   // Two-tone navigation marks: a soft filled body with crisp strokes on top.
   navNotes: '<path d="M6.5 3.5h8l4 4v11a2 2 0 0 1-2 2h-10a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z" class="fill"/><path d="M14.5 3.5v4h4"/><path d="M8 11h6M8 14.5h3.5"/><path d="m12.5 18 1.6 1.6L18 15.7" class="accent-stroke"/>',
   navSettings: '<path d="M12 3.2 14 5l2.6-.4.9 2.5 2.3 1.3-.6 2.6 1.3 2.3-1.9 1.8-.1 2.7-2.6.5-1.6 2.1L12 19.4l-2.4 1.2L8 18.5l-2.6-.5-.1-2.7-1.9-1.8L4.7 11l-.6-2.6 2.3-1.3.9-2.5L10 5Z" class="fill"/><circle cx="12" cy="12" r="3.2"/>',
@@ -47,6 +50,7 @@ let appearance             = loadAppearance();
 let aiModels                  = null;
 let aiBusy = false;
 let assistant                                               ;
+let memoryMode = { enabled: true, private: false };
 const pageNames                      = { notes:'Заметки и задачи', settings:'Настройки' };
 // Old #home and #tasks links land on the shared list.
 function getPage()       { return location.hash.slice(1) === 'settings' ? 'settings' : 'notes'; }
@@ -102,12 +106,12 @@ function appearanceCard() {
     + `</section>`;
 }
 function settings() {
-  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div>${appearanceCard()}<section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. Скачайте копию перед переносом или восстановите её из JSON-файла.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.2.0</span><h2>Место для вашего мира</h2><p>Первая версия личного пространства. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Сейчас доступны заметки и задачи в одном списке, настройки и помощница с чатом через cloud.ru. Граф знаний можно добавить следующим этапом.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
+  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div>${appearanceCard()}<section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. Скачайте копию перед переносом или восстановите её из JSON-файла.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.2.0</span><h2>Место для вашего мира</h2><p>Первая версия личного пространства. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Сейчас доступны заметки и задачи в одном списке, настройки и помощница с чатом через cloud.ru и собственной памятью: значок мозга вверху справа.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
 }
 function render(focus = false) {
   applyTheme();
   const count = data.notes.length + data.tasks.filter(t => !t.done).length;
-  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><a class="brand" href="#notes"><img src="/favicon.svg" alt="" width="37" height="37">Miyuneya</a><p class="brand-caption">ВАШ ТИХИЙ МИР</p><p class="nav-label">ПРОСТРАНСТВО</p><nav class="nav" aria-label="Основная навигация"><a href="#notes" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span><span class="count">${count}</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">Настройки</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Поиск по заметкам и задачам" placeholder="Найти в своём пространстве" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${({notes,settings})[page]()}</main></div></div>`;
+  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><a class="brand" href="#notes"><img src="/favicon.svg" alt="" width="37" height="37">Miyuneya</a><p class="brand-caption">ВАШ ТИХИЙ МИР</p><p class="nav-label">ПРОСТРАНСТВО</p><nav class="nav" aria-label="Основная навигация"><a href="#notes" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span><span class="count">${count}</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">Настройки</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Поиск по заметкам и задачам" placeholder="Найти в своём пространстве" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button><button class="icon-button memory-toggle ${memoryMode.private?'private':''} ${memoryMode.enabled?'':'off'}" data-memory-toggle aria-label="Память помощницы" title="Память Миюнэи" aria-haspopup="dialog" aria-expanded="${memoryPanel.isOpen()}">${icon('brain')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${({notes,settings})[page]()}</main></div></div>`;
   for (const el of app.querySelectorAll             ('[data-swatch]')) el.style.setProperty('--swatch', el.dataset.swatch );
   if (focus) document.querySelector             ('#content')?.focus();
 }
@@ -153,6 +157,7 @@ app.addEventListener('click', async event => {
   if (target.dataset.new) return showEditor(target.dataset.new                 );
   if (target.dataset.edit) return showEditor('note',target.dataset.edit);
   if (target.hasAttribute('data-export')) return download();
+  if (target.hasAttribute('data-memory-toggle')) return memoryPanel.toggle();
   if (target.dataset.accent) return setAppearance({accent:target.dataset.accent});
   if (target.dataset.radius) return setAppearance({radius:target.dataset.radius          });
   if (target.dataset.scale) return setAppearance({scale:target.dataset.scale         });
@@ -274,6 +279,15 @@ document.addEventListener('keydown',event=>{
   if(event.key==='/' && !target.closest('input,textarea,select,dialog')) {event.preventDefault();document.querySelector                  ('#search')?.focus();}
   if(event.key==='Escape') {document.querySelector('#sidebar')?.classList.remove('open');document.querySelector('[data-menu]')?.setAttribute('aria-expanded','false');}
 });
+function memoryChanged(view            ) {
+  memoryMode={enabled:view.enabled,private:view.private};
+  const button=document.querySelector('[data-memory-toggle]');
+  button?.classList.toggle('private',view.private); button?.classList.toggle('off',!view.enabled);
+  assistant?.refresh();
+}
+const memoryPanel=mountMemory({ toast, confirm:confirmDelete, changed:memoryChanged,
+  entry:id=>{ const note=data.notes.find(n=>n.id===id); if(note) return {kind:'note',title:note.title}; const task=data.tasks.find(t=>t.id===id); return task?{kind:'task',title:task.title}:null; },
+  openNote:id=>{ if(page!=='notes') location.hash='notes'; if(data.notes.some(n=>n.id===id)) showEditor('note',id); } });
 try {
   const response=await fetch('/api/workspace'); if(!response.ok) throw new Error('Сервер вернул ошибку.');
   const saved=await response.json();
@@ -282,5 +296,6 @@ try {
 } catch(e) { fatal=true; saveError='Не удалось загрузить данные. Проверьте окно Miyuneya.bat и обновите страницу. '+(e         ).message; }
 try { ai=await aiRequest('/api/assistant'); } catch {}
 render();
-assistant=mountAssistant({ look, update:updateLook, status:()=>ai, setStatus:value=>{ai=value;if(page==='settings')render();}, toast, addTask, addNote, remove:removeEntry });
+assistant=mountAssistant({ look, update:updateLook, status:()=>ai, setStatus:value=>{ai=value;if(page==='settings')render();}, toast, addTask, addNote, remove:removeEntry, memory:()=>memoryMode, memoryChanged:()=>void memoryPanel.refresh() });
+void memoryPanel.load();
 if(page==='settings' && ai.configured) void loadModels(false);
