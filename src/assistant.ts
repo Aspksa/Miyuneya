@@ -2,7 +2,7 @@ import type { AssistantLook } from './model.js';
 
 // Floating avatar with a chat window. Appearance is saved in the workspace by the host;
 // screen position, chat geometry and history are per-browser conveniences in localStorage.
-export type AssistantStatus = { configured: boolean; keyHint: string; model: string; embedModel: string; context: boolean; customAvatar: number | null };
+export type AssistantStatus = { configured: boolean; keyHint: string; model: string; smartModel: string; embedModel: string; context: boolean; customAvatar: number | null };
 export type EntryKind = 'task' | 'note';
 export type AssistantHost = {
   look(): Required<AssistantLook>;
@@ -19,7 +19,9 @@ export type AssistantHost = {
 // Short-term memory: the oldest turns of a long dialog fold into a summary that travels with every request.
 type Summary = { text: string; count: number };
 type Action = { kind: EntryKind; id: string; title: string; undone?: boolean };
-type Message = { role: 'user' | 'assistant'; content: string; actions?: Action[]; stopped?: boolean };
+// logic: how the answer was made — a reasoning plan, the stronger model, numbers counted by code.
+type Logic = { model?: string; reasoning?: boolean; planned?: boolean; exact?: number };
+type Message = { role: 'user' | 'assistant'; content: string; actions?: Action[]; stopped?: boolean; logic?: Logic };
 type Position = { x: number; y: number; right?: boolean; bottom?: boolean };
 type Rect = { x: number; y: number; w: number; h: number };
 
@@ -161,7 +163,7 @@ export function mountAssistant(host: AssistantHost) {
   const saveHistory = () => {
     const extra = history.length - HISTORY_LIMIT;
     if (extra > 0) { history = history.slice(extra); summary = { ...summary, count: Math.max(0, summary.count - extra) }; remember('chat-summary', summary); }
-    remember('chat', history.map(({ role, content, actions, stopped }) => ({ role, content, actions, stopped })));
+    remember('chat', history.map(({ role, content, actions, stopped, logic }) => ({ role, content, actions, stopped, logic })));
   };
   const plain = (list: Message[]) => list.map(({ role, content }) => ({ role, content: role === 'assistant' ? visibleText(content) || content : content })).filter(m => m.content.trim());
   // Folds everything but the latest turns into the running summary once the dialog grows long.
@@ -203,6 +205,9 @@ export function mountAssistant(host: AssistantHost) {
     item.append(text);
     if (message.role === 'assistant' && message !== streaming?.message) {
       if (message.stopped) item.append(element('small', 'chat-stopped', 'Ответ остановлен'));
+      const logic = message.logic;
+      const how = logic ? [logic.planned ? 'продумала план рассуждения' : logic.reasoning ? 'рассуждала по шагам' : '', logic.exact ? 'числа посчитаны точно' : '', logic.model && logic.model !== host.status().model ? 'модель ' + logic.model : ''].filter(Boolean) : [];
+      if (how.length) item.append(element('small', 'chat-logic', how.join(' · ')));
       for (const action of message.actions || []) item.append(actionChip(action));
       const shown = visibleText(message.content);
       if (shown) {
@@ -291,7 +296,7 @@ export function mountAssistant(host: AssistantHost) {
           if (event.error) throw new Error(event.error);
           if (typeof event.delta === 'string') { message.content += event.delta; showDelta(); }
           if (typeof event.memory === 'string') { host.toast(event.memory); host.memoryChanged(); }
-          if (event.done) finished = true;
+          if (event.done) { finished = true; message.logic = { model: typeof event.model === 'string' ? event.model : undefined, reasoning: event.reasoning === true, planned: event.planned === true, exact: Number(event.exact) || 0 }; }
         }
       }
       if (!finished) throw new Error('Ответ оборвался. Попробуйте ещё раз.');
