@@ -2,6 +2,8 @@
 import { emptyWorkspace, validateWorkspace, combineEntries, defaultLook } from './model.js';
 import { formatNoteDate } from './calendar.js';
 import { mountAssistant, avatarSrc } from './assistant.js';
+import { accents, radii, scales, accentName, loadAppearance, saveAppearance, applyAppearance, defaultAppearance } from './appearance.js';
+                                                                 
                                                                         
                                                                  
 
@@ -16,8 +18,15 @@ const icons                         = {
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/>',
   export: '<path d="M12 15V3m-4 4 4-4 4 4M5 13v7h14v-7"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/>',
+  auto: '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16Z" class="fill-solid"/>',
+  palette: '<path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.9 1.4-1.9-.5-1.2.3-2.4 1.6-2.4H17a4 4 0 0 0 4-4c0-5.2-4-9.7-9-9.7Z" class="fill"/><circle cx="7.5" cy="11" r="1.3" class="fill-solid"/><circle cx="10" cy="7" r="1.3" class="fill-solid"/><circle cx="14.5" cy="7" r="1.3" class="fill-solid"/>',
+  // Two-tone navigation marks: a soft filled body with crisp strokes on top.
+  navNotes: '<path d="M6.5 3.5h8l4 4v11a2 2 0 0 1-2 2h-10a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2Z" class="fill"/><path d="M14.5 3.5v4h4"/><path d="M8 11h6M8 14.5h3.5"/><path d="m12.5 18 1.6 1.6L18 15.7" class="accent-stroke"/>',
+  navSettings: '<path d="M12 3.2 14 5l2.6-.4.9 2.5 2.3 1.3-.6 2.6 1.3 2.3-1.9 1.8-.1 2.7-2.6.5-1.6 2.1L12 19.4l-2.4 1.2L8 18.5l-2.6-.5-.1-2.7-1.9-1.8L4.7 11l-.6-2.6 2.3-1.3.9-2.5L10 5Z" class="fill"/><circle cx="12" cy="12" r="3.2"/>',
 };
 const icon = (name        ) => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.notes}</svg>`;
+const navIcon = (name        ) => `<span class="nav-icon">${icon(name)}</span>`;
 const escape = (value        ) => value.replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c] ));
 const newId = () => Array.from(crypto.getRandomValues(new Uint32Array(4)), n => n.toString(16).padStart(8, '0')).join('');
 const app = document.querySelector                ('#app') ;
@@ -34,6 +43,7 @@ let editing                                         = { kind: 'note' };
 let toastTimer                               ;
 let ai                  = { configured: false, keyHint: '', model: '', context: true, customAvatar: null };
 let saveAgain = false;
+let appearance             = loadAppearance();
 let aiModels                  = null;
 let aiBusy = false;
 let assistant                                               ;
@@ -48,6 +58,10 @@ function toast(message        ) {
 function applyTheme() {
   const dark = data.settings.theme === 'dark' || (data.settings.theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  applyAppearance(appearance, dark);
+}
+function setAppearance(change                     ) {
+  appearance = { ...appearance, ...change }; saveAppearance(appearance); applyTheme(); render();
 }
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 const shortDate = formatNoteDate;
@@ -76,13 +90,25 @@ function aiCard() {
     : `<input id="ai-model" value="${escape(ai.model)}" maxlength="200" autocomplete="off" spellcheck="false" placeholder="например, openai/gpt-oss-120b" ${aiBusy?'disabled':''}>`;
   return `<section class="settings-card ai-card"><h2>Помощница и cloud.ru</h2><p>Миюнэя отвечает в чате через модели cloud.ru Foundation Models. Ключ хранится только на этом компьютере в <code>data/assistant.json</code>, не попадает в браузер и резервные копии; запросы к cloud.ru отправляет локальный сервер.</p><div class="ai-status ${ai.configured?'on':''}"><i class="dot"></i>${ai.configured?`Подключено · ключ ${escape(ai.keyHint)}`:'Ключ не сохранён'}</div><form id="ai-form" autocomplete="off"><label class="field">API-ключ cloud.ru<input id="ai-key" type="password" maxlength="512" autocomplete="new-password" spellcheck="false" placeholder="${ai.configured?'Сохранён. Введите новый, чтобы заменить':'Вставьте ключ из личного кабинета cloud.ru'}" ${aiBusy?'disabled':''}></label><label class="field">Модель${modelField}</label><div class="ai-actions"><button class="button primary" type="submit" ${aiBusy?'disabled':''}>Сохранить</button><button class="button" type="button" data-ai-models ${aiBusy||!ai.configured?'disabled':''}>${aiModels?'Обновить список моделей':'Загрузить список моделей'}</button>${ai.configured?`<button class="button quiet danger" type="button" data-ai-forget ${aiBusy?'disabled':''}>Удалить ключ</button>`:''}</div></form><label class="switch ai-context"><input type="checkbox" id="ai-context" ${ai.context?'checked':''} ${aiBusy?'disabled':''}><span>Помощница видит заметки и задачи. Они отправляются в cloud.ru вместе с вопросом, чтобы она могла найти запись, напомнить о делах и добавить задачу.</span></label><div class="ai-look"><span class="face"><img src="${avatarSrc(look(),ai)}" alt="" decoding="async"></span><label class="switch"><input type="checkbox" id="ai-avatar-visible" ${look().hidden?'':'checked'}><span>Показывать аватар на экране</span></label></div><p class="ai-hint">Перетаскивайте аватар мышью куда удобно. Левая кнопка открывает чат, правая — меню: образ (можно загрузить свой), размер, прозрачность, анимация и прилипание к краям.</p></section>`;
 }
+function appearanceCard() {
+  const custom = accentName(appearance.accent) === 'Свой';
+  const group = (title        , hint        , body        , extra = '') => `<div class="look-group"><div class="look-label"><b>${title}</b>${extra}<span>${hint}</span></div>${body}</div>`;
+  const option = (attr        , key        , selected         , preview        , label        ) => `<button type="button" class="look-option ${selected?'active':''}" ${attr}="${key}" aria-pressed="${selected}">${preview}<span>${label}</span></button>`;
+  return `<section class="settings-card look-card"><div class="card-head"><h2>${icon('palette')}Внешний вид</h2><button type="button" class="text-link" data-appearance-reset>Сбросить</button></div><p>Тема, цвет, скругления и размер интерфейса. Всё меняется сразу. Тема сохраняется в пространстве, остальное — в этом браузере.</p>`
+    + group('Тема', 'Светлая, тёмная или как в системе', `<div class="look-options">${([['light','Светлая','sun'],['dark','Тёмная','moon'],['auto','Как в системе','auto']]         ).map(([key,label,name])=>option('data-theme',key,data.settings.theme===key,`<span class="theme-preview ${key}">${icon(name)}</span>`,label)).join('')}</div>`)
+    + group('Акцентный цвет', 'Цвет кнопок, отметок и аватара. «Свой» открывает палитру.', `<div class="swatches" role="radiogroup" aria-label="Акцентный цвет">${accents.map(([name,hex])=>`<button type="button" class="swatch" role="radio" aria-checked="${appearance.accent===hex}" aria-label="${name}" title="${name}" data-accent="${hex}" data-swatch="${hex}"></button>`).join('')}<label class="swatch custom" title="Свой цвет" aria-checked="${custom}" ${custom?`data-swatch="${appearance.accent}"`:''}><input type="color" id="accent-custom" value="${appearance.accent}" aria-label="Свой цвет"></label></div>`, `<em class="accent-name"><i data-swatch="${appearance.accent}"></i>${escape(accentName(appearance.accent))}</em>`)
+    + group('Скругление', 'Углы карточек и кнопок', `<div class="look-options">${radii.map(([key,label])=>option('data-radius',key,appearance.radius===key,`<span class="radius-preview ${key}"></span>`,label)).join('')}</div>`)
+    + group('Масштаб', 'Размер текста и элементов всего приложения', `<div class="look-options">${scales.map(([key,label])=>option('data-scale',key,appearance.scale===key,`<span class="scale-preview ${key}">Aa</span>`,label)).join('')}</div>`)
+    + `</section>`;
+}
 function settings() {
-  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div><section class="settings-card"><h2>Оформление</h2><p>Спокойная палитра, в которой легко сосредоточиться.</p><div class="themes">${[['light','Светлая'],['dark','Тёмная'],['auto','Как в системе']].map(([key,label])=>`<button class="theme-option ${data.settings.theme===key?'active':''}" data-theme="${key}" aria-pressed="${data.settings.theme===key}">${label}</button>`).join('')}</div></section><section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. Скачайте копию перед переносом или восстановите её из JSON-файла.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.2.0</span><h2>Место для вашего мира</h2><p>Первая версия личного пространства. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Сейчас доступны заметки и задачи в одном списке, настройки и помощница с чатом через cloud.ru. Граф знаний можно добавить следующим этапом.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
+  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div>${appearanceCard()}<section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. Скачайте копию перед переносом или восстановите её из JSON-файла.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.2.0</span><h2>Место для вашего мира</h2><p>Первая версия личного пространства. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Сейчас доступны заметки и задачи в одном списке, настройки и помощница с чатом через cloud.ru. Граф знаний можно добавить следующим этапом.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
 }
 function render(focus = false) {
   applyTheme();
   const count = data.notes.length + data.tasks.filter(t => !t.done).length;
-  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><a class="brand" href="#notes"><img src="/favicon.svg" alt="" width="37" height="37">Miyuneya</a><p class="brand-caption">ВАШ ТИХИЙ МИР</p><p class="nav-label">ПРОСТРАНСТВО</p><nav class="nav" aria-label="Основная навигация"><a href="#notes" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${icon('notes')}${pageNames.notes}<span class="count">${count}</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${icon('settings')}Настройки</a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Поиск по заметкам и задачам" placeholder="Найти в своём пространстве" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${({notes,settings})[page]()}</main></div></div>`;
+  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><a class="brand" href="#notes"><img src="/favicon.svg" alt="" width="37" height="37">Miyuneya</a><p class="brand-caption">ВАШ ТИХИЙ МИР</p><p class="nav-label">ПРОСТРАНСТВО</p><nav class="nav" aria-label="Основная навигация"><a href="#notes" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span><span class="count">${count}</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">Настройки</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Поиск по заметкам и задачам" placeholder="Найти в своём пространстве" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${({notes,settings})[page]()}</main></div></div>`;
+  for (const el of app.querySelectorAll             ('[data-swatch]')) el.style.setProperty('--swatch', el.dataset.swatch );
   if (focus) document.querySelector             ('#content')?.focus();
 }
 // A change made while another save is in flight is sent right after it instead of being dropped.
@@ -127,6 +153,10 @@ app.addEventListener('click', async event => {
   if (target.dataset.new) return showEditor(target.dataset.new                 );
   if (target.dataset.edit) return showEditor('note',target.dataset.edit);
   if (target.hasAttribute('data-export')) return download();
+  if (target.dataset.accent) return setAppearance({accent:target.dataset.accent});
+  if (target.dataset.radius) return setAppearance({radius:target.dataset.radius          });
+  if (target.dataset.scale) return setAppearance({scale:target.dataset.scale         });
+  if (target.hasAttribute('data-appearance-reset')) { appearance=defaultAppearance(); saveAppearance(appearance); applyTheme(); render(); toast('Оформление сброшено'); return; }
   if (saving || fatal) return;
   if (target.hasAttribute('data-retry')) return void await save();
   if (target.dataset.deleteNote && await confirmDelete('Удалить заметку?')) { data.notes=data.notes.filter(n=>n.id!==target.dataset.deleteNote); if(await save()) toast('Заметка удалена'); }
@@ -140,6 +170,8 @@ app.addEventListener('click', async event => {
 });
 app.addEventListener('input', event => {
   const input=event.target                    ;
+  // Live preview while the palette is open; the choice is stored on change.
+  if (input.id==='accent-custom') { applyAppearance({...appearance,accent:input.value},document.documentElement.dataset.theme==='dark'); return; }
   if (input.id==='search') {
     query=input.value; const caret=input.selectionStart;
     if(page==='settings') { page='notes'; history.replaceState(null,'','#notes'); }
@@ -152,6 +184,7 @@ app.addEventListener('change', async event => {
     if (saving) return;
     const task=data.tasks.find(t=>t.id===input.dataset.toggle); if(task) {task.done=input.checked; await save();}
   }
+  if (input.id==='accent-custom') return setAppearance({accent:input.value.toLowerCase()});
   if (input.id==='ai-avatar-visible') return updateLook({hidden:!input.checked});
   if (input.id==='ai-context') { if(await saveAi({context:input.checked})) toast(input.checked?'Помощница видит заметки и задачи':'Доступ к заметкам и задачам выключен'); return; }
   if (input.id==='import-file' && input.files?.[0]) {
