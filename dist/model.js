@@ -1,16 +1,23 @@
 // Generated from src/model.ts by npm run build.
                                                                                   
                                                                                    
-                                                                                                                                   
+// Avatar appearance travels with the workspace; its screen position stays in the browser.
+                                                                                                               
+                                                                                                                                                              
+export const defaultLook = ()                => ({ avatar: 1, size: 'm', mirror: false, hidden: false });
 export function emptyWorkspace()            {
   return { version: 1, notes: [], tasks: [], settings: { theme: 'light', name: 'Хозяин' } };
 }
 function record(value         )                                   { return !!value && typeof value === 'object' && !Array.isArray(value); }
 function text(value         , max        )                  { return typeof value === 'string' && value.length <= max; }
 function date(value         )                  { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
+export function validLook(value         )                         {
+  return record(value) && [1, 2, 3, 4].includes(value.avatar          ) && ['s', 'm', 'l'].includes(value.size          ) && typeof value.mirror === 'boolean' && typeof value.hidden === 'boolean';
+}
 export function validateWorkspace(value         )                     {
   if (!record(value) || value.version !== 1 || !Array.isArray(value.notes) || !Array.isArray(value.tasks) || !record(value.settings)) return false;
   if (value.notes.length > 5000 || value.tasks.length > 5000 || !['light', 'dark', 'auto'].includes(String(value.settings.theme)) || !text(value.settings.name, 80)) return false;
+  if (value.settings.assistant !== undefined && !validLook(value.settings.assistant)) return false;
   const ids = new Set        ();
   for (const item of [...value.notes, ...value.tasks]) {
     if (!record(item) || !text(item.id, 100) || !item.id || ids.has(item.id) || !text(item.title, 200) || !item.title.trim()) return false;

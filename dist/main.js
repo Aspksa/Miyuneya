@@ -1,7 +1,9 @@
 // Generated from src/main.ts by npm run build.
-import { emptyWorkspace, validateWorkspace, combineEntries } from './model.js';
+import { emptyWorkspace, validateWorkspace, combineEntries, defaultLook } from './model.js';
 import { formatNoteDate } from './calendar.js';
-                                                         
+import { mountAssistant, avatarUrl } from './assistant.js';
+                                                                        
+                                                      
 
                                  
 const icons                         = {
@@ -30,6 +32,10 @@ let saveError = '';
 let fatal = false;
 let editing                                         = { kind: 'note' };
 let toastTimer                               ;
+let ai                  = { configured: false, keyHint: '', model: '' };
+let aiModels                  = null;
+let aiBusy = false;
+let assistant                                               ;
 const pageNames                      = { notes:'Заметки и задачи', settings:'Настройки' };
 // Old #home and #tasks links land on the shared list.
 function getPage()       { return location.hash.slice(1) === 'settings' ? 'settings' : 'notes'; }
@@ -61,8 +67,16 @@ function notes() {
     : empty('Здесь пока пусто', 'Добавьте заметку или задачу.', 'task', 'Добавить задачу');
   return `<div class="page-heading"><h1>Заметки и задачи</h1><div class="heading-actions"><button class="button" data-new="note">${icon('plus')}Заметка</button><button class="button primary" data-new="task">${icon('plus')}Задача</button></div></div><div class="task-controls" aria-label="Фильтр">${([['all','Всё'],['notes','Заметки'],['active','Задачи'],['done','Выполнено']]                          ).map(([key,label]) => `<button data-filter="${key}" class="${filter===key?'active':''}" aria-pressed="${filter===key}">${label}</button>`).join('')}</div><div class="panel">${rows || blank}</div>`;
 }
+const look = ()                => data.settings.assistant || defaultLook();
+function aiCard() {
+  const models = aiModels ? [...new Set([ai.model, ...aiModels])] : null;
+  const modelField = models
+    ? `<select id="ai-model" ${aiBusy?'disabled':''}>${models.map(m=>`<option value="${escape(m)}" ${m===ai.model?'selected':''}>${escape(m)}</option>`).join('')}</select>`
+    : `<input id="ai-model" value="${escape(ai.model)}" maxlength="200" autocomplete="off" spellcheck="false" placeholder="например, openai/gpt-oss-120b" ${aiBusy?'disabled':''}>`;
+  return `<section class="settings-card ai-card"><h2>Помощница и cloud.ru</h2><p>Миюнэя отвечает в чате через модели cloud.ru Foundation Models. Ключ хранится только на этом компьютере в <code>data/assistant.json</code>, не попадает в браузер и резервные копии; запросы к cloud.ru отправляет локальный сервер.</p><div class="ai-status ${ai.configured?'on':''}"><i class="dot"></i>${ai.configured?`Подключено · ключ ${escape(ai.keyHint)}`:'Ключ не сохранён'}</div><form id="ai-form" autocomplete="off"><label class="field">API-ключ cloud.ru<input id="ai-key" type="password" maxlength="512" autocomplete="new-password" spellcheck="false" placeholder="${ai.configured?'Сохранён. Введите новый, чтобы заменить':'Вставьте ключ из личного кабинета cloud.ru'}" ${aiBusy?'disabled':''}></label><label class="field">Модель${modelField}</label><div class="ai-actions"><button class="button primary" type="submit" ${aiBusy?'disabled':''}>Сохранить</button><button class="button" type="button" data-ai-models ${aiBusy||!ai.configured?'disabled':''}>${aiModels?'Обновить список моделей':'Загрузить список моделей'}</button>${ai.configured?`<button class="button quiet danger" type="button" data-ai-forget ${aiBusy?'disabled':''}>Удалить ключ</button>`:''}</div></form><div class="ai-look"><span class="face"><img src="${avatarUrl(look().avatar)}" alt="" decoding="async"></span><label class="switch"><input type="checkbox" id="ai-avatar-visible" ${look().hidden?'':'checked'}><span>Показывать аватар на экране</span></label></div><p class="ai-hint">Перетаскивайте аватар мышью куда удобно. Левая кнопка открывает чат, правая — меню с выбором из четырёх образов, размером и отражением.</p></section>`;
+}
 function settings() {
-  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div><section class="settings-card"><h2>Оформление</h2><p>Спокойная палитра, в которой легко сосредоточиться.</p><div class="themes">${[['light','Светлая'],['dark','Тёмная'],['auto','Как в системе']].map(([key,label])=>`<button class="theme-option ${data.settings.theme===key?'active':''}" data-theme="${key}" aria-pressed="${data.settings.theme===key}">${label}</button>`).join('')}</div></section><section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. Скачайте копию перед переносом или восстановите её из JSON-файла.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section></div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.2.0</span><h2>Место для вашего мира</h2><p>Первая версия личного пространства. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Сейчас доступны заметки и задачи в одном списке и настройки. Подключение ИИ и граф знаний можно добавить следующим этапом.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
+  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div><section class="settings-card"><h2>Оформление</h2><p>Спокойная палитра, в которой легко сосредоточиться.</p><div class="themes">${[['light','Светлая'],['dark','Тёмная'],['auto','Как в системе']].map(([key,label])=>`<button class="theme-option ${data.settings.theme===key?'active':''}" data-theme="${key}" aria-pressed="${data.settings.theme===key}">${label}</button>`).join('')}</div></section><section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. Скачайте копию перед переносом или восстановите её из JSON-файла.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.2.0</span><h2>Место для вашего мира</h2><p>Первая версия личного пространства. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Сейчас доступны заметки и задачи в одном списке, настройки и помощница с чатом через cloud.ru. Граф знаний можно добавить следующим этапом.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
 }
 function render(focus = false) {
   applyTheme();
@@ -117,6 +131,8 @@ app.addEventListener('click', async event => {
   if (target.dataset.filter) { filter=target.dataset.filter               ; render(); }
   if (target.dataset.theme) { data.settings.theme=target.dataset.theme                                  ; applyTheme(); await save(); }
   if (target.hasAttribute('data-cycle-theme')) { data.settings.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'; applyTheme(); await save(); }
+  if (target.hasAttribute('data-ai-models')) return void await loadModels(true);
+  if (target.hasAttribute('data-ai-forget') && await confirmDelete('Удалить ключ cloud.ru?')) { if(await saveAi({apiKey:null})) { aiModels=null; toast('Ключ удалён'); } }
   if (target.hasAttribute('data-menu')) { const isOpen=document.querySelector('#sidebar') .classList.toggle('open'); target.setAttribute('aria-expanded',String(isOpen)); }
 });
 app.addEventListener('input', event => {
@@ -133,6 +149,7 @@ app.addEventListener('change', async event => {
     if (saving) return;
     const task=data.tasks.find(t=>t.id===input.dataset.toggle); if(task) {task.done=input.checked; await save();}
   }
+  if (input.id==='ai-avatar-visible') return updateLook({hidden:!input.checked});
   if (input.id==='import-file' && input.files?.[0]) {
     try {
       if(input.files[0].size>2_000_000) throw new Error('Копия больше 2 МБ.');
@@ -145,6 +162,43 @@ app.addEventListener('change', async event => {
     finally { input.value=''; }
   }
 });
+app.addEventListener('submit', async event => {
+  if ((event.target               ).id!=='ai-form') return;
+  event.preventDefault();
+  const key=document.querySelector                  ('#ai-key') .value.trim();
+  const model=document.querySelector                                    ('#ai-model') .value.trim();
+  if(!key && !ai.configured) return toast('Вставьте API-ключ cloud.ru');
+  const change                                      = {};
+  if(key) change.apiKey=key;
+  if(model) change.model=model;
+  if(await saveAi(change)) { toast('Подключение cloud.ru сохранено'); if(key || !aiModels) await loadModels(false,true); }
+});
+async function aiRequest(path        , init              ) {
+  const response=await fetch(path,init); const result=await response.json().catch(()=>({}));
+  if(!response.ok) throw new Error(result.error || 'Сервер вернул ошибку.');
+  return result;
+}
+async function saveAi(change                                            ) {
+  if(aiBusy) return false;
+  aiBusy=true; render();
+  try { ai=await aiRequest('/api/assistant',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(change)}); return true; }
+  catch(e) { toast(e instanceof TypeError?'Сервер недоступен.':(e         ).message); return false; }
+  finally { aiBusy=false; render(); assistant?.refresh(); }
+}
+// loud: the user pressed the button; afterSave: a fresh key was just stored; otherwise stay quiet.
+async function loadModels(loud         , afterSave = false) {
+  if(aiBusy || !ai.configured) return;
+  aiBusy=true; render();
+  try { aiModels=(await aiRequest('/api/assistant/models')).models; if(loud) toast(aiModels .length?`Доступно моделей: ${aiModels .length}`:'cloud.ru не вернул список моделей'); }
+  catch(e) { if(loud) toast(e instanceof TypeError?'Сервер недоступен.':(e         ).message); else if(afterSave) toast('Ключ сохранён, но список моделей не загрузился: '+(e         ).message); }
+  finally { aiBusy=false; render(); }
+}
+function updateLook(change                        ) {
+  data.settings.assistant={...look(),...change};
+  assistant?.refresh();
+  if(page==='settings') render();
+  void save();
+}
 document.querySelector('#editor-form') .addEventListener('submit', async event=>{
   event.preventDefault(); if(saving) return;
   const title=document.querySelector                  ('#entry-title') .value.trim();
@@ -158,7 +212,7 @@ document.querySelector('#editor-form') .addEventListener('submit', async event=>
   editor.close(); if(await save()) toast(editing.kind==='note'?'Заметка сохранена':'Задача добавлена');
 });
 for(const id of ['close-editor','cancel-editor']) document.querySelector('#'+id) .addEventListener('click',()=>editor.close());
-window.addEventListener('hashchange',()=>{page=getPage();query='';render(true);window.scrollTo(0,0);});
+window.addEventListener('hashchange',()=>{page=getPage();query='';render(true);window.scrollTo(0,0);if(page==='settings' && ai.configured && !aiModels) void loadModels(false);});
 window.addEventListener('beforeunload', event=>{ if(saving || saveError) {event.preventDefault();event.returnValue='';} });
 document.addEventListener('keydown',event=>{
   const target=event.target               ;
@@ -171,4 +225,7 @@ try {
   if(!validateWorkspace(saved.data) || !Number.isSafeInteger(saved.revision)) throw new Error('Неверный формат данных сервера.');
   data=saved.data;revision=saved.revision;
 } catch(e) { fatal=true; saveError='Не удалось загрузить данные. Проверьте окно Miyuneya.bat и обновите страницу. '+(e         ).message; }
+try { ai=await aiRequest('/api/assistant'); } catch {}
 render();
+assistant=mountAssistant({ look, update:updateLook, status:()=>ai, toast });
+if(page==='settings' && ai.configured) void loadModels(false);
