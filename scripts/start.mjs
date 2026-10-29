@@ -58,7 +58,7 @@ async function runServer() {
     const pointer={port:ready.port,instance,launchId,pid:proc.pid};
     stage='health';
     if(!await healthy(pointer,instance)) throw Object.assign(new Error('Invalid health response'),{code:'HEALTH_FAILED'});
-    for(const path of ['/','/main.js','/model.js','/calendar.js','/assistant.js','/appearance.js','/memory.js','/style.css','/fox.svg','/favicon.svg']) {
+    for(const path of ['/','/main.js','/model.js','/calendar.js','/assistant.js','/appearance.js','/memory.js','/disk.js','/style.css','/fox.svg','/favicon.svg']) {
       const response=await localRequest(pointer.port,path);
       if(response.status!==200 || !response.body.length) throw Object.assign(new Error('Asset readiness failed'),{code:'ASSET_NOT_READY'});
     }

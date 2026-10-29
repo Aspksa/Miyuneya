@@ -1,5 +1,5 @@
-export type Note = { id: string; title: string; body: string; updatedAt: string };
-export type Task = { id: string; title: string; done: boolean; createdAt: string };
+export type Note = { id: string; title: string; body: string; updatedAt: string; pinned?: boolean };
+export type Task = { id: string; title: string; done: boolean; createdAt: string; details?: string; dueDate?: string; priority?: 'low' | 'normal' | 'high'; updatedAt?: string; completedAt?: string };
 // Avatar appearance travels with the workspace; its screen position stays in the browser.
 // avatar 5 is the user's own uploaded image; animate, snap and opacity arrived later and stay optional.
 export type AssistantLook = { avatar: 1 | 2 | 3 | 4 | 5; size: 's' | 'm' | 'l'; mirror: boolean; hidden: boolean; animate?: boolean; snap?: boolean; opacity?: number };
@@ -10,6 +10,7 @@ export function emptyWorkspace(): Workspace {
 }
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
 function text(value: unknown, max: number): value is string { return typeof value === 'string' && value.length <= max; }
+export function validLocalDate(value: unknown): value is string { if(typeof value!=='string' || !/^\d{4}-\d{2}-\d{2}$/.test(value))return false;const [y,m,d]=value.split('-').map(Number);const date=new Date(0);date.setUTCFullYear(y,m-1,d);return date.getUTCFullYear()===y&&date.getUTCMonth()===m-1&&date.getUTCDate()===d; }
 function date(value: unknown): value is string { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
 export function validLook(value: unknown): value is AssistantLook {
   return record(value) && [1, 2, 3, 4, 5].includes(value.avatar as number) && ['s', 'm', 'l'].includes(value.size as string) && typeof value.mirror === 'boolean' && typeof value.hidden === 'boolean'
@@ -25,7 +26,7 @@ export function validateWorkspace(value: unknown): value is Workspace {
     if (!record(item) || !text(item.id, 100) || !item.id || ids.has(item.id) || !text(item.title, 200) || !item.title.trim()) return false;
     ids.add(item.id);
   }
-  return value.notes.every(n => record(n) && text(n.body, 100000) && date(n.updatedAt)) && value.tasks.every(t => record(t) && typeof t.done === 'boolean' && date(t.createdAt));
+  return value.notes.every(n => record(n) && text(n.body, 100000) && date(n.updatedAt) && (n.pinned===undefined || typeof n.pinned==='boolean')) && value.tasks.every(t => record(t) && typeof t.done === 'boolean' && date(t.createdAt) && (t.details===undefined || text(t.details,10000)) && (t.dueDate===undefined || t.dueDate==='' || validLocalDate(t.dueDate)) && (t.priority===undefined || ['low','normal','high'].includes(String(t.priority))) && (t.updatedAt===undefined || date(t.updatedAt)) && (t.completedAt===undefined || date(t.completedAt)));
 }
 export function searchNotes(notes: Note[], query: string): Note[] {
   const q = query.trim().toLocaleLowerCase('ru');
@@ -37,7 +38,7 @@ export type Entry = { kind: 'note'; item: Note; date: string } | { kind: 'task';
 export function combineEntries(data: Pick<Workspace, 'notes' | 'tasks'>, query: string, filter: EntryFilter = 'all'): Entry[] {
   const q = query.trim().toLocaleLowerCase('ru');
   const notes: Entry[] = filter === 'all' || filter === 'notes' ? searchNotes(data.notes, q).map(item => ({ kind: 'note', item, date: item.updatedAt })) : [];
-  const tasks: Entry[] = filter === 'notes' ? [] : data.tasks.filter(t => t.title.toLocaleLowerCase('ru').includes(q) && (filter === 'all' || t.done === (filter === 'done'))).map(item => ({ kind: 'task', item, date: item.createdAt }));
+  const tasks: Entry[] = filter === 'notes' ? [] : data.tasks.filter(t => `${t.title} ${t.details || ''}`.toLocaleLowerCase('ru').includes(q) && (filter === 'all' || t.done === (filter === 'done'))).map(item => ({ kind: 'task', item, date: item.createdAt }));
   const finished = (e: Entry) => e.kind === 'task' && e.item.done ? 1 : 0;
-  return [...notes, ...tasks].sort((a, b) => finished(a) - finished(b) || b.date.localeCompare(a.date));
+  return [...notes, ...tasks].sort((a, b) => finished(a) - finished(b) || (a.kind==='note'&&a.item.pinned?0:1)-(b.kind==='note'&&b.item.pinned?0:1) || b.date.localeCompare(a.date));
 }

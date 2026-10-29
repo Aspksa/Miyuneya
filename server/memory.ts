@@ -52,7 +52,7 @@ export type Dialog = { id: string; messages: ChatMessage[]; summary: string; upd
 export type Memory = { version: 1; settings: Settings; items: MemoryItem[]; episodes: Episode[]; entities: Entity[]; edges: Edge[]; diary: DiaryEntry[];
   topics: Topic[]; understanding: { text: string; updated: string } | null; questions: Question[]; reminders: Reminder[]; promises: Promise_[];
   thoughts: Thought[]; thinks: string[]; causes: Cause[]; goals: Goal[]; predictions: Prediction[]; mistakes: Mistake[];
-  journal: JournalEntry[]; lastSleep: string | null; notesSeen: string | null; dialogs: Dialog[]; marks: Mark[] };
+  journal: JournalEntry[]; lastSleep: string | null; notesSeen: string | null; noteVersions?: Record<string,string>; dialogs: Dialog[]; marks: Mark[] };
 // The last message already reflected on, so a dialog that continues later is not analysed twice.
 type Mark = { id: string; last: string };
 
@@ -170,6 +170,7 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
   memory.journal = memory.journal.slice(-LIMITS.journal); memory.dialogs = memory.dialogs.slice(-LIMITS.dialogs);
   memory.lastSleep = typeof raw.lastSleep === 'string' && Number.isFinite(Date.parse(raw.lastSleep)) ? raw.lastSleep : null;
   memory.notesSeen = typeof raw.notesSeen === 'string' && Number.isFinite(Date.parse(raw.notesSeen)) ? raw.notesSeen : null;
+  if(raw.noteVersions && typeof raw.noteVersions==='object' && !Array.isArray(raw.noteVersions))memory.noteVersions=Object.fromEntries(Object.entries(raw.noteVersions).filter(([id,version])=>id.length<=100 && typeof version==='string' && Number.isFinite(Date.parse(version))).slice(0,5000)) as Record<string,string>;
   return memory;
 }
 
@@ -600,15 +601,18 @@ export function reflectInput(memory: Memory, dialog: Dialog, workspace: Workspac
 // Notes changed since the previous sleep, newest first, so the assistant also learns from what the user writes.
 export function changedNotes(memory: Memory, workspace: Workspace | null) {
   if (!workspace) return [];
-  return workspace.notes.filter(n => !memory.notesSeen || n.updatedAt > memory.notesSeen).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 30);
+  return workspace.notes.filter(n => memory.noteVersions ? memory.noteVersions[n.id]!==n.updatedAt : !memory.notesSeen || n.updatedAt > memory.notesSeen).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)).slice(0, 30);
+}
+export function notesForSleep(memory:Memory,workspace:Workspace|null){
+  let budget=15000;
+  return changedNotes(memory,workspace).filter(n=>{const size=n.id.length+n.title.length+Math.min(n.body.length,6000)+10;if(size>budget)return false;budget-=size;return true;});
 }
 export function sleepInput(memory: Memory, workspace: Workspace | null = null, now = Date.now()) {
   const fresh = memory.episodes.filter(e => !e.consolidated);
   const older = memory.episodes.filter(e => e.consolidated).slice(-30);
   const episode = (e: Episode) => `[${e.id}] ${day(e.date)}: ${e.topic}${e.outcome ? ' — ' + e.outcome : ''}${e.score ? ` (самооценка ${e.score}/5${e.weak ? ', слабое место: ' + e.weak : ''})` : ''}`;
   const item = (i: MemoryItem) => `${itemLine(i)} · сила ${strength(i, now).toFixed(2)}, подтверждений ${i.hits}`;
-  let budget = 15_000;
-  const notes = changedNotes(memory, workspace).map(n => { const body = n.body.length > 600 ? n.body.slice(0, 600) + '…' : n.body; const line = `[${n.id}] ${n.title}${body.trim() ? '\n' + body : ''}`; budget -= line.length; return budget > 0 ? line : ''; }).filter(Boolean);
+  const notes = notesForSleep(memory, workspace).map(n => { const body = n.body.length > 6000 ? n.body.slice(0, 6000) + '…' : n.body; return `[${n.id}] ${n.title}${body.trim() ? '\n' + body : ''}`; });
   const tasks = workspace ? workspace.tasks.filter(t => !t.done).slice(-60).map(t => `[${t.id}] ${t.title}`) : [];
   return [`Факты:\n${memory.items.filter(i => i.kind === 'fact').map(item).join('\n') || '— нет'}`, `Правила:\n${memory.items.filter(i => i.kind === 'rule').map(item).join('\n') || '— нет'}`,
     `Сущности:\n${memory.entities.map(entityLine).join('\n') || '— нет'}`,
@@ -841,6 +845,8 @@ export async function openMemory(dataDir: string, options: Options) {
       console.error('Память помощницы не прочитана: data/memory.json сохранён как memory.broken-*.json, начата новая.');
     }
   }
+  // Once, re-scan legacy notes: a global timestamp could previously skip unprocessed batches.
+  memory.noteVersions ||= {};
   const key = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
   let vectors = new Map<string, number[]>(); let vectorModel = '';
   try {
@@ -927,14 +933,15 @@ export async function openMemory(dataDir: string, options: Options) {
   async function sleep() {
     const now = Date.now();
     const workspace = options.workspace();
-    const notes = changedNotes(memory, workspace);
+    memory.noteVersions ||= {};
+    const notes = notesForSleep(memory, workspace);
     let result = null;
     if (memory.items.length || memory.episodes.some(e => !e.consolidated) || notes.length) {
       try { result = parseJson(await options.ask(SLEEP_PROMPT, sleepInput(memory, workspace, now), 180_000, true)); }
       catch (e) { retrySleepAt = Date.now() + 3_600_000; throw e; }
     }
     applySleep(memory, result, Date.now(), new Set([...titles().keys(), ...memory.episodes.map(e => e.id)]));
-    if (workspace) memory.notesSeen = new Date(now).toISOString();
+    if (workspace) { memory.notesSeen=new Date(now).toISOString();const versions=Object.assign(Object.create(null),memory.noteVersions || {});for(const note of notes)versions[note.id]=note.updatedAt;memory.noteVersions=Object.fromEntries(workspace.notes.filter(n=>versions[n.id]).map(n=>[n.id,versions[n.id]])); }
     await save();
     return result;
   }
