@@ -65,7 +65,20 @@ async function runServer() {
     return {state,pointer};
   } catch(e){await stopChild(state);child=null;throw e;}
 }
+async function legacyInstance() {
+  let saved;try{saved=await readJSON(pointerFile);}catch(e){if(e.code==='ENOENT' || e instanceof SyntaxError)return null;throw e;}
+  if(saved.launchId || !Number.isInteger(saved.port) || saved.port<1 || saved.port>65535)return null;
+  try{
+    const response=await localRequest(saved.port,'/__miyuneya/health');const body=JSON.parse(response.body);
+    const legacy=createHash('sha256').update(root).digest('hex').slice(0,24);
+    if(response.status===200 && body.app==='Miyuneya' && (body.instance===legacy || body.instance===instance))return saved;
+  }catch{}
+  return null;
+}
 async function main() {
+  // The original 0.1.0 launcher used a file lock. Never start a second writer beside it.
+  const legacy=await legacyInstance();
+  if(legacy){const url=`http://127.0.0.1:${legacy.port}`;console.warn('Работает предыдущая версия Miyuneya. Закройте её окно и снова запустите BAT, чтобы применить обновлённый запуск.');show(url,true);openBrowser(url);return;}
   if(process.platform==='win32' && root.startsWith('\\\\')) throw Object.assign(new Error('UNC path unsupported'),{code:'UNC_NOT_SUPPORTED'});
   release=await acquireLock(instance);
   if(!release) {

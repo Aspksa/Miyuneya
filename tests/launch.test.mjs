@@ -105,3 +105,12 @@ test('Diagnostics never persist keys, environment values or note bodies',async t
   const child=nodeLaunch(root,{CLOUD_RU_API_KEY:secret,OPENAI_API_KEY:secret});await waitReady(root,child);await stop(root,child);
   const log=await readFile(join(root,'.runtime','logs','startup.log'),'utf8');assert.equal(log.includes(secret),false);assert.equal(log.includes('CLOUD_RU_API_KEY'),false);
 });
+
+test('A running 0.1.0 instance is reused instead of starting a second data writer',async t=>{
+  const root=await fixture(t);const instance=createHash('sha256').update(root).digest('hex').slice(0,24);
+  const legacy=createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({app:'Miyuneya',instance}));});
+  legacy.listen(0,'127.0.0.1');await once(legacy,'listening');own(root,()=>new Promise(r=>legacy.close(r)));
+  const pointer=JSON.stringify({port:legacy.address().port,pid:process.pid});await atomicWrite(join(root,'.runtime','server.json'),pointer);
+  const child=nodeLaunch(root);assert.equal((await deadline(child.closed)).code,0);assert.match(child.errors,/предыдущая версия/);assert.match(child.output,/уже запущена/);
+  assert.equal(await readFile(join(root,'.runtime','server.json'),'utf8'),pointer);assert.ok(legacy.listening);
+});
