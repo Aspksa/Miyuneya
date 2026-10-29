@@ -1,9 +1,9 @@
 // Generated from src/main.ts by npm run build.
 import { emptyWorkspace, validateWorkspace, combineEntries, defaultLook } from './model.js';
 import { formatNoteDate } from './calendar.js';
-import { mountAssistant, avatarUrl } from './assistant.js';
+import { mountAssistant, avatarSrc } from './assistant.js';
                                                                         
-                                                      
+                                                                 
 
                                  
 const icons                         = {
@@ -32,7 +32,8 @@ let saveError = '';
 let fatal = false;
 let editing                                         = { kind: 'note' };
 let toastTimer                               ;
-let ai                  = { configured: false, keyHint: '', model: '' };
+let ai                  = { configured: false, keyHint: '', model: '', context: true, customAvatar: null };
+let saveAgain = false;
 let aiModels                  = null;
 let aiBusy = false;
 let assistant                                               ;
@@ -67,13 +68,13 @@ function notes() {
     : empty('Здесь пока пусто', 'Добавьте заметку или задачу.', 'task', 'Добавить задачу');
   return `<div class="page-heading"><h1>Заметки и задачи</h1><div class="heading-actions"><button class="button" data-new="note">${icon('plus')}Заметка</button><button class="button primary" data-new="task">${icon('plus')}Задача</button></div></div><div class="task-controls" aria-label="Фильтр">${([['all','Всё'],['notes','Заметки'],['active','Задачи'],['done','Выполнено']]                          ).map(([key,label]) => `<button data-filter="${key}" class="${filter===key?'active':''}" aria-pressed="${filter===key}">${label}</button>`).join('')}</div><div class="panel">${rows || blank}</div>`;
 }
-const look = ()                => data.settings.assistant || defaultLook();
+const look = ()                          => ({ ...defaultLook(), ...data.settings.assistant });
 function aiCard() {
   const models = aiModels ? [...new Set([ai.model, ...aiModels])] : null;
   const modelField = models
     ? `<select id="ai-model" ${aiBusy?'disabled':''}>${models.map(m=>`<option value="${escape(m)}" ${m===ai.model?'selected':''}>${escape(m)}</option>`).join('')}</select>`
     : `<input id="ai-model" value="${escape(ai.model)}" maxlength="200" autocomplete="off" spellcheck="false" placeholder="например, openai/gpt-oss-120b" ${aiBusy?'disabled':''}>`;
-  return `<section class="settings-card ai-card"><h2>Помощница и cloud.ru</h2><p>Миюнэя отвечает в чате через модели cloud.ru Foundation Models. Ключ хранится только на этом компьютере в <code>data/assistant.json</code>, не попадает в браузер и резервные копии; запросы к cloud.ru отправляет локальный сервер.</p><div class="ai-status ${ai.configured?'on':''}"><i class="dot"></i>${ai.configured?`Подключено · ключ ${escape(ai.keyHint)}`:'Ключ не сохранён'}</div><form id="ai-form" autocomplete="off"><label class="field">API-ключ cloud.ru<input id="ai-key" type="password" maxlength="512" autocomplete="new-password" spellcheck="false" placeholder="${ai.configured?'Сохранён. Введите новый, чтобы заменить':'Вставьте ключ из личного кабинета cloud.ru'}" ${aiBusy?'disabled':''}></label><label class="field">Модель${modelField}</label><div class="ai-actions"><button class="button primary" type="submit" ${aiBusy?'disabled':''}>Сохранить</button><button class="button" type="button" data-ai-models ${aiBusy||!ai.configured?'disabled':''}>${aiModels?'Обновить список моделей':'Загрузить список моделей'}</button>${ai.configured?`<button class="button quiet danger" type="button" data-ai-forget ${aiBusy?'disabled':''}>Удалить ключ</button>`:''}</div></form><div class="ai-look"><span class="face"><img src="${avatarUrl(look().avatar)}" alt="" decoding="async"></span><label class="switch"><input type="checkbox" id="ai-avatar-visible" ${look().hidden?'':'checked'}><span>Показывать аватар на экране</span></label></div><p class="ai-hint">Перетаскивайте аватар мышью куда удобно. Левая кнопка открывает чат, правая — меню с выбором из четырёх образов, размером и отражением.</p></section>`;
+  return `<section class="settings-card ai-card"><h2>Помощница и cloud.ru</h2><p>Миюнэя отвечает в чате через модели cloud.ru Foundation Models. Ключ хранится только на этом компьютере в <code>data/assistant.json</code>, не попадает в браузер и резервные копии; запросы к cloud.ru отправляет локальный сервер.</p><div class="ai-status ${ai.configured?'on':''}"><i class="dot"></i>${ai.configured?`Подключено · ключ ${escape(ai.keyHint)}`:'Ключ не сохранён'}</div><form id="ai-form" autocomplete="off"><label class="field">API-ключ cloud.ru<input id="ai-key" type="password" maxlength="512" autocomplete="new-password" spellcheck="false" placeholder="${ai.configured?'Сохранён. Введите новый, чтобы заменить':'Вставьте ключ из личного кабинета cloud.ru'}" ${aiBusy?'disabled':''}></label><label class="field">Модель${modelField}</label><div class="ai-actions"><button class="button primary" type="submit" ${aiBusy?'disabled':''}>Сохранить</button><button class="button" type="button" data-ai-models ${aiBusy||!ai.configured?'disabled':''}>${aiModels?'Обновить список моделей':'Загрузить список моделей'}</button>${ai.configured?`<button class="button quiet danger" type="button" data-ai-forget ${aiBusy?'disabled':''}>Удалить ключ</button>`:''}</div></form><label class="switch ai-context"><input type="checkbox" id="ai-context" ${ai.context?'checked':''} ${aiBusy?'disabled':''}><span>Помощница видит заметки и задачи. Они отправляются в cloud.ru вместе с вопросом, чтобы она могла найти запись, напомнить о делах и добавить задачу.</span></label><div class="ai-look"><span class="face"><img src="${avatarSrc(look(),ai)}" alt="" decoding="async"></span><label class="switch"><input type="checkbox" id="ai-avatar-visible" ${look().hidden?'':'checked'}><span>Показывать аватар на экране</span></label></div><p class="ai-hint">Перетаскивайте аватар мышью куда удобно. Левая кнопка открывает чат, правая — меню: образ (можно загрузить свой), размер, прозрачность, анимация и прилипание к краям.</p></section>`;
 }
 function settings() {
   return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div><section class="settings-card"><h2>Оформление</h2><p>Спокойная палитра, в которой легко сосредоточиться.</p><div class="themes">${[['light','Светлая'],['dark','Тёмная'],['auto','Как в системе']].map(([key,label])=>`<button class="theme-option ${data.settings.theme===key?'active':''}" data-theme="${key}" aria-pressed="${data.settings.theme===key}">${label}</button>`).join('')}</div></section><section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. Скачайте копию перед переносом или восстановите её из JSON-файла.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.2.0</span><h2>Место для вашего мира</h2><p>Первая версия личного пространства. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Сейчас доступны заметки и задачи в одном списке, настройки и помощница с чатом через cloud.ru. Граф знаний можно добавить следующим этапом.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
@@ -84,6 +85,8 @@ function render(focus = false) {
   app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><a class="brand" href="#notes"><img src="/favicon.svg" alt="" width="37" height="37">Miyuneya</a><p class="brand-caption">ВАШ ТИХИЙ МИР</p><p class="nav-label">ПРОСТРАНСТВО</p><nav class="nav" aria-label="Основная навигация"><a href="#notes" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${icon('notes')}${pageNames.notes}<span class="count">${count}</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${icon('settings')}Настройки</a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Поиск по заметкам и задачам" placeholder="Найти в своём пространстве" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${({notes,settings})[page]()}</main></div></div>`;
   if (focus) document.querySelector             ('#content')?.focus();
 }
+// A change made while another save is in flight is sent right after it instead of being dropped.
+function persist() { if (saving) saveAgain = true; else void save(); }
 async function save() {
   if (saving || fatal) { if (fatal) toast('Не удалось загрузить исходные данные. Перезапустите приложение.'); return false; }
   saving = true;
@@ -93,7 +96,7 @@ async function save() {
     if (!response.ok) throw new Error(result.error || 'Не удалось сохранить данные.');
     revision = result.revision; saveError = ''; return true;
   } catch (e) { saveError = (e         ).message || 'Сервер недоступен. Проверьте окно запуска и сохраните резервную копию.'; toast('Изменения пока не сохранены'); return false; }
-  finally { saving = false; render(); }
+  finally { saving = false; render(); if (saveAgain) { saveAgain = false; void save(); } }
 }
 function showEditor(kind                 , id         ) {
   if (saving) { toast('Дождитесь завершения сохранения.'); return; }
@@ -150,6 +153,7 @@ app.addEventListener('change', async event => {
     const task=data.tasks.find(t=>t.id===input.dataset.toggle); if(task) {task.done=input.checked; await save();}
   }
   if (input.id==='ai-avatar-visible') return updateLook({hidden:!input.checked});
+  if (input.id==='ai-context') { if(await saveAi({context:input.checked})) toast(input.checked?'Помощница видит заметки и задачи':'Доступ к заметкам и задачам выключен'); return; }
   if (input.id==='import-file' && input.files?.[0]) {
     try {
       if(input.files[0].size>2_000_000) throw new Error('Копия больше 2 МБ.');
@@ -178,7 +182,7 @@ async function aiRequest(path        , init              ) {
   if(!response.ok) throw new Error(result.error || 'Сервер вернул ошибку.');
   return result;
 }
-async function saveAi(change                                            ) {
+async function saveAi(change                                                               ) {
   if(aiBusy) return false;
   aiBusy=true; render();
   try { ai=await aiRequest('/api/assistant',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(change)}); return true; }
@@ -197,7 +201,25 @@ function updateLook(change                        ) {
   data.settings.assistant={...look(),...change};
   assistant?.refresh();
   if(page==='settings') render();
-  void save();
+  persist();
+}
+// Entries the assistant creates from the chat. Limits match validateWorkspace.
+function addTask(title        ) {
+  if (fatal || data.tasks.length>=5000) { toast('Не удалось добавить задачу'); return null; }
+  const id=newId(); data.tasks.push({id,title:title.trim().slice(0,200) || 'Задача',done:false,createdAt:new Date().toISOString()});
+  render(); persist(); return id;
+}
+function addNote(title        , body        ) {
+  if (fatal || data.notes.length>=5000) { toast('Не удалось сохранить заметку'); return null; }
+  const id=newId(); data.notes.push({id,title:title.trim().slice(0,200) || 'Заметка',body:body.slice(0,100000),updatedAt:new Date().toISOString()});
+  render(); persist(); return id;
+}
+function removeEntry(kind           , id        ) {
+  const before=data.notes.length+data.tasks.length;
+  if (kind==='task') data.tasks=data.tasks.filter(t=>t.id!==id); else data.notes=data.notes.filter(n=>n.id!==id);
+  const changed=before!==data.notes.length+data.tasks.length;
+  if (changed) { render(); persist(); }
+  return changed;
 }
 document.querySelector('#editor-form') .addEventListener('submit', async event=>{
   event.preventDefault(); if(saving) return;
@@ -227,5 +249,5 @@ try {
 } catch(e) { fatal=true; saveError='Не удалось загрузить данные. Проверьте окно Miyuneya.bat и обновите страницу. '+(e         ).message; }
 try { ai=await aiRequest('/api/assistant'); } catch {}
 render();
-assistant=mountAssistant({ look, update:updateLook, status:()=>ai, toast });
+assistant=mountAssistant({ look, update:updateLook, status:()=>ai, setStatus:value=>{ai=value;if(page==='settings')render();}, toast, addTask, addNote, remove:removeEntry });
 if(page==='settings' && ai.configured) void loadModels(false);

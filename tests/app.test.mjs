@@ -81,7 +81,9 @@ test('Launcher works from another cwd in a Cyrillic path and reuses an active se
 test('Avatar appearance is optional and validated', () => {
   const data=emptyWorkspace();
   assert.ok(validateWorkspace({...data,settings:{...data.settings,assistant:{avatar:3,size:'l',mirror:true,hidden:false}}}));
-  assert.equal(validateWorkspace({...data,settings:{...data.settings,assistant:{avatar:5,size:'l',mirror:true,hidden:false}}}),false);
+  assert.ok(validateWorkspace({...data,settings:{...data.settings,assistant:{avatar:5,size:'s',mirror:false,hidden:false,animate:false,snap:true,opacity:.4}}}));
+  assert.equal(validateWorkspace({...data,settings:{...data.settings,assistant:{avatar:1,size:'s',mirror:false,hidden:false,opacity:0}}}),false);
+  assert.equal(validateWorkspace({...data,settings:{...data.settings,assistant:{avatar:6,size:'l',mirror:true,hidden:false}}}),false);
   assert.equal(validateWorkspace({...data,settings:{...data.settings,assistant:{avatar:1,size:'xl',mirror:false,hidden:false}}}),false);
 });
 
@@ -97,18 +99,23 @@ test('cloud.ru assistant keeps the key on the server and proxies chat', async t 
     res.setHeader('Content-Type','application/json');
     if(req.headers.authorization!=='Bearer good-key-123'){res.statusCode=401;return res.end(JSON.stringify({error:{message:'bad key good-key-wrong'}}));}
     if(req.url==='/v1/models')return res.end(JSON.stringify({data:[{id:'zeta/model'},{id:'openai/gpt-oss-120b'},{id:'bad id'}]}));
-    res.end(JSON.stringify({choices:[{message:{role:'assistant',content:' Привет, я лиса! '}}]}));
+    if(seen.at(-1).body?.messages?.at(-1)?.content==='json'){return res.end(JSON.stringify({choices:[{message:{role:'assistant',content:'Целиком'}}]}));}
+    res.writeHead(200,{'Content-Type':'text/event-stream'});
+    for(const part of ['Привет,',' я лиса!',' <task>Купить корм</task>']){res.write(`data: ${JSON.stringify({choices:[{delta:{content:part}}]})}\n\n`);await new Promise(r=>setTimeout(r,5));}
+    res.end('data: [DONE]\n\n');
   });
   fake.listen(0,'127.0.0.1');await once(fake,'listening');
   let server;
   t.after(async()=>{await server?.shutdown();fake.close();await removeTemp(root);});
+  const seeded=emptyWorkspace();seeded.notes.push({id:'n1',title:'Секретный рецепт',body:'Блины',updatedAt:'2026-10-01T10:00:00Z'});
+  await mkdir(join(root,'data'));await writeFile(join(root,'data','workspace.json'),JSON.stringify({revision:0,data:seeded}));
   server=await createApp(root,'test',false,{cloudUrl:`http://127.0.0.1:${fake.address().port}/v1/`});
   server.listen(0,'127.0.0.1');await once(server,'listening');
   const url=`http://127.0.0.1:${server.address().port}`;
   const json=(path,method,body)=>fetch(url+path,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const image=await fetch(url+'/avatars/avatar2.png');
   assert.equal(image.headers.get('content-type'),'image/png');assert.equal((await image.arrayBuffer()).byteLength,4);
-  assert.deepEqual(await (await fetch(url+'/api/assistant')).json(),{configured:false,keyHint:'',model:'openai/gpt-oss-120b'});
+  assert.deepEqual(await (await fetch(url+'/api/assistant')).json(),{configured:false,keyHint:'',model:'openai/gpt-oss-120b',context:true,customAvatar:null});
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'}]})).status,409);
   assert.equal((await json('/api/assistant','PUT',{apiKey:'short'})).status,400);
   assert.equal((await json('/api/assistant','PUT',{model:'плохая модель'})).status,400);
@@ -119,18 +126,32 @@ test('cloud.ru assistant keeps the key on the server and proxies chat', async t 
   assert.equal(rejected.status,502);const rejectedBody=await rejected.json();
   assert.match(rejectedBody.error,/не принял ключ/);assert.ok(!rejectedBody.error.includes('good-key-wrong'));
   saved=await (await json('/api/assistant','PUT',{apiKey:'good-key-123',model:'zeta/model'})).json();
-  assert.deepEqual(saved,{configured:true,keyHint:'••••-123',model:'zeta/model'});
+  assert.deepEqual(saved,{configured:true,keyHint:'••••-123',model:'zeta/model',context:true,customAvatar:null});
   assert.deepEqual(await (await fetch(url+'/api/assistant/models')).json(),{models:['openai/gpt-oss-120b','zeta/model']});
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'system',content:'x'}]})).status,400);
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'},{role:'assistant',content:'Да?'}]})).status,400);
+  const lines=async response=>(await response.text()).trim().split('\n').map(line=>JSON.parse(line));
   const chat=await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'}]});
-  assert.equal(chat.status,200);assert.deepEqual(await chat.json(),{reply:'Привет, я лиса!',model:'zeta/model'});
+  assert.equal(chat.status,200);assert.match(chat.headers.get('content-type'),/ndjson/);
+  assert.deepEqual(await lines(chat),[{delta:'Привет,'},{delta:' я лиса!'},{delta:' <task>Купить корм</task>'},{done:true,model:'zeta/model'}]);
   const sent=seen.at(-1);
   assert.equal(sent.path,'/v1/chat/completions');assert.equal(sent.auth,'Bearer good-key-123');assert.equal(sent.body.model,'zeta/model');
-  assert.equal(sent.body.messages[0].role,'system');assert.deepEqual(sent.body.messages.at(-1),{role:'user',content:'Привет'});
+  assert.equal(sent.body.stream,true);assert.equal(sent.body.messages[0].role,'system');assert.deepEqual(sent.body.messages.at(-1),{role:'user',content:'Привет'});
+  assert.match(sent.body.messages[0].content,/Секретный рецепт/);assert.match(sent.body.messages[0].content,/<task>/);
+  assert.deepEqual(await lines(await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'json'}]})),[{delta:'Целиком'},{done:true,model:'zeta/model'}]);
+  assert.equal((await (await json('/api/assistant','PUT',{context:false})).json()).context,false);
+  await lines(await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'}]}));
+  assert.doesNotMatch(seen.at(-1).body.messages[0].content,/Секретный рецепт/);
+  const png=Buffer.concat([Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]),Buffer.alloc(32,7)]);
+  assert.equal((await fetch(url+'/api/assistant/avatar',{method:'PUT',headers:{'Content-Type':'image/png'},body:Buffer.from('not an image at all')})).status,415);
+  assert.equal((await fetch(url+'/api/assistant/avatar',{method:'PUT',headers:{'Content-Type':'text/plain'},body:png})).status,415);
+  const uploaded=await (await fetch(url+'/api/assistant/avatar',{method:'PUT',headers:{'Content-Type':'image/png'},body:png})).json();
+  assert.ok(uploaded.customAvatar>0);
+  const custom=await fetch(url+'/api/assistant/avatar');
+  assert.equal(custom.headers.get('content-type'),'image/png');assert.deepEqual(Buffer.from(await custom.arrayBuffer()),png);
   assert.equal((await fetch(url+'/api/assistant/chat',{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://evil.example'},body:'{}'})).status,403);
   const file=JSON.parse(await readFile(join(root,'data','assistant.json'),'utf8'));
-  assert.deepEqual(file,{apiKey:'good-key-123',model:'zeta/model'});
+  assert.equal(file.apiKey,'good-key-123');assert.equal(file.model,'zeta/model');assert.equal(file.context,false);assert.equal(file.avatar.type,'image/png');
   assert.ok(!JSON.stringify(await (await fetch(url+'/api/workspace')).json()).includes('good-key'));
   await server.shutdown();
   server=await createApp(root,'test',false,{cloudUrl:'http://127.0.0.1:9/v1'});
@@ -139,4 +160,24 @@ test('cloud.ru assistant keeps the key on the server and proxies chat', async t 
   assert.equal((await (await fetch(again+'/api/assistant')).json()).keyHint,'••••-123');
   assert.equal((await fetch(again+'/api/assistant',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({apiKey:null})})).status,200);
   assert.equal((await (await fetch(again+'/api/assistant')).json()).configured,false);
+  assert.equal((await fetch(again+'/api/assistant/avatar')).status,200);
+  assert.equal((await (await fetch(again+'/api/assistant/avatar',{method:'DELETE'})).json()).customAvatar,null);
+  assert.equal((await fetch(again+'/api/assistant/avatar')).status,404);
+  await assert.rejects(readFile(join(root,'data','avatar-custom.png')));
+});
+
+test('Chat helpers hide action tags and build the model context', async () => {
+  const { visibleText, parseActions, noteTitle } = await import('../src/assistant.ts');
+  const { workspaceContext } = await import('../server/app.ts');
+  const raw='Готово!\n<task>Купить корм</task>\n<note title="Идея">Сад на балконе</note>';
+  assert.equal(visibleText(raw),'Готово!');
+  assert.equal(visibleText('Пишу <no'),'Пишу');assert.equal(visibleText('Пишу <task>Куп'),'Пишу');
+  assert.deepEqual(parseActions(raw),{tasks:['Купить корм'],notes:[{title:'Идея',body:'Сад на балконе'}]});
+  assert.equal(noteTitle('\n## Итоги встречи\nтекст'),'Итоги встречи');
+  const data=emptyWorkspace();
+  data.tasks.push({id:'t1',title:'Позвонить маме',done:false,createdAt:'2026-10-03T10:00:00Z'});
+  data.notes.push({id:'n1',title:'Длинная',body:'x'.repeat(5000),updatedAt:'2026-10-02T10:00:00Z'});
+  const context=workspaceContext(data,new Date('2026-10-29T10:00:00Z'));
+  assert.match(context,/Позвонить маме/);assert.match(context,/### Длинная/);assert.ok(context.length<2000);
+  assert.match(workspaceContext(data,new Date(),200),/не все записи/);
 });
