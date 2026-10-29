@@ -4,7 +4,7 @@ import { atomicWrite } from '../scripts/runtime.mjs';
 import { join } from 'node:path';
 import { validateWorkspace, emptyWorkspace } from '../src/model.ts';
 import type { Workspace } from '../src/model.ts';
-import { openMemory, parseCommand, validDialogId, validDate, transcript, COMPACT_PROMPT } from './memory.ts';
+import { openMemory, parseCommand, parseReminder, validDialogId, validDate, transcript, COMPACT_PROMPT } from './memory.ts';
 
 export const CLOUD_RU_URL = 'https://foundation-models.api.cloud.ru/v1';
 export const DEFAULT_MODEL = 'openai/gpt-oss-120b';
@@ -250,12 +250,19 @@ export async function createApp(root: string, instance: string, preview = false,
             const item = await memory.remember(command.text);
             if (item) { notes.push(`Ты только что сохранила в долговременную память: «${item.text}». Коротко подтверди.`); events.push('Запомнила: ' + item.text); }
           }
+          // «Напомни, когда заговорим о …» is kept until the talk turns to that topic.
+          const reminder = memory.data.settings.enabled ? parseReminder(last) : null;
+          if (reminder) {
+            const added = await memory.remind(reminder.about, reminder.text, last);
+            notes.push(added ? `Ты только что поставила напоминание: когда речь зайдёт о «${added.about}», напомнишь «${added.text}». Коротко подтверди.` : 'Такое напоминание уже стоит. Коротко скажи, что помнишь о нём.');
+            if (added) events.push(`Напомню, когда речь зайдёт о «${added.about}»`);
+          }
           if (command?.kind === 'forget') {
             const removed = await memory.forget(command.text);
             notes.push(removed.length ? `Ты только что удалила из памяти: ${removed.map(t => `«${t}»`).join(', ')}. Коротко подтверди.` : 'Пользователь просит забыть, но в памяти нет ничего похожего. Скажи об этом и предложи открыть меню «Память» (значок мозга вверху справа).');
             if (removed.length) events.push(`Забыла записей: ${removed.length}`);
           }
-          const recall = await memory.context(messages.filter((m: ChatMessage) => m.role === 'user').slice(-3).map((m: ChatMessage) => m.content).join('\n'));
+          const recall = await memory.context(messages.filter((m: ChatMessage) => m.role === 'user').slice(-3).map((m: ChatMessage) => m.content).join('\n'), last);
           const system = [PERSONA, ACTIONS, assistant.context ? workspaceContext(state.data) : 'Доступ к заметкам и задачам пользователя выключен в настройках. Если спросят о них, мягко скажи об этом.',
             recall, summary ? 'Краткое содержание более ранней части этого разговора:\n' + summary : '', ...notes].filter(Boolean).join('\n\n');
           let call;
@@ -297,6 +304,8 @@ export async function createApp(root: string, instance: string, preview = false,
             }
             if (!received) throw fail('Модель вернула пустой ответ. Попробуйте переформулировать или выбрать другую модель.', 502);
             write({ done: true, model: assistant.model });
+            // A reminder counts as given only once the answer that carries it has arrived.
+            await memory.delivered(recall).catch(() => {});
             if (dialog) await memory.record(dialog, [...messages.map((m: ChatMessage) => ({ role: m.role, content: m.content })), { role: 'assistant', content: answer }], summary).catch(() => {});
           } catch (e) {
             write({ error: (e as { status?: number }).status ? (e as Error).message : call.explain().message });
@@ -351,10 +360,17 @@ export async function createApp(root: string, instance: string, preview = false,
           if (input === undefined) return;
           const textual = (v: unknown, max: number) => v === undefined || (typeof v === 'string' && v.length <= max);
           if (!input || typeof input !== 'object' || !textual(input.text, 2000) || !textual(input.topic, 200) || !textual(input.outcome, 600) || !textual(input.name, 80) || !textual(input.about, 300) || !textual(input.category, 20) || !textual(input.type, 20) || !textual(input.title, 80) || !textual(input.summary, 600)
-            || (input.until !== undefined && input.until !== null && !validDate(input.until)) || (input.pinned !== undefined && typeof input.pinned !== 'boolean')) return send(400, { error: 'Неверный формат записи.' });
+            || (input.until !== undefined && input.until !== null && !validDate(input.until)) || (input.pinned !== undefined && typeof input.pinned !== 'boolean') || (input.done !== undefined && typeof input.done !== 'boolean')) return send(400, { error: 'Неверный формат записи.' });
           return await memory.edit(item, input) ? ok() : send(404, { error: 'Запись не найдена.' });
         }
         if (item && req.method === 'DELETE') return await memory.remove(item) ? ok() : send(404, { error: 'Запись не найдена.' });
+        if (route === '/reminders' && req.method === 'POST') {
+          const input = await readJson(req, send, 10_000);
+          if (input === undefined) return;
+          if (typeof input?.about !== 'string' || typeof input.text !== 'string' || !input.about.trim() || !input.text.trim() || input.about.length > 120 || input.text.length > 300) return send(400, { error: 'Нужны тема до 120 символов и текст до 300.' });
+          await memory.remind(input.about, input.text);
+          return ok();
+        }
         if (route === '/answer' && req.method === 'POST') {
           const input = await readJson(req, send, 10_000);
           if (input === undefined) return;

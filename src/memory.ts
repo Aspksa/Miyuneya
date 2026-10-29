@@ -1,8 +1,10 @@
 // The memory menu behind the brain icon: how she grows, what Miyuneya knows, the rules she follows, past dialogs, the knowledge map, her diary and journal.
 // Everything lives on the local server in data/memory.json; this panel only shows and edits it.
 export type Category = 'personal' | 'work' | 'health' | 'plans' | 'tastes' | 'people' | 'other';
-export type MemoryItemView = { id: string; kind: 'fact' | 'rule'; text: string; strength: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review'; links: string[]; category: Category; until: string | null; expired: boolean };
+export type MemoryItemView = { id: string; kind: 'fact' | 'rule'; text: string; strength: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review'; links: string[]; category: Category; until: string | null; expired: boolean; origin: string | null };
 export type EpisodeView = { id: string; date: string; topic: string; outcome: string; links: string[]; consolidated: boolean; score: number | null; weak: string };
+export type ReminderView = { id: string; about: string; text: string; created: string; fired: string | null };
+export type PromiseView = { id: string; text: string; created: string; due: string | null; episode: string | null; done: string | null };
 export type TopicView = { id: string; title: string; area: Category; summary: string; facts: string[]; created: string; updated: string };
 export type QuestionView = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number };
 type Level = { level: number; floor: number; next: number };
@@ -15,7 +17,7 @@ export type JournalView = { at: string; kind: string; text: string };
 export type MemoryView = { enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | null; lastSleep: string | null; pending: number; newEpisodes: number;
   search: 'meaning' | 'words'; searchError: string; indexed: number;
   items: MemoryItemView[]; episodes: EpisodeView[]; entities: EntityView[]; edges: EdgeView[]; diary: DiaryView[]; journal: JournalView[];
-  topics: TopicView[]; understanding: { text: string; updated: string } | null; questions: QuestionView[]; growth: GrowthView };
+  topics: TopicView[]; understanding: { text: string; updated: string } | null; questions: QuestionView[]; growth: GrowthView; reminders: ReminderView[]; promises: PromiseView[] };
 export type MemoryHost = {
   toast(message: string): void;
   confirm(title: string): Promise<boolean>;
@@ -23,18 +25,18 @@ export type MemoryHost = {
   openNote(id: string): void;
   changed(view: MemoryView): void;
 };
-export type Tab = 'growth' | 'fact' | 'rule' | 'episode' | 'map' | 'diary' | 'journal';
+export type Tab = 'growth' | 'plans' | 'fact' | 'rule' | 'episode' | 'timeline' | 'map' | 'diary' | 'journal';
 type Request = RequestInit & { json?: unknown };
 
 export const brainIcon = '<path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill"/><path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill" transform="matrix(-1 0 0 1 24 0)"/><path d="M12 5.4v14.1M12 9.2c-1.3 0-2.2-.8-2.3-2M9.6 12.3c-1.4-.4-2.8.2-3.4 1.4M12 15.6c-1.2 0-2.2-.7-2.5-1.8M12 9.2c1.3 0 2.2-.8 2.3-2M14.4 12.3c1.4-.4 2.8.2 3.4 1.4M12 15.6c1.2 0 2.2-.7 2.5-1.8M6.7 8.9c.6.5 1.4.7 2.1.5M17.3 8.9c-.6.5-1.4.7-2.1.5" class="accent-stroke"/>';
-const tabs: [Tab, string][] = [['growth', 'Рост'], ['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
+const tabs: [Tab, string][] = [['growth', 'Рост'], ['plans', 'Дела'], ['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['timeline', 'Хронология'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
 export const categories: [Category, string][] = [['personal', 'Личное'], ['work', 'Работа'], ['health', 'Здоровье'], ['plans', 'Планы'], ['tastes', 'Вкусы'], ['people', 'Люди'], ['other', 'Другое']];
 const categoryName = (c: Category) => categories.find(([key]) => key === c)?.[1] || 'Другое';
 const sources: Record<MemoryItemView['source'], string> = { user: 'от вас', dialog: 'из разговора', sleep: 'после сна', note: 'из заметки', review: 'из самооценки' };
 const areaNames: Record<Category, string> = { personal: 'Личное', work: 'Работа', health: 'Здоровье', plans: 'Планы', tastes: 'Вкусы', people: 'Люди', other: 'Разное' };
 const entityTypes: Record<EntityView['type'], string> = { person: 'Человек', project: 'Проект', place: 'Место', topic: 'Тема', thing: 'Вещь' };
 export const relationNames: Record<EdgeView['type'], string> = { related: 'связано с', part_of: 'часть', blocks: 'мешает', after: 'после', decided_in: 'решено в', about: 'про' };
-const journalNames: Record<string, string> = { learned: 'Узнала', rule: 'Правило', reinforced: 'Подтвердилось', weakened: 'Сомнение', merged: 'Объединила', forgot: 'Забыла', episode: 'Эпизод', sleep: 'Сон', edited: 'Правка', entity: 'Карта', review: 'Самооценка', topic: 'Тема', question: 'Вопрос' };
+const journalNames: Record<string, string> = { learned: 'Узнала', rule: 'Правило', reinforced: 'Подтвердилось', weakened: 'Сомнение', merged: 'Объединила', forgot: 'Забыла', episode: 'Эпизод', sleep: 'Сон', edited: 'Правка', entity: 'Карта', review: 'Самооценка', topic: 'Тема', question: 'Вопрос', reminder: 'Напоминание', promise: 'Обещание' };
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const when = (date: string, time = false) => new Date(date).toLocaleString('ru-RU', time ? { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'long' });
 const short = (text: string, max: number) => text.length > max ? text.slice(0, max - 1) + '…' : text;
@@ -140,6 +142,14 @@ export function mountMemory(host: MemoryHost) {
   // Entities and typed relations of a record show next to its plain links.
   const related = (id: string) => (view?.edges || []).filter(e => e.from === id || e.to === id).map(e => e.from === id ? e.to : e.from);
   const categorySelect = (value: Category) => `<select name="category" aria-label="Категория">${categories.map(([key, label]) => `<option value="${key}" ${key === value ? 'selected' : ''}>${label}</option>`).join('')}</select>`;
+  // Provenance: where a record came from, one click away.
+  function origin(item: MemoryItemView) {
+    const episode = item.origin ? view?.episodes.find(e => e.id === item.origin) : undefined;
+    if (episode) return `<button type="button" class="chat-link memory-origin" data-memory-goto="${escape(episode.id)}" data-tab="episode" title="${escape(episode.topic)}">${item.source === 'review' ? 'из самооценки' : item.source === 'sleep' ? 'после сна' : 'из разговора'} ${when(episode.date)} «${escape(short(episode.topic, 32))}»</button>`;
+    const entry = item.origin ? host.entry(item.origin) : null;
+    if (entry?.kind === 'note') return `<button type="button" class="chat-link memory-origin" data-memory-note="${escape(item.origin!)}">из заметки «${escape(short(entry.title, 32))}»</button>`;
+    return sources[item.source];
+  }
   function itemRow(item: MemoryItemView) {
     const id = escape(item.id);
     const fact = item.kind === 'fact';
@@ -147,14 +157,49 @@ export function mountMemory(host: MemoryHost) {
       ? `<form class="memory-edit" data-memory-save="${id}"><textarea name="text" maxlength="400" rows="3" aria-label="Текст записи">${escape(item.text)}</textarea>${fact ? `<div class="memory-fields">${categorySelect(item.category)}<label>Актуально до <input type="date" name="until" value="${item.until || ''}"></label></div>` : ''}<div><button class="button primary" type="submit">Сохранить</button><button class="button quiet" type="button" data-memory-cancel>Отмена</button></div></form>`
       : `<p>${fact && item.category !== 'other' ? `<span class="memory-tag">${categoryName(item.category)}</span>` : ''}${escape(item.text)}</p>`;
     const until = item.until ? ` · ${item.expired ? '<em>устарело</em>' : 'до ' + when(item.until)}` : '';
-    return `<article class="memory-item ${item.pinned ? 'pinned' : ''} ${item.expired ? 'expired' : ''}" id="memory-${id}">${body}<div class="memory-meta"><span class="meter" data-strength="${item.pinned ? 1 : item.strength}" title="Сила памяти ${Math.round(item.strength * 100)}%"><i></i></span><span>${strengthLabel(item)} · подтверждений ${item.hits} · ${sources[item.source]} · ${when(item.seen)}${until}</span></div>${linkChips([...item.links, ...related(item.id)])}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${id}">Изменить</button><button type="button" class="chat-link" data-memory-pin="${id}" aria-pressed="${item.pinned}">${item.pinned ? 'Открепить' : 'Закрепить'}</button><button type="button" class="chat-link" data-memory-select="${id}">На карте</button><button type="button" class="chat-link danger" data-memory-delete="${id}">Удалить</button></div></article>`;
+    return `<article class="memory-item ${item.pinned ? 'pinned' : ''} ${item.expired ? 'expired' : ''}" id="memory-${id}">${body}<div class="memory-meta"><span class="meter" data-strength="${item.pinned ? 1 : item.strength}" title="Сила памяти ${Math.round(item.strength * 100)}%"><i></i></span><span>${strengthLabel(item)} · подтверждений ${item.hits} · ${origin(item)} · ${when(item.seen)}${until}</span></div>${linkChips([...item.links, ...related(item.id)])}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${id}">Изменить</button><button type="button" class="chat-link" data-memory-pin="${id}" aria-pressed="${item.pinned}">${item.pinned ? 'Открепить' : 'Закрепить'}</button><button type="button" class="chat-link" data-memory-select="${id}">На карте</button><button type="button" class="chat-link danger" data-memory-delete="${id}">Удалить</button></div></article>`;
   }
+  const learned = (id: string) => { const ids = (view?.items || []).filter(i => i.origin === id).map(i => i.id); return ids.length ? `<p class="memory-sub">Узнала из этого разговора:</p>${linkChips(ids)}` : ''; };
   function episodeRow(e: EpisodeView) {
     const id = escape(e.id);
     const body = editing === e.id
       ? `<form class="memory-edit" data-memory-save="${id}"><input name="topic" maxlength="200" value="${escape(e.topic)}" aria-label="Тема"><textarea name="outcome" maxlength="600" rows="3" aria-label="Итог">${escape(e.outcome)}</textarea><div><button class="button primary" type="submit">Сохранить</button><button class="button quiet" type="button" data-memory-cancel>Отмена</button></div></form>`
       : `<p><b>${escape(e.topic)}</b>${e.outcome ? '<br>' + escape(e.outcome) : ''}</p>`;
-    return `<article class="memory-item" id="memory-${id}">${body}<div class="memory-meta"><span>${when(e.date, true)}${e.score ? ` · самооценка ${e.score} из 5` : ''}${e.consolidated ? '' : ' · <em>ещё не осмыслен во сне</em>'}</span></div>${e.weak ? `<p class="memory-weak">Слабое место: ${escape(e.weak)}</p>` : ''}${linkChips([...e.links, ...related(e.id)])}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${id}">Изменить</button><button type="button" class="chat-link" data-memory-select="${id}">На карте</button><button type="button" class="chat-link danger" data-memory-delete="${id}">Удалить</button></div></article>`;
+    return `<article class="memory-item" id="memory-${id}">${body}<div class="memory-meta"><span>${when(e.date, true)}${e.score ? ` · самооценка ${e.score} из 5` : ''}${e.consolidated ? '' : ' · <em>ещё не осмыслен во сне</em>'}</span></div>${e.weak ? `<p class="memory-weak">Слабое место: ${escape(e.weak)}</p>` : ''}${linkChips([...e.links, ...related(e.id)])}${learned(e.id)}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${id}">Изменить</button><button type="button" class="chat-link" data-memory-select="${id}">На карте</button><button type="button" class="chat-link danger" data-memory-delete="${id}">Удалить</button></div></article>`;
+  }
+  // «Дела»: what Miyuneya promised and what she will bring up when the talk turns to a topic.
+  function plansHtml(v: MemoryView) {
+    const today = new Date().toISOString().slice(0, 10);
+    const save = `<div><button class="button primary" type="submit">Сохранить</button><button class="button quiet" type="button" data-memory-cancel>Отмена</button></div>`;
+    const promise = (p: PromiseView) => `<article class="memory-item ${p.done ? 'done' : ''}" id="memory-${escape(p.id)}">${editing === p.id
+      ? `<form class="memory-edit" data-memory-save="${escape(p.id)}"><textarea name="text" maxlength="300" rows="2" aria-label="Обещание">${escape(p.text)}</textarea><div class="memory-fields"><label>Срок <input type="date" name="due" value="${p.due || ''}"></label></div>${save}</form>`
+      : `<p>${escape(p.text)}</p>`}<div class="memory-meta"><span>${p.done ? 'выполнено ' + when(p.done) : `обещала ${when(p.created)}${p.due ? (p.due < today ? ' · <em>срок прошёл ' + when(p.due) + '</em>' : ' · срок до ' + when(p.due)) : ''}`}</span></div>${p.episode ? linkChips([p.episode]) : ''}<div class="memory-actions">${p.done
+      ? `<button type="button" class="chat-link" data-memory-done="${escape(p.id)}" data-value="false">Вернуть</button>`
+      : `<button type="button" class="chat-link" data-memory-done="${escape(p.id)}" data-value="true">Выполнено</button><button type="button" class="chat-link" data-memory-edit="${escape(p.id)}">Изменить</button>`}<button type="button" class="chat-link danger" data-memory-delete="${escape(p.id)}">Удалить</button></div></article>`;
+    const reminder = (x: ReminderView) => `<article class="memory-item ${x.fired ? 'done' : ''}" id="memory-${escape(x.id)}">${editing === x.id
+      ? `<form class="memory-edit" data-memory-save="${escape(x.id)}"><input name="about" maxlength="120" value="${escape(x.about)}" aria-label="Когда речь зайдёт о"><textarea name="text" maxlength="300" rows="2" aria-label="О чём напомнить">${escape(x.text)}</textarea>${save}</form>`
+      : `<p><span class="memory-tag">о «${escape(x.about)}»</span>${escape(x.text)}</p>`}<div class="memory-meta"><span>${x.fired ? 'напомнила ' + when(x.fired, true) : 'поставлено ' + when(x.created)}</span></div><div class="memory-actions">${x.fired ? `<button type="button" class="chat-link" data-memory-rearm="${escape(x.id)}">Напомнить ещё раз</button>` : `<button type="button" class="chat-link" data-memory-edit="${escape(x.id)}">Изменить</button>`}<button type="button" class="chat-link danger" data-memory-delete="${escape(x.id)}">Удалить</button></div></article>`;
+    const open = v.promises.filter(p => !p.done), kept = v.promises.filter(p => p.done).slice(0, 10);
+    const waiting = v.reminders.filter(x => !x.fired), fired = v.reminders.filter(x => x.fired).slice(0, 10);
+    return `<section class="growth-section"><h4>Мои обещания</h4>${open.length ? open.map(promise).join('') : '<p class="memory-empty">Открытых обещаний нет. Если я пообещаю что-то проверить или подготовить, это появится здесь, и я закрою его сама.</p>'}${kept.length ? `<details class="memory-done"><summary>Выполнено: ${kept.length}</summary>${kept.map(promise).join('')}</details>` : ''}</section>`
+      + `<section class="growth-section"><h4>Напомню, когда речь зайдёт о…</h4>${waiting.length ? waiting.map(reminder).join('') : '<p class="memory-empty">Скажите в чате: «Напомни, когда заговорим о поездке, что нужно купить адаптер», или добавьте ниже.</p>'}<form class="memory-remind"><input name="about" maxlength="120" autocomplete="off" placeholder="Когда речь зайдёт о…" aria-label="Тема" ${busy ? 'disabled' : ''}><input name="text" maxlength="300" autocomplete="off" placeholder="…напомнить, что" aria-label="О чём напомнить" ${busy ? 'disabled' : ''}><button class="button" type="submit" ${busy ? 'disabled' : ''}>Добавить</button></form>${fired.length ? `<details class="memory-done"><summary>Уже напомнила: ${fired.length}</summary>${fired.map(reminder).join('')}</details>` : ''}</section>`;
+  }
+  // «Хронология»: the memory laid out by days, newest first.
+  function timelineHtml(v: MemoryView) {
+    type Event = { at: string; label: string; html: string };
+    const goto = (id: string, tab: Tab, text: string) => `<button type="button" class="chat-link" data-memory-goto="${escape(id)}" data-tab="${tab}">${escape(text)}</button>`;
+    const events: Event[] = [
+      ...v.episodes.map(e => ({ at: e.date, label: 'Разговор', html: goto(e.id, 'episode', e.topic) + (e.outcome ? ` — ${escape(e.outcome)}` : '') })),
+      ...v.items.map(i => ({ at: i.created, label: i.kind === 'rule' ? 'Правило' : 'Узнала', html: goto(i.id, i.kind, i.text) })),
+      ...v.promises.flatMap(p => [{ at: p.created, label: 'Пообещала', html: escape(p.text) }, ...(p.done ? [{ at: p.done, label: 'Выполнила', html: escape(p.text) }] : [])]),
+      ...v.reminders.flatMap(x => [{ at: x.created, label: 'Напоминание', html: `о «${escape(x.about)}»: ${escape(x.text)}` }, ...(x.fired ? [{ at: x.fired, label: 'Напомнила', html: escape(x.text) }] : [])]),
+      ...v.topics.map(t => ({ at: t.created, label: 'Тема', html: escape(t.title) })),
+      ...v.diary.map(d => ({ at: d.date, label: 'Дневник', html: goto(d.id, 'diary', short(d.text, 90)) })),
+    ].filter(e => Number.isFinite(Date.parse(e.at))).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
+    if (!events.length) return '<p class="memory-empty">Здесь по дням появится всё, что было: разговоры, что я узнала, обещала и напомнила.</p>';
+    const days = new Map<string, Event[]>();
+    for (const e of events) { const key = new Date(e.at).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); days.set(key, [...(days.get(key) || []), e]); }
+    return [...days].map(([key, list]) => `<section class="timeline-day"><h4>${key}</h4>${list.map(e => `<div class="timeline-event"><small>${new Date(e.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</small><b>${e.label}</b><span>${e.html}</span></div>`).join('')}</section>`).join('');
   }
   const bar = (value: number, floor: number, next: number) => `<span class="growth-bar" data-progress="${Math.max(0.03, Math.min(1, (value - floor) / Math.max(1, next - floor))).toFixed(3)}"><i></i></span>`;
   const plural = (n: number, one: string, few: string, many: string) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many}`;
@@ -226,6 +271,8 @@ export function mountMemory(host: MemoryHost) {
   function listHtml() {
     if (!view) return '<p class="memory-empty">Загружаю память…</p>';
     if (tab === 'growth') return growthHtml(view);
+    if (tab === 'plans') return plansHtml(view);
+    if (tab === 'timeline') return timelineHtml(view);
     if (tab === 'map') return mapHtml();
     if (tab === 'diary') return view.diary.length ? '<p class="memory-note">Записи пишет сама Миюнэя после «сна». Любую можно поправить или удалить.</p>' + [...view.diary].sort((a, b) => b.date.localeCompare(a.date)).map(diaryRow).join('') : '<p class="memory-empty">Дневник пока пуст. Каждый раз во время сна Миюнэя записывает сюда, что узнала о вас и что изменила в себе.</p>';
     if (tab === 'journal') return view.journal.length ? view.journal.map(j => `<div class="memory-journal"><small>${when(j.at, true)}</small><b>${journalNames[j.kind] || 'Запись'}</b><span>${escape(j.text)}</span></div>`).join('') : '<p class="memory-empty">Здесь появится история: что Миюнэя узнала, объединила и забыла.</p>';
@@ -244,7 +291,7 @@ export function mountMemory(host: MemoryHost) {
   }
   function render() {
     if (panel.hidden) return;
-    const count = (t: Tab) => !view || t === 'journal' || t === 'map' || t === 'growth' ? '' : String(t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length);
+    const count = (t: Tab) => !view || t === 'journal' || t === 'map' || t === 'growth' || t === 'timeline' ? '' : String(t === 'plans' ? view.promises.filter(p => !p.done).length + view.reminders.filter(x => !x.fired).length : t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length);
     const scroll = panel.querySelector('.memory-list')?.scrollTop || 0;
     const off = !view || busy ? 'disabled' : '';
     panel.classList.toggle('wide', tab === 'map');
@@ -288,6 +335,8 @@ export function mountMemory(host: MemoryHost) {
       row?.scrollIntoView({ block: 'nearest' }); row?.classList.add('flash');
       return;
     }
+    if (d.memoryDone) { await act('/items/' + d.memoryDone, { method: 'PATCH', json: { done: d.value === 'true' } }, d.value === 'true' ? 'Отметила как выполненное' : 'Обещание снова открыто'); return; }
+    if (d.memoryRearm) { const x = view?.reminders.find(r => r.id === d.memoryRearm); if (x) await act('/items/' + x.id, { method: 'PATCH', json: { text: x.text } }, 'Напомню ещё раз'); return; }
     if (d.memoryDismiss) { await act('/items/' + d.memoryDismiss, { method: 'DELETE' }, 'Больше не спрошу'); return; }
     if (d.memoryUnlink) { await act('/unlink', { method: 'POST', json: { from: selected, to: d.memoryUnlink } }, 'Связь убрана'); return; }
     if (d.memoryPin) { const item = view?.items.find(i => i.id === d.memoryPin); if (item) await act('/items/' + item.id, { method: 'PATCH', json: { pinned: !item.pinned } }, item.pinned ? 'Запись откреплена' : 'Закреплено: эта запись не будет забыта'); return; }
@@ -314,6 +363,12 @@ export function mountMemory(host: MemoryHost) {
       if (text && await act('/items', { method: 'POST', json: { kind: tab, text, category: tab === 'fact' ? field('category') : undefined } }, tab === 'rule' ? 'Правило добавлено' : 'Факт добавлен')) panel.querySelector<HTMLInputElement>('.memory-add input')?.focus();
       return;
     }
+    if (form.classList.contains('memory-remind')) {
+      const about = field('about'), text = field('text');
+      if (!about || !text) return host.toast('Укажите тему и о чём напомнить');
+      await act('/reminders', { method: 'POST', json: { about, text } }, 'Напомню, когда речь зайдёт об этом');
+      return;
+    }
     if (form.dataset.question) {
       const text = field('answer');
       if (text) await act('/answer', { method: 'POST', json: { id: form.dataset.question, text } }, 'Спасибо, запомнила');
@@ -322,6 +377,8 @@ export function mountMemory(host: MemoryHost) {
     const id = form.dataset.memorySave;
     if (!id) return;
     const change = id === 'understanding' ? { text: field('text') }
+      : view?.reminders.some(x => x.id === id) ? { about: field('about'), text: field('text') }
+      : view?.promises.some(p => p.id === id) ? { text: field('text'), until: field('due') || null }
       : tab === 'growth' ? { title: field('title'), summary: field('summary'), category: field('category') }
       : tab === 'episode' ? { topic: field('topic'), outcome: field('outcome') }
       : tab === 'map' ? { name: field('name'), about: field('about') }
