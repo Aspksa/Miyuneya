@@ -1,5 +1,6 @@
-import { emptyWorkspace, validateWorkspace, combineEntries, defaultLook } from './model.js';
-import { formatNoteDate } from './calendar.js';
+import { createDisk } from './disk.js';
+import { emptyWorkspace, validateWorkspace, combineEntries, defaultLook, validLocalDate } from './model.js';
+import { formatNoteDate, localDateKey } from './calendar.js';
 import { mountAssistant, avatarSrc } from './assistant.js';
 import { mountMemory, brainIcon } from './memory.js';
 import type { MemoryView } from './memory.js';
@@ -8,8 +9,9 @@ import type { Appearance, Radius, Scale } from './appearance.js';
 import type { Workspace, EntryFilter, AssistantLook } from './model.js';
 import type { AssistantStatus, EntryKind } from './assistant.js';
 
-type Page = 'notes' | 'settings';
+type Page = 'notes' | 'disk' | 'settings';
 const icons: Record<string, string> = {
+  disk: '<path d="M3 7h7l2 2h9v11H3z"/><path d="M3 7V4h7l2 3"/>',
   notes: '<rect x="5" y="3" width="15" height="18" rx="2"/><path d="M9 8h7M9 12h7M9 16h4M3 7h3M3 12h3M3 17h3"/>',
   tasks: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 8 1 1 2-2m2 2h3m-8 5 1 1 2-2m2 2h3"/>',
   settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/>',
@@ -45,14 +47,16 @@ let editing: { kind: 'note' | 'task'; id?: string } = { kind: 'note' };
 let toastTimer: ReturnType<typeof setTimeout>;
 let ai: AssistantStatus = { configured: false, keyHint: '', model: '', embedModel: '', context: true, customAvatar: null };
 let saveAgain = false;
+let savingPromise: Promise<boolean> | null = null;
+const disk = createDisk({render:()=>{if(page==='disk')render();},toast,addNote,draft:text=>{assistant?.draft(text);}});
 let appearance: Appearance = loadAppearance();
 let aiModels: string[] | null = null;
 let aiBusy = false;
 let assistant: ReturnType<typeof mountAssistant> | undefined;
 let memoryMode = { enabled: true, private: false };
-const pageNames: Record<Page,string> = { notes:'Заметки и задачи', settings:'Настройки' };
+const pageNames: Record<Page,string> = { notes:'Заметки и задачи', disk:'Диск', settings:'Настройки' };
 // Old #home and #tasks links land on the shared list.
-function getPage(): Page { const hash = location.hash.slice(1); return hash === 'settings' ? hash : 'notes'; }
+function getPage(): Page { const hash = location.hash.slice(1); return hash === 'settings' || hash === 'disk' ? hash : 'notes'; }
 function toast(message: string) {
   const el = document.querySelector<HTMLDivElement>('#toast')!;
   el.textContent = message; el.classList.add('visible'); clearTimeout(toastTimer);
@@ -72,10 +76,11 @@ function empty(title: string, description: string, kind: 'note' | 'task', label:
   return `<div class="empty">${icon(kind === 'note' ? 'notes' : 'tasks')}<h3>${title}</h3><p>${description}</p><button class="button quiet" data-new="${kind}">${icon('plus')}${label}</button></div>`;
 }
 function noteRow(n: Workspace['notes'][number]) {
-  return `<div class="task-row note-entry">${icon('notes')}<button class="note-open" data-edit="${escape(n.id)}"><b>${escape(n.title)}</b>${n.body?`<p>${escape(n.body)}</p>`:''}</button><small>${shortDate(n.updatedAt)}</small><button class="icon-button" data-delete-note="${escape(n.id)}" aria-label="Удалить заметку ${escape(n.title)}">×</button></div>`;
+  return `<div class="task-row note-entry">${icon('notes')}<button class="note-open" data-edit="${escape(n.id)}"><b>${escape(n.title)}</b>${n.body?`<p>${escape(n.body)}</p>`:''}</button><button class="icon-button note-pin ${n.pinned?'pinned':''}" data-pin-note="${escape(n.id)}" aria-label="${n.pinned?'Открепить':'Закрепить'} заметку" aria-pressed="${!!n.pinned}">☆</button><small>${shortDate(n.updatedAt)}</small><button class="icon-button" data-delete-note="${escape(n.id)}" aria-label="Удалить заметку ${escape(n.title)}">×</button></div>`;
 }
 function taskRow(t: Workspace['tasks'][number]) {
-  return `<div class="task-row ${t.done ? 'done' : ''}"><label><input type="checkbox" data-toggle="${escape(t.id)}" ${t.done ? 'checked' : ''} ${saving ? 'disabled' : ''}><span>${escape(t.title)}</span></label><small>${shortDate(t.createdAt)}</small><button class="icon-button" data-delete-task="${escape(t.id)}" aria-label="Удалить задачу ${escape(t.title)}">×</button></div>`;
+  const overdue=!t.done && t.dueDate && t.dueDate<localDateKey();
+  return `<div class="task-row ${t.done?'done':''}"><input type="checkbox" data-toggle="${escape(t.id)}" aria-label="Выполнить: ${escape(t.title)}" ${t.done?'checked':''} ${saving?'disabled':''}><button class="task-open" data-edit-task="${escape(t.id)}"><b>${escape(t.title)}</b>${t.details?`<p>${escape(t.details)}</p>`:''}<span class="task-meta">${t.dueDate?`<span class="${overdue?'overdue':''}">${overdue?'Просрочено · ':''}${escape(t.dueDate.split('-').reverse().join('.'))}</span>`:''}${t.priority==='high'?'<span class="priority-high">Высокий приоритет</span>':''}</span></button><button class="icon-button" data-delete-task="${escape(t.id)}" aria-label="Удалить задачу ${escape(t.title)}">×</button></div>`;
 }
 function notes() {
   const rows = combineEntries(data, query, filter).map(e => e.kind === 'note' ? noteRow(e.item) : taskRow(e.item)).join('');
@@ -105,37 +110,49 @@ function appearanceCard() {
     + `</section>`;
 }
 function settings() {
-  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div>${appearanceCard()}<section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. Скачайте копию перед переносом или восстановите её из JSON-файла.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.2.0</span><h2>Место для вашего мира</h2><p>Первая версия личного пространства. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Сейчас доступны заметки и задачи в одном списке, настройки и помощница с чатом через cloud.ru и собственной памятью: значок мозга вверху справа.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
+  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div>${appearanceCard()}<section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. JSON-копия содержит заметки, задачи и настройки. Документы хранятся отдельно в data/disk: для их резервной копии скопируйте эту папку при остановленном приложении.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.3.0</span><h2>Место для вашего мира</h2><p>Личное пространство для заметок, задач и документов. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Доступны заметки, задачи, диск документов, настройки и помощница с чатом через cloud.ru и собственной памятью: значок мозга вверху справа.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
 }
 function render(focus = false) {
   applyTheme();
   const count = data.notes.length + data.tasks.filter(t => !t.done).length;
-  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><nav class="nav" aria-label="Основная навигация"><a href="#notes" data-tip="${pageNames.notes}" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span>${count?`<span class="count" aria-label="записей: ${count}">${count}</span>`:''}</a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" data-tip="${pageNames.settings}" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">${pageNames.settings}</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Поиск по заметкам и задачам" placeholder="Найти в своём пространстве" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button><button class="icon-button memory-toggle ${memoryMode.private?'private':''} ${memoryMode.enabled?'':'off'}" data-memory-toggle aria-label="Память помощницы" title="Память Миюнэи" aria-haspopup="dialog" aria-expanded="${memoryPanel.isOpen()}">${icon('brain')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${({notes,settings})[page]()}</main></div></div>`;
+  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><nav class="nav" aria-label="Основная навигация"><a href="#notes" data-tip="${pageNames.notes}" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span>${count?`<span class="count" aria-label="записей: ${count}">${count}</span>`:''}</a><a href="#disk" data-tip="Диск документов" class="${page==='disk'?'active':''}" ${page==='disk'?'aria-current="page"':''}>${navIcon('disk')}<span class="nav-text">Диск документов</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" data-tip="${pageNames.settings}" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">${pageNames.settings}</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="${page==='disk'?'Поиск документов':'Поиск по заметкам и задачам'}" placeholder="${page==='disk'?'Найти документ по названию':'Найти в своём пространстве'}" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button><button class="icon-button memory-toggle ${memoryMode.private?'private':''} ${memoryMode.enabled?'':'off'}" data-memory-toggle aria-label="Память помощницы" title="Память Миюнэи" aria-haspopup="dialog" aria-expanded="${memoryPanel.isOpen()}">${icon('brain')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${page==='disk'?disk.html(query):({notes,settings})[page]()}</main></div></div>`;
   for (const el of app.querySelectorAll<HTMLElement>('[data-swatch]')) el.style.setProperty('--swatch', el.dataset.swatch!);
   if (focus) document.querySelector<HTMLElement>('#content')?.focus();
 }
 // A change made while another save is in flight is sent right after it instead of being dropped.
-function persist() { if (saving) saveAgain = true; else void save(); }
-async function save() {
-  if (saving || fatal) { if (fatal) toast('Не удалось загрузить исходные данные. Перезапустите приложение.'); return false; }
-  saving = true;
-  try {
-    const response = await fetch('/api/workspace', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({revision, data}) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || 'Не удалось сохранить данные.');
-    revision = result.revision; saveError = ''; return true;
-  } catch (e) { saveError = (e as Error).message || 'Сервер недоступен. Проверьте окно запуска и сохраните резервную копию.'; toast('Изменения пока не сохранены'); return false; }
-  finally { saving = false; render(); if (saveAgain) { saveAgain = false; void save(); } }
+function persist(): Promise<boolean> {
+  if(fatal)return Promise.resolve(false);
+  saveAgain=true;
+  if(!savingPromise)savingPromise=flush();
+  return savingPromise;
 }
+function save(){return persist();}
+async function flush(): Promise<boolean> {
+  saving=true;
+  try{
+    while(saveAgain){
+      saveAgain=false;
+      const response=await fetch('/api/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,data})});
+      const result=await response.json();if(!response.ok)throw new Error(result.error || 'Не удалось сохранить данные.');
+      revision=result.revision;saveError='';
+    }
+    return true;
+  }catch(e){saveAgain=false;saveError=(e as Error).message || 'Сервер недоступен.';toast('Изменения пока не сохранены');return false;}
+  finally{saving=false;savingPromise=null;render();}
+}
+
 function showEditor(kind: 'note' | 'task', id?: string) {
   if (saving) { toast('Дождитесь завершения сохранения.'); return; }
   if (fatal) { toast('Сначала восстановите подключение к серверу.'); return; }
   editing = {kind,id};
-  const note = id ? data.notes.find(n=>n.id===id) : undefined;
-  document.querySelector('#editor-heading')!.textContent = kind==='task'?'Новая задача':note?'Редактировать заметку':'Новая заметка';
+  const note = id ? (kind==='note'?data.notes:data.tasks).find(n=>n.id===id) : undefined;
+  document.querySelector('#editor-heading')!.textContent = kind==='task'?(note?'Редактировать задачу':'Новая задача'):note?'Редактировать заметку':'Новая заметка';
   const title = document.querySelector<HTMLInputElement>('#entry-title')!;
   const body = document.querySelector<HTMLTextAreaElement>('#entry-body')!;
-  title.value = note?.title || ''; body.value = note?.body || ''; body.hidden = kind==='task';
+  title.value = note?.title || ''; body.value = note?(kind==='note'?(note as Workspace['notes'][number]).body:(note as Workspace['tasks'][number]).details || ''):''; body.hidden=false;body.setAttribute('aria-label',kind==='task'?'Описание задачи':'Текст заметки'); body.maxLength=kind==='task'?10000:100000; body.placeholder=kind==='task'?'Описание задачи…':'Здесь может начаться что-то важное…';
+  const task=kind==='task'?note as Workspace['tasks'][number] | undefined:undefined;
+  document.querySelector<HTMLElement>('#task-fields')!.hidden=kind!=='task';
+  document.querySelector<HTMLInputElement>('#task-due')!.value=task?.dueDate || '';document.querySelector<HTMLSelectElement>('#task-priority')!.value=task?.priority || 'normal';
   editor.showModal(); title.focus();
 }
 function download() {
@@ -153,7 +170,9 @@ async function confirmDelete(title: string) {
 app.addEventListener('click', async event => {
   const target=(event.target as HTMLElement).closest<HTMLElement>('button,a,label');
   if (!target) return;
+  const diskTarget=(event.target as HTMLElement).closest<HTMLElement>('[data-disk]');if(diskTarget)return void disk.click(diskTarget);
   if (target.dataset.new) return showEditor(target.dataset.new as 'note'|'task');
+  if(target.dataset.editTask)return showEditor('task',target.dataset.editTask);
   if (target.dataset.edit) return showEditor('note',target.dataset.edit);
   if (target.hasAttribute('data-export')) return download();
   if (target.hasAttribute('data-memory-toggle')) return memoryPanel.toggle();
@@ -162,6 +181,7 @@ app.addEventListener('click', async event => {
   if (target.dataset.scale) return setAppearance({scale:target.dataset.scale as Scale});
   if (target.hasAttribute('data-appearance-reset')) { appearance=defaultAppearance(); saveAppearance(appearance); applyTheme(); render(); toast('Оформление сброшено'); return; }
   if (saving || fatal) return;
+  if(target.dataset.pinNote){const note=data.notes.find(n=>n.id===target.dataset.pinNote);if(note){note.pinned=!note.pinned;await save();}return;}
   if (target.hasAttribute('data-retry')) return void await save();
   if (target.dataset.deleteNote && await confirmDelete('Удалить заметку?')) { data.notes=data.notes.filter(n=>n.id!==target.dataset.deleteNote); if(await save()) toast('Заметка удалена'); }
   if (target.dataset.deleteTask && await confirmDelete('Удалить задачу?')) { data.tasks=data.tasks.filter(t=>t.id!==target.dataset.deleteTask); if(await save()) toast('Задача удалена'); }
@@ -178,15 +198,17 @@ app.addEventListener('input', event => {
   if (input.id==='accent-custom') { applyAppearance({...appearance,accent:input.value},document.documentElement.dataset.theme==='dark'); return; }
   if (input.id==='search') {
     query=input.value; const caret=input.selectionStart;
-    if(page!=='notes') { page='notes'; history.replaceState(null,'','#notes'); }
+    if(page==='settings') { page='notes'; history.replaceState(null,'','#notes'); }
     render(); const search=document.querySelector<HTMLInputElement>('#search')!; search.focus(); search.setSelectionRange(caret,caret);
   }
 });
 app.addEventListener('change', async event => {
   const input=event.target as HTMLInputElement;
+  if(input.hasAttribute('data-disk-upload') && input.files){void disk.upload(input.files);return;}
+  if(input.hasAttribute('data-disk-sort')){disk.sort(input.value);return;}
   if (input.dataset.toggle) {
     if (saving) return;
-    const task=data.tasks.find(t=>t.id===input.dataset.toggle); if(task) {task.done=input.checked; await save();}
+    const task=data.tasks.find(t=>t.id===input.dataset.toggle); if(task) {task.done=input.checked;if(task.done)task.completedAt=new Date().toISOString();else delete task.completedAt;task.updatedAt=new Date().toISOString();await save();}
   }
   if (input.id==='accent-custom') return setAppearance({accent:input.value.toLowerCase()});
   if (input.id==='ai-avatar-visible') return updateLook({hidden:!input.checked});
@@ -243,38 +265,46 @@ function updateLook(change: Partial<AssistantLook>) {
   persist();
 }
 // Entries the assistant creates from the chat. Limits match validateWorkspace.
-function addTask(title: string) {
+async function addTask(title: string) {
   if (fatal || data.tasks.length>=5000) { toast('Не удалось добавить задачу'); return null; }
   const id=newId(); data.tasks.push({id,title:title.trim().slice(0,200) || 'Задача',done:false,createdAt:new Date().toISOString()});
-  render(); persist(); return id;
+  render(); return await persist()?id:null;
 }
-function addNote(title: string, body: string) {
+async function addNote(title: string, body: string) {
   if (fatal || data.notes.length>=5000) { toast('Не удалось сохранить заметку'); return null; }
   const id=newId(); data.notes.push({id,title:title.trim().slice(0,200) || 'Заметка',body:body.slice(0,100000),updatedAt:new Date().toISOString()});
-  render(); persist(); return id;
+  render(); return await persist()?id:null;
 }
-function removeEntry(kind: EntryKind, id: string) {
+async function removeEntry(kind: EntryKind, id: string) {
   const before=data.notes.length+data.tasks.length;
   if (kind==='task') data.tasks=data.tasks.filter(t=>t.id!==id); else data.notes=data.notes.filter(n=>n.id!==id);
   const changed=before!==data.notes.length+data.tasks.length;
-  if (changed) { render(); persist(); }
-  return changed;
+  if (changed) { render(); return await persist(); }
+  return false;
 }
 document.querySelector('#editor-form')!.addEventListener('submit', async event=>{
   event.preventDefault(); if(saving) return;
   const title=document.querySelector<HTMLInputElement>('#entry-title')!.value.trim();
   const body=document.querySelector<HTMLTextAreaElement>('#entry-body')!.value;
   if(!title) return toast('Введите название');
+  if(!editing.id && (editing.kind==='note'?data.notes.length:data.tasks.length)>=5000)return toast('Достигнут предел записей. Сохраните копию и удалите ненужные записи.');
   if(editing.kind==='note') {
     const existing=data.notes.find(n=>n.id===editing.id);
     if(existing) Object.assign(existing,{title,body,updatedAt:new Date().toISOString()});
     else data.notes.push({id:newId(),title,body,updatedAt:new Date().toISOString()});
-  } else data.tasks.push({id:newId(),title,done:false,createdAt:new Date().toISOString()});
-  editor.close(); if(await save()) toast(editing.kind==='note'?'Заметка сохранена':'Задача добавлена');
+  } else {
+    const dueDate=document.querySelector<HTMLInputElement>('#task-due')!.value;
+    if(dueDate && !validLocalDate(dueDate))return toast('Проверьте срок задачи');
+    const priority=document.querySelector<HTMLSelectElement>('#task-priority')!.value as 'low'|'normal'|'high';
+    const existing=data.tasks.find(t=>t.id===editing.id);
+    const fields={title,details:body.slice(0,10000),dueDate,priority,updatedAt:new Date().toISOString()};
+    if(existing)Object.assign(existing,fields);else data.tasks.push({id:newId(),done:false,createdAt:new Date().toISOString(),...fields});
+  }
+  editor.close(); if(await save()) toast(editing.kind==='note'?'Заметка сохранена':editing.id?'Задача сохранена':'Задача добавлена');
 });
 for(const id of ['close-editor','cancel-editor']) document.querySelector('#'+id)!.addEventListener('click',()=>editor.close());
-window.addEventListener('hashchange',()=>{page=getPage();query='';render(true);window.scrollTo(0,0);if(page==='settings' && ai.configured && !aiModels) void loadModels(false);if(location.hash==='#diary') openDiary();});
-window.addEventListener('beforeunload', event=>{ if(saving || saveError) {event.preventDefault();event.returnValue='';} });
+window.addEventListener('hashchange',()=>{page=getPage();query='';render(true);window.scrollTo(0,0);if(page==='disk'&&!disk.loaded())void disk.load();if(page==='settings' && ai.configured && !aiModels) void loadModels(false);if(location.hash==='#diary') openDiary();});
+window.addEventListener('beforeunload', event=>{ if(saving || saveError || disk.busy()) {event.preventDefault();event.returnValue='';} });
 document.addEventListener('keydown',event=>{
   const target=event.target as HTMLElement;
   if(event.key==='/' && !target.closest('input,textarea,select,dialog')) {event.preventDefault();document.querySelector<HTMLInputElement>('#search')?.focus();}
@@ -299,7 +329,11 @@ try {
 } catch(e) { fatal=true; saveError='Не удалось загрузить данные. Проверьте окно Miyuneya.bat и обновите страницу. '+(e as Error).message; }
 try { ai=await aiRequest('/api/assistant'); } catch {}
 render();
+if(page==='disk')void disk.load();
 assistant=mountAssistant({ look, update:updateLook, status:()=>ai, setStatus:value=>{ai=value;if(page==='settings')render();}, toast, addTask, addNote, remove:removeEntry, memory:()=>memoryMode, memoryChanged:()=>void memoryPanel.refresh() });
 void memoryPanel.load();
 if(page==='settings' && ai.configured) void loadModels(false);
 if(location.hash==='#diary') openDiary();
+
+app.addEventListener('dragover',event=>{if((event.target as HTMLElement).closest('[data-disk-drop]')){event.preventDefault();}});
+app.addEventListener('drop',event=>{if((event.target as HTMLElement).closest('[data-disk-drop]')){event.preventDefault();if(event.dataTransfer?.files)void disk.upload(event.dataTransfer.files);}});

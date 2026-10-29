@@ -1,3 +1,4 @@
+import { localDateKey } from './calendar.ts';
 // The memory menu behind the brain icon: how she grows, what Miyuneya knows, the rules she follows, past dialogs, the knowledge map, her diary and journal.
 // Everything lives on the local server in data/memory.json; this panel only shows and edits it.
 export type Category = 'personal' | 'work' | 'health' | 'plans' | 'tastes' | 'people' | 'other';
@@ -171,7 +172,7 @@ export function mountMemory(host: MemoryHost) {
   }
   // «Дела»: what Miyuneya promised and what she will bring up when the talk turns to a topic.
   function plansHtml(v: MemoryView) {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateKey();
     const save = `<div><button class="button primary" type="submit">Сохранить</button><button class="button quiet" type="button" data-memory-cancel>Отмена</button></div>`;
     const promise = (p: PromiseView) => `<article class="memory-item ${p.done ? 'done' : ''}" id="memory-${escape(p.id)}">${editing === p.id
       ? `<form class="memory-edit" data-memory-save="${escape(p.id)}"><textarea name="text" maxlength="300" rows="2" aria-label="Обещание">${escape(p.text)}</textarea><div class="memory-fields"><label>Срок <input type="date" name="due" value="${p.due || ''}"></label></div>${save}</form>`

@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { atomicWrite, readJSON } from './runtime.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const assets=['index.html','style.css','fox.svg','favicon.svg',...[1,2,3,4].map(n=>`avatars/avatar${n}.png`)];
-const modules=['main','model','calendar','assistant','appearance','memory'];
+const modules=['main','model','calendar','assistant','appearance','memory','disk'];
 export async function ensureBuild(root, check = false) {
   const pkg = await readJSON(join(root,'package.json'));
   if (Object.keys(pkg.dependencies || {}).length || Object.keys(pkg.devDependencies || {}).length || pkg.workspaces) throw new Error('Изменился набор зависимостей. Эта версия запуска поддерживает проект без внешних пакетов; установка не выполнена.');
@@ -26,7 +26,8 @@ export async function ensureBuild(root, check = false) {
   }
   if(check) throw new Error('Сборка отсутствует, повреждена или устарела: выполните npm run build.');
   for(const name of modules) {
-    const code='// Generated from src/'+name+'.ts by npm run build.\n'+stripTypeScriptTypes(inputs[`src/${name}.ts`].toString('utf8'),{mode:'strip'});
+    let code='// Generated from src/'+name+'.ts by npm run build.\n'+stripTypeScriptTypes(inputs[`src/${name}.ts`].toString('utf8'),{mode:'strip'});
+    code=code.replace(/(from\s+['"]\.{1,2}\/[^'"]+)\.ts(['"])/g,'$1.js$2');
     const syntax=spawnSync(process.execPath,['--check','--input-type=module'],{input:code,encoding:'utf8',timeout:10000,windowsHide:true});
     if(syntax.status!==0) throw new Error('Ошибка синтаксиса в src/'+name+'.ts; исходники сохранены.');
     outputs[name+'.js']=Buffer.from(code);

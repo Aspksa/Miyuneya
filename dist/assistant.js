@@ -11,9 +11,9 @@
                             
                                            
                                
-                                        
-                                                      
-                                               
+                                                 
+                                                               
+                                                        
                                                    
                         
   
@@ -193,8 +193,8 @@ export function mountAssistant(host               ) {
   function actionChip(action        ) {
     const chip = element('div', 'chat-action' + (action.undone ? ' undone' : ''));
     chip.append(element('span', '', `${action.undone ? 'Отменено' : '✓'} ${action.kind === 'task' ? 'Задача' : 'Заметка'}: ${action.title}`));
-    if (!action.undone) chip.append(button('Отменить', 'chat-link', () => {
-      host.remove(action.kind, action.id); action.undone = true; signal('undo', action.title); saveHistory(); renderChat();
+    if (!action.undone) chip.append(button('Отменить', 'chat-link', async () => {
+      if(!await host.remove(action.kind, action.id))return; action.undone = true; signal('undo', action.title); saveHistory(); renderChat();
     }));
     return chip;
   }
@@ -210,7 +210,7 @@ export function mountAssistant(host               ) {
         const tools = element('div', 'chat-tools');
         tools.append(button('Копировать', 'chat-link', async () => {
           try { await navigator.clipboard.writeText(shown); host.toast('Ответ скопирован'); signal('copy'); } catch { host.toast('Не удалось скопировать'); }
-        }), button('В заметку', 'chat-link', () => { if (host.addNote(noteTitle(shown), shown)) { host.toast('Ответ сохранён в заметки'); signal('save'); } }));
+        }), button('В заметку', 'chat-link', async () => { if (await host.addNote(noteTitle(shown), shown)) { host.toast('Ответ сохранён в заметки'); signal('save'); } }));
         item.append(tools);
       }
     }
@@ -257,13 +257,13 @@ export function mountAssistant(host               ) {
   function closeChat() { chat.hidden = true; avatar.focus(); }
   const toggleChat = () => chat.hidden ? openChat() : closeChat();
 
-  function applyActions(message         ) {
+  async function applyActions(message         ) {
     const { tasks, notes } = parseActions(message.content);
     const actions           = [];
-    for (const title of tasks) { const id = host.addTask(title); if (id) actions.push({ kind: 'task', id, title: title.slice(0, 200) }); }
+    for (const title of tasks) { const id = await host.addTask(title); if (id) actions.push({ kind: 'task', id, title: title.slice(0, 200) }); }
     for (const note of notes) {
       const title = note.title || noteTitle(note.body);
-      const id = host.addNote(title, note.body); if (id) actions.push({ kind: 'note', id, title: title.slice(0, 200) });
+      const id = await host.addNote(title, note.body); if (id) actions.push({ kind: 'note', id, title: title.slice(0, 200) });
     }
     if (actions.length) { message.actions = actions; host.toast(actions.length === 1 ? (actions[0].kind === 'task' ? 'Задача добавлена' : 'Заметка сохранена') : `Добавлено записей: ${actions.length}`); }
   }
@@ -296,7 +296,7 @@ export function mountAssistant(host               ) {
         }
       }
       if (!finished) throw new Error('Ответ оборвался. Попробуйте ещё раз.');
-      applyActions(message);
+      await applyActions(message);
       void compact();
     } catch (e) {
       if (current.abort.signal.aborted) { message.stopped = true; signal('stop'); }
@@ -478,6 +478,7 @@ export function mountAssistant(host               ) {
 
   place();
   return {
+    draft(text        ) { openChat();input.value=text.slice(0,20000);input.focus(); },
     // Called by the host after appearance or the cloud.ru connection changes.
     refresh() { place(); if (!chat.hidden) { if (host.look().hidden) chat.hidden = true; else if (!streaming) renderChat(); } },
   };

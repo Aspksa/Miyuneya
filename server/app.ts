@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { openDisk } from './disk.ts';
 import { readFile, rm } from 'node:fs/promises';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import { join } from 'node:path';
@@ -31,12 +32,15 @@ export function sniffImage(bytes: Uint8Array): string | null {
   return null;
 }
 // Notes and tasks the model may read, newest first, within a fixed character budget.
-export function workspaceContext(data: Workspace, now = new Date(), budget = 30_000) {
+export function workspaceContext(data: Workspace, now = new Date(), budget = 30_000, query = '') {
   const day = (iso: string) => new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
   const lines = [`Сегодня ${now.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}, ${now.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}.`, 'Ниже содержимое пространства пользователя. Опирайся на него, когда вопрос касается его дел и записей; не пересказывай его без просьбы.'];
   const open = data.tasks.filter(t => !t.done).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const done = data.tasks.filter(t => t.done).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 30);
-  const notes = [...data.notes].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const terms=query.toLocaleLowerCase('ru').match(/[\p{L}\p{N}]{3,}/gu) || [];
+  const score=n=>terms.reduce((sum,t)=>sum+(n.title.toLocaleLowerCase('ru').includes(t)?5:0)+(n.body.toLocaleLowerCase('ru').includes(t)?1:0),0);
+  const notes = [...data.notes].sort((a,b)=>score(b)-score(a) || b.updatedAt.localeCompare(a.updatedAt));
+  const excerpt=n=>{if(!terms.length || n.body.length<=800)return n.body.slice(0,800)+(n.body.length>800?'…':'');const lower=n.body.toLocaleLowerCase('ru');const position=terms.map(t=>lower.indexOf(t)).filter(p=>p>=0).sort((a,b)=>b-a)[0];if(position===undefined)return n.body.slice(0,800)+'…';const start=Math.max(0,position-150);return (start?'…':'')+n.body.slice(start,start+4000)+(start+4000<n.body.length?'…':'');};
   let used = lines.join('\n').length, cut = false;
   const add = (line: string) => { if (cut || used + line.length > budget) { cut = true; return; } lines.push(line); used += line.length + 1; };
   add(`\nОткрытые задачи (${open.length}):`); if (!open.length) add('— нет');
@@ -44,7 +48,7 @@ export function workspaceContext(data: Workspace, now = new Date(), budget = 30_
   add(`\nНедавно выполненные задачи (${done.length}):`); if (!done.length) add('— нет');
   for (const t of done) add(`- ${t.title}`);
   add(`\nЗаметки (${notes.length}, свежие сверху):`); if (!notes.length) add('— нет');
-  for (const n of notes) add(`### ${n.title} (изменена ${day(n.updatedAt)})${n.body.trim() ? '\n' + (n.body.length > 800 ? n.body.slice(0, 800) + '…' : n.body) : ''}`);
+  for (const n of notes) add(`### ${n.title} (изменена ${day(n.updatedAt)})${n.body.trim() ? '\n' + excerpt(n) : ''}`);
   if (cut) lines.push('(Показаны не все записи: пространство слишком большое.)');
   return lines.join('\n');
 }
@@ -75,7 +79,7 @@ export async function createApp(root: string, instance: string, preview = false,
   let queue = Promise.resolve();
   const files: Record<string, [string, string]> = {
     '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'],
-    '/calendar.js': ['calendar.js', 'text/javascript'], '/main.js': ['main.js', 'text/javascript'], '/model.js': ['model.js', 'text/javascript'],
+    '/disk.js': ['disk.js', 'text/javascript'], '/calendar.js': ['calendar.js', 'text/javascript'], '/main.js': ['main.js', 'text/javascript'], '/model.js': ['model.js', 'text/javascript'],
     '/assistant.js': ['assistant.js', 'text/javascript'], '/appearance.js': ['appearance.js', 'text/javascript'], '/memory.js': ['memory.js', 'text/javascript'],
     '/style.css': ['style.css', 'text/css'], '/fox.svg': ['fox.svg', 'image/svg+xml'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
     ...Object.fromEntries([1, 2, 3, 4].map(n => [`/avatars/avatar${n}.png`, [`avatars/avatar${n}.png`, 'image/png']]))
@@ -143,6 +147,8 @@ export async function createApp(root: string, instance: string, preview = false,
     } finally { call.release(); }
   }
   const memory = await openMemory(dataDir, { ask, embed, embedModel: () => assistant.embedModel, available: () => !!assistant.apiKey, workspace: () => assistant.context ? state.data : null, idleMs: options.memoryIdleMs, tickMs: options.memoryTickMs, thinkIdleMs: options.memoryThinkIdleMs });
+  let disk; let diskError=false;
+  try{disk=await openDisk(dataDir);}catch{diskError=true;}
   let stopping = false;
   const active = new Set<Promise<void>>();
   const server = createServer((req, res) => {
@@ -150,7 +156,7 @@ export async function createApp(root: string, instance: string, preview = false,
     active.add(operation);
     operation.finally(() => active.delete(operation)).catch(() => {});
   });
-  server.requestTimeout = 5000;
+  server.requestTimeout = 120000;
   server.headersTimeout = 5000;
   async function handle(req, res) {
     const send = (status: number, value: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); };
@@ -171,6 +177,7 @@ export async function createApp(root: string, instance: string, preview = false,
         return;
       }
       if (stopping) return send(503, { error: 'Сервер завершает работу' });
+      if(path==='/api/disk' || path.startsWith('/api/disk/')) {if(diskError)return send(503,{error:'Индекс диска повреждён. Документы сохранены; восстановите data/disk/index.json из копии.'});return await disk.handle(req,res,new URL(req.url,origin));}
       if (path.startsWith('/api/assistant')) {
         const route = path.slice('/api/assistant'.length);
         if (route === '' && req.method === 'GET') return send(200, publicConfig());
@@ -263,7 +270,7 @@ export async function createApp(root: string, instance: string, preview = false,
             if (removed.length) events.push(`Забыла записей: ${removed.length}`);
           }
           const recall = await memory.context(messages.filter((m: ChatMessage) => m.role === 'user').slice(-3).map((m: ChatMessage) => m.content).join('\n'), last);
-          const system = [PERSONA, ACTIONS, assistant.context ? workspaceContext(state.data) : 'Доступ к заметкам и задачам пользователя выключен в настройках. Если спросят о них, мягко скажи об этом.',
+          const system = [PERSONA, ACTIONS, assistant.context ? workspaceContext(state.data,new Date(),30_000,last) : 'Доступ к заметкам и задачам пользователя выключен в настройках. Если спросят о них, мягко скажи об этом.',
             recall, summary ? 'Краткое содержание более ранней части этого разговора:\n' + summary : '', ...notes].filter(Boolean).join('\n\n');
           let call;
           try {
@@ -461,6 +468,7 @@ export async function createApp(root: string, instance: string, preview = false,
         if (server.listening) await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()));
         await Promise.all([...active]);
         await memory.shutdown();
+        await disk?.shutdown();
         await queue;
       })();
       return shutdownPromise;
