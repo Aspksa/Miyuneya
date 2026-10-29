@@ -1,15 +1,21 @@
-// The memory menu behind the brain icon: what Miyuneya knows, the rules she follows, past dialogs, the knowledge map and her journal.
+// The memory menu behind the brain icon: how she grows, what Miyuneya knows, the rules she follows, past dialogs, the knowledge map, her diary and journal.
 // Everything lives on the local server in data/memory.json; this panel only shows and edits it.
 export type Category = 'personal' | 'work' | 'health' | 'plans' | 'tastes' | 'people' | 'other';
-export type MemoryItemView = { id: string; kind: 'fact' | 'rule'; text: string; strength: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note'; links: string[]; category: Category; until: string | null; expired: boolean };
-export type EpisodeView = { id: string; date: string; topic: string; outcome: string; links: string[]; consolidated: boolean };
+export type MemoryItemView = { id: string; kind: 'fact' | 'rule'; text: string; strength: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review'; links: string[]; category: Category; until: string | null; expired: boolean };
+export type EpisodeView = { id: string; date: string; topic: string; outcome: string; links: string[]; consolidated: boolean; score: number | null; weak: string };
+export type TopicView = { id: string; title: string; area: Category; summary: string; facts: string[]; created: string; updated: string };
+export type QuestionView = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number };
+type Level = { level: number; floor: number; next: number };
+export type GrowthView = Level & { xp: number; name: string; week: { xp: number; facts: number; rules: number; lessons: number; episodes: number; entities: number; topics: number };
+  quality: { average: number | null; reviewed: number; previous: number | null }; skills: (Level & { area: Category; points: number; week: number; facts: number; topics: { id: string; title: string }[] })[] };
 export type EntityView = { id: string; name: string; type: 'person' | 'project' | 'place' | 'topic' | 'thing'; about: string; aliases: string[]; degree: number };
 export type EdgeView = { from: string; to: string; type: 'related' | 'part_of' | 'blocks' | 'after' | 'decided_in' | 'about' };
 export type DiaryView = { id: string; date: string; text: string };
 export type JournalView = { at: string; kind: string; text: string };
 export type MemoryView = { enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | null; lastSleep: string | null; pending: number; newEpisodes: number;
   search: 'meaning' | 'words'; searchError: string; indexed: number;
-  items: MemoryItemView[]; episodes: EpisodeView[]; entities: EntityView[]; edges: EdgeView[]; diary: DiaryView[]; journal: JournalView[] };
+  items: MemoryItemView[]; episodes: EpisodeView[]; entities: EntityView[]; edges: EdgeView[]; diary: DiaryView[]; journal: JournalView[];
+  topics: TopicView[]; understanding: { text: string; updated: string } | null; questions: QuestionView[]; growth: GrowthView };
 export type MemoryHost = {
   toast(message: string): void;
   confirm(title: string): Promise<boolean>;
@@ -17,17 +23,18 @@ export type MemoryHost = {
   openNote(id: string): void;
   changed(view: MemoryView): void;
 };
-export type Tab = 'fact' | 'rule' | 'episode' | 'map' | 'diary' | 'journal';
+export type Tab = 'growth' | 'fact' | 'rule' | 'episode' | 'map' | 'diary' | 'journal';
 type Request = RequestInit & { json?: unknown };
 
 export const brainIcon = '<path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill"/><path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill" transform="matrix(-1 0 0 1 24 0)"/><path d="M12 5.4v14.1M12 9.2c-1.3 0-2.2-.8-2.3-2M9.6 12.3c-1.4-.4-2.8.2-3.4 1.4M12 15.6c-1.2 0-2.2-.7-2.5-1.8M12 9.2c1.3 0 2.2-.8 2.3-2M14.4 12.3c1.4-.4 2.8.2 3.4 1.4M12 15.6c1.2 0 2.2-.7 2.5-1.8M6.7 8.9c.6.5 1.4.7 2.1.5M17.3 8.9c-.6.5-1.4.7-2.1.5" class="accent-stroke"/>';
-const tabs: [Tab, string][] = [['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
+const tabs: [Tab, string][] = [['growth', 'Рост'], ['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
 export const categories: [Category, string][] = [['personal', 'Личное'], ['work', 'Работа'], ['health', 'Здоровье'], ['plans', 'Планы'], ['tastes', 'Вкусы'], ['people', 'Люди'], ['other', 'Другое']];
 const categoryName = (c: Category) => categories.find(([key]) => key === c)?.[1] || 'Другое';
-const sources: Record<MemoryItemView['source'], string> = { user: 'от вас', dialog: 'из разговора', sleep: 'после сна', note: 'из заметки' };
+const sources: Record<MemoryItemView['source'], string> = { user: 'от вас', dialog: 'из разговора', sleep: 'после сна', note: 'из заметки', review: 'из самооценки' };
+const areaNames: Record<Category, string> = { personal: 'Личное', work: 'Работа', health: 'Здоровье', plans: 'Планы', tastes: 'Вкусы', people: 'Люди', other: 'Разное' };
 const entityTypes: Record<EntityView['type'], string> = { person: 'Человек', project: 'Проект', place: 'Место', topic: 'Тема', thing: 'Вещь' };
 export const relationNames: Record<EdgeView['type'], string> = { related: 'связано с', part_of: 'часть', blocks: 'мешает', after: 'после', decided_in: 'решено в', about: 'про' };
-const journalNames: Record<string, string> = { learned: 'Узнала', rule: 'Правило', reinforced: 'Подтвердилось', weakened: 'Сомнение', merged: 'Объединила', forgot: 'Забыла', episode: 'Эпизод', sleep: 'Сон', edited: 'Правка', entity: 'Карта' };
+const journalNames: Record<string, string> = { learned: 'Узнала', rule: 'Правило', reinforced: 'Подтвердилось', weakened: 'Сомнение', merged: 'Объединила', forgot: 'Забыла', episode: 'Эпизод', sleep: 'Сон', edited: 'Правка', entity: 'Карта', review: 'Самооценка', topic: 'Тема', question: 'Вопрос' };
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const when = (date: string, time = false) => new Date(date).toLocaleString('ru-RU', time ? { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'long' });
 const short = (text: string, max: number) => text.length > max ? text.slice(0, max - 1) + '…' : text;
@@ -95,7 +102,7 @@ export function mountMemory(host: MemoryHost) {
   panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Память Миюнэи');
   document.body.append(panel);
   let view: MemoryView | null = null;
-  let tab: Tab = 'fact';
+  let tab: Tab = 'growth';
   let filter: Category | 'all' = 'all';
   let editing = '';
   let selected = '';
@@ -147,7 +154,28 @@ export function mountMemory(host: MemoryHost) {
     const body = editing === e.id
       ? `<form class="memory-edit" data-memory-save="${id}"><input name="topic" maxlength="200" value="${escape(e.topic)}" aria-label="Тема"><textarea name="outcome" maxlength="600" rows="3" aria-label="Итог">${escape(e.outcome)}</textarea><div><button class="button primary" type="submit">Сохранить</button><button class="button quiet" type="button" data-memory-cancel>Отмена</button></div></form>`
       : `<p><b>${escape(e.topic)}</b>${e.outcome ? '<br>' + escape(e.outcome) : ''}</p>`;
-    return `<article class="memory-item" id="memory-${id}">${body}<div class="memory-meta"><span>${when(e.date, true)}${e.consolidated ? '' : ' · <em>ещё не осмыслен во сне</em>'}</span></div>${linkChips([...e.links, ...related(e.id)])}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${id}">Изменить</button><button type="button" class="chat-link" data-memory-select="${id}">На карте</button><button type="button" class="chat-link danger" data-memory-delete="${id}">Удалить</button></div></article>`;
+    return `<article class="memory-item" id="memory-${id}">${body}<div class="memory-meta"><span>${when(e.date, true)}${e.score ? ` · самооценка ${e.score} из 5` : ''}${e.consolidated ? '' : ' · <em>ещё не осмыслен во сне</em>'}</span></div>${e.weak ? `<p class="memory-weak">Слабое место: ${escape(e.weak)}</p>` : ''}${linkChips([...e.links, ...related(e.id)])}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${id}">Изменить</button><button type="button" class="chat-link" data-memory-select="${id}">На карте</button><button type="button" class="chat-link danger" data-memory-delete="${id}">Удалить</button></div></article>`;
+  }
+  const bar = (value: number, floor: number, next: number) => `<span class="growth-bar" data-progress="${Math.max(0.03, Math.min(1, (value - floor) / Math.max(1, next - floor))).toFixed(3)}"><i></i></span>`;
+  const plural = (n: number, one: string, few: string, many: string) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many}`;
+  // The growth tab: her level, what she learned this week, skills by area, topics, the understanding they add up to and her questions.
+  function growthHtml(v: MemoryView) {
+    const g = v.growth;
+    const week = [g.week.facts && '+' + plural(g.week.facts, 'факт', 'факта', 'фактов'), g.week.rules && '+' + plural(g.week.rules, 'правило', 'правила', 'правил'), g.week.episodes && plural(g.week.episodes, 'разговор', 'разговора', 'разговоров'), g.week.entities && plural(g.week.entities, 'новое имя', 'новых имени', 'новых имён'), g.week.topics && '+' + plural(g.week.topics, 'тема', 'темы', 'тем')].filter(Boolean).join(' · ');
+    const q = g.quality;
+    const quality = q.average === null ? '' : `<p class="growth-line">Самооценка ответов за неделю: <b>${q.average.toFixed(1).replace('.', ',')} из 5</b>${q.previous === null ? '' : q.average > q.previous ? ` <span class="up">↑ было ${q.previous.toFixed(1).replace('.', ',')}</span>` : q.average < q.previous ? ` <span class="down">↓ было ${q.previous.toFixed(1).replace('.', ',')}</span>` : ''}${g.week.lessons ? ` · новых навыков: ${g.week.lessons}` : ''}</p>`;
+    const level = `<section class="growth-card"><div class="growth-level"><span class="growth-badge">${g.level}</span><div><b>${escape(g.name)}</b><small>Уровень ${g.level} · ${g.xp} из ${g.next} опыта</small></div></div>${bar(g.xp, g.floor, g.next)}<p class="growth-line">${week ? 'За неделю: ' + week + (g.week.xp ? ` · <b>+${g.week.xp} опыта</b>` : '') : 'На этой неделе пока ничего нового. Поговорите со мной, и я буду расти.'}</p>${quality}</section>`;
+    const skills = g.skills.length ? `<section class="growth-section"><h4>Навыки по областям</h4>${g.skills.map(s => `<div class="skill"><div class="skill-head"><b>${areaNames[s.area]}</b><span>уровень ${s.level}</span>${s.week ? `<em>+${s.week} за неделю</em>` : ''}</div>${bar(s.points, s.floor, s.next)}<small>${plural(s.facts, 'факт', 'факта', 'фактов')}${s.topics.length ? ' · ' + s.topics.map(t => escape(t.title)).join(', ') : ''}</small></div>`).join('')}</section>` : '';
+    const u = v.understanding;
+    const understanding = `<section class="growth-section"><h4>Как я вас понимаю</h4>${u ? (editing === 'understanding'
+      ? `<form class="memory-edit" data-memory-save="understanding"><textarea name="text" maxlength="1500" rows="5" aria-label="Общее понимание">${escape(u.text)}</textarea><div><button class="button primary" type="submit">Сохранить</button><button class="button quiet" type="button" data-memory-cancel>Отмена</button></div></form>`
+      : `<article class="memory-item"><p class="understanding">${escape(u.text)}</p><div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="understanding">Изменить</button><button type="button" class="chat-link danger" data-memory-delete="understanding">Удалить</button><small>обновлено ${when(u.updated)}</small></div></article>`)
+      : '<p class="memory-empty">Во время сна я соберу факты в темы, а темы — в общее понимание вас.</p>'}</section>`;
+    const topics = v.topics.length ? `<section class="growth-section"><h4>Темы</h4>${[...v.topics].sort((a, b) => b.facts.length - a.facts.length).map(t => `<article class="memory-item" id="memory-${escape(t.id)}">${editing === t.id
+      ? `<form class="memory-edit" data-memory-save="${escape(t.id)}"><input name="title" maxlength="80" value="${escape(t.title)}" aria-label="Тема">${categorySelect(t.area)}<textarea name="summary" maxlength="600" rows="3" aria-label="Что я знаю по теме">${escape(t.summary)}</textarea><div><button class="button primary" type="submit">Сохранить</button><button class="button quiet" type="button" data-memory-cancel>Отмена</button></div></form>`
+      : `<p><span class="memory-tag">${areaNames[t.area]}</span><b>${escape(t.title)}</b>${t.summary ? '<br>' + escape(t.summary) : ''}</p>`}${linkChips(t.facts)}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${escape(t.id)}">Изменить</button><button type="button" class="chat-link danger" data-memory-delete="${escape(t.id)}">Удалить</button></div></article>`).join('')}</section>` : '';
+    const questions = v.questions.length ? `<section class="growth-section"><h4>Хочу у вас спросить</h4>${v.questions.map(question => `<form class="memory-question ${question.kind}" data-question="${escape(question.id)}"><p>${question.kind === 'conflict' ? '<span class="memory-tag">Противоречие</span>' : ''}${escape(question.text)}</p>${question.kind === 'conflict' ? linkChips(question.facts) : ''}<div class="memory-answer"><input name="answer" maxlength="400" autocomplete="off" placeholder="Ваш ответ" aria-label="Ответ на вопрос" ${busy ? 'disabled' : ''}><button class="button" type="submit" ${busy ? 'disabled' : ''}>Ответить</button><button type="button" class="chat-link" data-memory-dismiss="${escape(question.id)}">Не спрашивать</button></div></form>`).join('')}</section>` : '';
+    return level + questions + skills + understanding + topics;
   }
   // Diary entries are written by Miyuneya herself during sleep; the user may correct or delete any of them.
   function diaryRow(e: DiaryView) {
@@ -197,6 +225,7 @@ export function mountMemory(host: MemoryHost) {
   }
   function listHtml() {
     if (!view) return '<p class="memory-empty">Загружаю память…</p>';
+    if (tab === 'growth') return growthHtml(view);
     if (tab === 'map') return mapHtml();
     if (tab === 'diary') return view.diary.length ? '<p class="memory-note">Записи пишет сама Миюнэя после «сна». Любую можно поправить или удалить.</p>' + [...view.diary].sort((a, b) => b.date.localeCompare(a.date)).map(diaryRow).join('') : '<p class="memory-empty">Дневник пока пуст. Каждый раз во время сна Миюнэя записывает сюда, что узнала о вас и что изменила в себе.</p>';
     if (tab === 'journal') return view.journal.length ? view.journal.map(j => `<div class="memory-journal"><small>${when(j.at, true)}</small><b>${journalNames[j.kind] || 'Запись'}</b><span>${escape(j.text)}</span></div>`).join('') : '<p class="memory-empty">Здесь появится история: что Миюнэя узнала, объединила и забыла.</p>';
@@ -211,11 +240,11 @@ export function mountMemory(host: MemoryHost) {
     if (!view.enabled) return 'Память выключена: Миюнэя ничего не вспоминает и не запоминает';
     if (view.busy) return view.busy === 'sleep' ? 'Сейчас сон: перечитываю эпизоды и заметки, навожу порядок…' : 'Разбираю недавний разговор…';
     if (!view.available) return 'Подключите cloud.ru, чтобы память пополнялась сама';
-    return `Сон: ${view.lastSleep ? when(view.lastSleep, true) : 'ещё не было'} · новых эпизодов ${view.newEpisodes} · поиск ${view.search === 'meaning' ? 'по смыслу' : 'по словам'}${view.private ? ' · приватный режим' : ''}`;
+    return `Уровень ${view.growth.level} · сон: ${view.lastSleep ? when(view.lastSleep, true) : 'ещё не было'} · новых эпизодов ${view.newEpisodes} · поиск ${view.search === 'meaning' ? 'по смыслу' : 'по словам'}${view.private ? ' · приватный режим' : ''}`;
   }
   function render() {
     if (panel.hidden) return;
-    const count = (t: Tab) => !view || t === 'journal' || t === 'map' ? '' : String(t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length);
+    const count = (t: Tab) => !view || t === 'journal' || t === 'map' || t === 'growth' ? '' : String(t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length);
     const scroll = panel.querySelector('.memory-list')?.scrollTop || 0;
     const off = !view || busy ? 'disabled' : '';
     panel.classList.toggle('wide', tab === 'map');
@@ -226,6 +255,7 @@ export function mountMemory(host: MemoryHost) {
       + (tab === 'fact' || tab === 'rule' ? `<form class="memory-add"><input name="text" maxlength="400" autocomplete="off" placeholder="${tab === 'fact' ? 'Добавить факт, например «работает по утрам»' : 'Добавить правило, например «задачи писать коротко»'}" aria-label="Новая запись" ${off}>${tab === 'fact' ? categorySelect(filter === 'all' ? 'other' : filter) : ''}<button class="button" type="submit" ${off}>Добавить</button></form>` : '')
       + `<footer class="memory-foot"><button type="button" class="button" data-memory-sleep ${off || (view?.available && view.enabled ? '' : 'disabled')}>Уснуть сейчас</button><a class="button" href="/api/memory/export" download>Экспорт</a><button type="button" class="button quiet danger" data-memory-reset ${off}>Сбросить</button></footer>`;
     for (const meter of panel.querySelectorAll<HTMLElement>('[data-strength]')) meter.style.setProperty('--strength', String(Math.max(0.04, Number(meter.dataset.strength))));
+    for (const meter of panel.querySelectorAll<HTMLElement>('[data-progress]')) meter.style.setProperty('--progress', meter.dataset.progress!);
     const list = panel.querySelector('.memory-list'); if (list) list.scrollTop = scroll;
     clearTimeout(poll);
     if (view?.busy) poll = setTimeout(() => void refresh(), 3000);
@@ -258,9 +288,10 @@ export function mountMemory(host: MemoryHost) {
       row?.scrollIntoView({ block: 'nearest' }); row?.classList.add('flash');
       return;
     }
+    if (d.memoryDismiss) { await act('/items/' + d.memoryDismiss, { method: 'DELETE' }, 'Больше не спрошу'); return; }
     if (d.memoryUnlink) { await act('/unlink', { method: 'POST', json: { from: selected, to: d.memoryUnlink } }, 'Связь убрана'); return; }
     if (d.memoryPin) { const item = view?.items.find(i => i.id === d.memoryPin); if (item) await act('/items/' + item.id, { method: 'PATCH', json: { pinned: !item.pinned } }, item.pinned ? 'Запись откреплена' : 'Закреплено: эта запись не будет забыта'); return; }
-    if (d.memoryDelete && await host.confirm(d.what === 'diary' ? 'Удалить запись дневника?' : 'Удалить запись из памяти?')) { if (await act('/items/' + d.memoryDelete, { method: 'DELETE' }, d.what === 'diary' ? 'Запись дневника удалена' : 'Запись удалена') && selected === d.memoryDelete) { selected = ''; render(); } return; }
+    if (d.memoryDelete && await host.confirm(d.what === 'diary' ? 'Удалить запись дневника?' : d.memoryDelete === 'understanding' ? 'Удалить общее понимание? Я соберу его заново во время сна.' : 'Удалить запись из памяти?')) { if (await act('/items/' + d.memoryDelete, { method: 'DELETE' }, d.what === 'diary' ? 'Запись дневника удалена' : 'Запись удалена') && selected === d.memoryDelete) { selected = ''; render(); } return; }
     if (target.hasAttribute('data-memory-sleep')) { await act('/sleep', { method: 'POST' }, 'Сон завершён: память упорядочена'); return; }
     if (target.hasAttribute('data-memory-reset') && await host.confirm('Стереть всю память Миюнэи?')) { await act('', { method: 'DELETE' }, 'Память очищена'); return; }
   });
@@ -283,9 +314,16 @@ export function mountMemory(host: MemoryHost) {
       if (text && await act('/items', { method: 'POST', json: { kind: tab, text, category: tab === 'fact' ? field('category') : undefined } }, tab === 'rule' ? 'Правило добавлено' : 'Факт добавлен')) panel.querySelector<HTMLInputElement>('.memory-add input')?.focus();
       return;
     }
+    if (form.dataset.question) {
+      const text = field('answer');
+      if (text) await act('/answer', { method: 'POST', json: { id: form.dataset.question, text } }, 'Спасибо, запомнила');
+      return;
+    }
     const id = form.dataset.memorySave;
     if (!id) return;
-    const change = tab === 'episode' ? { topic: field('topic'), outcome: field('outcome') }
+    const change = id === 'understanding' ? { text: field('text') }
+      : tab === 'growth' ? { title: field('title'), summary: field('summary'), category: field('category') }
+      : tab === 'episode' ? { topic: field('topic'), outcome: field('outcome') }
       : tab === 'map' ? { name: field('name'), about: field('about') }
       : { text: field('text'), ...(tab === 'fact' && { category: field('category'), until: field('until') || null }) };
     if ('text' in change && !change.text) return host.toast('Запись не может быть пустой');

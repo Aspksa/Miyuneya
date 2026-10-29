@@ -350,11 +350,17 @@ export async function createApp(root: string, instance: string, preview = false,
           const input = await readJson(req, send, 10_000);
           if (input === undefined) return;
           const textual = (v: unknown, max: number) => v === undefined || (typeof v === 'string' && v.length <= max);
-          if (!input || typeof input !== 'object' || !textual(input.text, 2000) || !textual(input.topic, 200) || !textual(input.outcome, 600) || !textual(input.name, 80) || !textual(input.about, 300) || !textual(input.category, 20) || !textual(input.type, 20)
+          if (!input || typeof input !== 'object' || !textual(input.text, 2000) || !textual(input.topic, 200) || !textual(input.outcome, 600) || !textual(input.name, 80) || !textual(input.about, 300) || !textual(input.category, 20) || !textual(input.type, 20) || !textual(input.title, 80) || !textual(input.summary, 600)
             || (input.until !== undefined && input.until !== null && !validDate(input.until)) || (input.pinned !== undefined && typeof input.pinned !== 'boolean')) return send(400, { error: 'Неверный формат записи.' });
           return await memory.edit(item, input) ? ok() : send(404, { error: 'Запись не найдена.' });
         }
         if (item && req.method === 'DELETE') return await memory.remove(item) ? ok() : send(404, { error: 'Запись не найдена.' });
+        if (route === '/answer' && req.method === 'POST') {
+          const input = await readJson(req, send, 10_000);
+          if (input === undefined) return;
+          if (typeof input?.id !== 'string' || typeof input.text !== 'string' || !input.text.trim() || input.text.length > 400) return send(400, { error: 'Ответ должен быть от 1 до 400 символов.' });
+          return await memory.answer(input.id, input.text) ? ok() : send(404, { error: 'Вопрос не найден.' });
+        }
         if ((route === '/signal' || route === '/unlink') && req.method === 'POST') {
           const input = await readJson(req, send, 10_000);
           if (input === undefined) return;

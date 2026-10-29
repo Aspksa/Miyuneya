@@ -1,9 +1,9 @@
-import type { Memory, MemoryItem, Episode, Entity, RelationType } from './memory.ts';
+import type { Memory, MemoryItem, Episode, Entity, RelationType, Topic, Category } from './memory.ts';
 
 // Recall: what the assistant remembers before an answer. Records are scored by meaning (embedding vectors from
 // cloud.ru), by shared words, by strength and freshness; then the knowledge graph adds what the chosen records lead to.
 export type Titles = Map<string, { kind: 'note' | 'task'; title: string }>;
-export type Recall = { query?: number[]; vector?: (text: string) => number[] | undefined };
+export type Recall = { query?: number[]; vector?: (text: string) => number[] | undefined; question?: string };
 
 export const FORGET_BELOW = 0.12;
 const DAY = 86_400_000;
@@ -42,7 +42,9 @@ export const expired = (item: Pick<MemoryItem, 'until'>, now = Date.now()) => !!
 export const itemText = (i: MemoryItem) => i.text;
 export const episodeText = (e: Episode) => e.topic + (e.outcome ? ' — ' + e.outcome : '');
 export const entityText = (e: Entity) => [e.name, ...e.aliases].join(', ') + (e.about ? ': ' + e.about : '');
-export const searchTexts = (memory: Memory) => [...memory.items.map(itemText), ...memory.episodes.map(episodeText), ...memory.entities.map(entityText)];
+export const topicText = (t: Topic) => t.title + (t.summary ? ': ' + t.summary : '');
+export const searchTexts = (memory: Memory) => [...memory.items.map(itemText), ...memory.episodes.map(episodeText), ...memory.entities.map(entityText), ...memory.topics.map(topicText)];
+export const categoryNames: Record<Category, string> = { personal: 'Личное', work: 'Работа', health: 'Здоровье', plans: 'Планы', tastes: 'Вкусы', people: 'Люди', other: 'Разное' };
 
 export const relationNames: Record<RelationType, string> = { related: 'связано с', part_of: 'часть', blocks: 'мешает', after: 'после', decided_in: 'решено в', about: 'про' };
 export const entityNames: Record<Entity['type'], string> = { person: 'человек', project: 'проект', place: 'место', topic: 'тема', thing: 'вещь' };
@@ -81,9 +83,12 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   };
   // Hybrid: meaning when vectors exist, shared words always (names and dates survive embeddings poorly).
   const match = (text: string) => { const s = semantic(text); return s === null ? lexical(text) : 0.65 * s + 0.35 * lexical(text); };
+  // The upper levels of memory come first: matching topics lift their facts.
+  const topics = memory.topics.map(t => ({ t, score: match(topicText(t)) })).filter(x => x.score > 0.3).sort((a, b) => b.score - a.score).slice(0, 3);
+  const inTopic = new Set(topics.flatMap(x => x.t.facts));
   const live = memory.items.filter(i => !expired(i, now)).map(item => ({ item, power: strength(item, now) })).filter(x => x.power >= FORGET_BELOW);
   const rules = live.filter(x => x.item.kind === 'rule').sort((a, b) => b.power - a.power);
-  const facts = live.filter(x => x.item.kind === 'fact').map(x => { const m = match(x.item.text); return { ...x, match: m, score: x.power * (0.3 + m) }; }).sort((a, b) => b.score - a.score);
+  const facts = live.filter(x => x.item.kind === 'fact').map(x => { const m = match(x.item.text) + (inTopic.has(x.item.id) ? 0.25 : 0); return { ...x, match: m, score: x.power * (0.3 + m) }; }).sort((a, b) => b.score - a.score);
   const recent = memory.episodes.slice(-3).map(e => e.id);
   const episodes = memory.episodes.map(e => ({ e, score: match(episodeText(e)) + (recent.includes(e.id) ? 0.25 : 0) })).filter(x => x.score > 0.25).sort((a, b) => b.score - a.score).slice(0, 4);
   const entities = memory.entities.map(e => ({ e, score: match(entityText(e)) + ([e.name, ...e.aliases].some(name => tokens(name).size && [...tokens(name)].every(t => q.has(t))) ? 0.5 : 0) }))
@@ -115,11 +120,14 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   const lines: string[] = [];
   let budget = 6000;
   const add = (line: string) => { if (line.length > budget) return false; lines.push(line); budget -= line.length + 1; return true; };
-  if (rules.length) { add('Как пользователь любит, чтобы ты отвечала и действовала (соблюдай всегда):'); for (const { item } of rules.slice(0, 25)) if (!add('- ' + item.text)) break; }
+  if (memory.understanding) { add('Твоё общее понимание пользователя:'); add(memory.understanding.text); }
+  if (topics.length) { add('\nТемы его жизни, к которым относится разговор:'); for (const { t } of topics) add(`- ${t.title} (${categoryNames[t.area].toLocaleLowerCase('ru')})${t.summary ? ': ' + t.summary : ''}`); }
+  if (rules.length) { add((lines.length ? '\n' : '') + 'Как пользователь любит, чтобы ты отвечала и действовала (соблюдай всегда):'); for (const { item } of rules.slice(0, 25)) if (!add('- ' + item.text)) break; }
   const known = [...chosen.map(c => c.item), ...pulled];
   if (known.length) { add('\nЧто ты знаешь о пользователе (используй к месту, не перечисляй без просьбы):'); for (const item of known) if (!add('- ' + item.text + until(item) + linked(item.links))) break; }
   if (entities.length) { add('\nЛюди, проекты и темы из разговора:'); for (const { e } of entities) add(`- ${e.name} (${entityNames[e.type]})${e.about ? ': ' + e.about : ''}`); }
   if (episodes.length) { add('\nПрошлые разговоры по теме:'); for (const { e } of episodes) add(`- ${day(e.date)}: ${episodeText(e)}${linked(e.links)}`); }
   if (chain.length) { add('\nСвязи по теме (учитывай всю историю вопроса):'); for (const line of chain) add('- ' + line); }
+  if (recall.question) add(`\nПробел в твоей памяти. Если это к месту и не мешает ответу, в конце мягко спроси пользователя: «${recall.question}». Не спрашивай, если разговор о другом срочном деле.`);
   return lines.length ? 'Твоя долговременная память.\n' + lines.join('\n') : '';
 }

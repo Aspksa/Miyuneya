@@ -3,33 +3,39 @@ import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import type { Workspace } from '../src/model.ts';
-import { tokens, overlap, similarity, strength, expired, memoryContext, searchTexts, FORGET_BELOW, entityNames, relationNames } from './recall.ts';
+import { tokens, overlap, similarity, strength, expired, memoryContext, searchTexts, FORGET_BELOW, entityNames, relationNames, categoryNames } from './recall.ts';
 import type { Titles } from './recall.ts';
+import { growth } from './growth.ts';
 export { tokens, similarity, strength, memoryContext } from './recall.ts';
 
 // Long-term memory of the assistant, kept in data/memory.json next to the workspace.
 // Facts (semantic) and rules (procedural) carry a weight that confirmations raise and time lowers;
 // episodes record finished dialogs; entities and typed edges form the knowledge graph;
 // the journal shows what was learned, merged and forgotten, and the diary is written by the assistant herself.
+// Facts roll up into topics and topics into one understanding of the user; open questions cover gaps and contradictions.
 export type MemoryKind = 'fact' | 'rule';
 export type Category = 'personal' | 'work' | 'health' | 'plans' | 'tastes' | 'people' | 'other';
-export type MemoryItem = { id: string; kind: MemoryKind; text: string; weight: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note'; links: string[]; category: Category; until: string | null };
-export type Episode = { id: string; date: string; topic: string; outcome: string; links: string[]; consolidated: boolean };
+export type MemoryItem = { id: string; kind: MemoryKind; text: string; weight: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review'; links: string[]; category: Category; until: string | null };
+// score and weak are the assistant's own review of her answers in that dialog.
+export type Episode = { id: string; date: string; topic: string; outcome: string; links: string[]; consolidated: boolean; score: number | null; weak: string };
+export type Topic = { id: string; title: string; area: Category; summary: string; facts: string[]; created: string; updated: string };
+export type Question = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number; lastAsked: string | null };
 export type EntityType = 'person' | 'project' | 'place' | 'topic' | 'thing';
 export type Entity = { id: string; name: string; type: EntityType; about: string; aliases: string[]; created: string; seen: string };
 export type RelationType = 'related' | 'part_of' | 'blocks' | 'after' | 'decided_in' | 'about';
 export type Edge = { from: string; to: string; type: RelationType; created: string };
 export type DiaryEntry = { id: string; date: string; text: string };
-export type JournalKind = 'learned' | 'rule' | 'reinforced' | 'weakened' | 'merged' | 'forgot' | 'episode' | 'sleep' | 'edited' | 'entity';
+export type JournalKind = 'learned' | 'rule' | 'reinforced' | 'weakened' | 'merged' | 'forgot' | 'episode' | 'sleep' | 'edited' | 'entity' | 'review' | 'topic' | 'question';
 export type JournalEntry = { at: string; kind: JournalKind; text: string };
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 export type Dialog = { id: string; messages: ChatMessage[]; summary: string; updatedAt: string; failures: number; signals: string[] };
 export type Memory = { version: 1; settings: { enabled: boolean; private: boolean }; items: MemoryItem[]; episodes: Episode[]; entities: Entity[]; edges: Edge[]; diary: DiaryEntry[];
+  topics: Topic[]; understanding: { text: string; updated: string } | null; questions: Question[];
   journal: JournalEntry[]; lastSleep: string | null; notesSeen: string | null; dialogs: Dialog[]; marks: Mark[] };
 // The last message already reflected on, so a dialog that continues later is not analysed twice.
 type Mark = { id: string; last: string };
 
-export const LIMITS = { items: 600, episodes: 400, entities: 300, edges: 1500, diary: 365, journal: 200, text: 400, dialogs: 5, dialogMessages: 40, signals: 20 };
+export const LIMITS = { items: 600, episodes: 400, entities: 300, edges: 1500, diary: 365, topics: 80, questions: 12, journal: 200, text: 400, dialogs: 5, dialogMessages: 40, signals: 20 };
 export const CATEGORIES: Category[] = ['personal', 'work', 'health', 'plans', 'tastes', 'people', 'other'];
 const ENTITY_TYPES = Object.keys(entityNames) as EntityType[];
 const RELATIONS = Object.keys(relationNames) as RelationType[];
@@ -48,11 +54,12 @@ const newId = () => randomUUID().replaceAll('-', '').slice(0, 12);
 const clip = (value: unknown, max = LIMITS.text) => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '';
 const iso = (value: unknown, fallback: string) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : fallback;
 const unit = (value: unknown, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? Math.min(Math.max(value, 0), 1) : fallback;
-const ids = (value: unknown) => Array.isArray(value) ? [...new Set(value.filter((v): v is string => typeof v === 'string' && /^[\w-]{1,100}$/.test(v)))].slice(0, 20) : [];
+const ids = (value: unknown, max = 20) => Array.isArray(value) ? [...new Set(value.filter((v): v is string => typeof v === 'string' && /^[\w-]{1,100}$/.test(v)))].slice(0, max) : [];
+const score = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? Math.min(5, Math.max(1, Math.round(value))) : null;
 const category = (value: unknown): Category => CATEGORIES.includes(value as Category) ? value as Category : 'other';
 const day = (date: string) => new Date(date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 
-export const emptyMemory = (): Memory => ({ version: 1, settings: { enabled: true, private: false }, items: [], episodes: [], entities: [], edges: [], diary: [], journal: [], lastSleep: null, notesSeen: null, dialogs: [], marks: [] });
+export const emptyMemory = (): Memory => ({ version: 1, settings: { enabled: true, private: false }, items: [], episodes: [], entities: [], edges: [], diary: [], topics: [], understanding: null, questions: [], journal: [], lastSleep: null, notesSeen: null, dialogs: [], marks: [] });
 // Keeps every valid record of a hand-edited or older file instead of rejecting it whole.
 export function normalizeMemory(raw: any, now = new Date().toISOString()): Memory {
   if (!raw || typeof raw !== 'object' || raw.version !== 1) throw new Error('Неверный формат памяти');
@@ -65,11 +72,11 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
     const text = clip(item?.text);
     if (!text || !fresh(item.id) || (item.kind !== 'fact' && item.kind !== 'rule')) continue;
     memory.items.push({ id: item.id, kind: item.kind, text, weight: unit(item.weight, 0.5), hits: Number.isSafeInteger(item.hits) && item.hits > 0 ? item.hits : 1, created: iso(item.created, now), seen: iso(item.seen, now), pinned: item.pinned === true,
-      source: ['user', 'dialog', 'sleep', 'note'].includes(item.source) ? item.source : 'dialog', links: ids(item.links), category: category(item.category), until: validDate(item.until) ? item.until : null });
+      source: ['user', 'dialog', 'sleep', 'note', 'review'].includes(item.source) ? item.source : 'dialog', links: ids(item.links), category: category(item.category), until: validDate(item.until) ? item.until : null });
   }
   for (const e of array(raw.episodes)) {
     const topic = clip(e?.topic, 200);
-    if (topic && fresh(e.id)) memory.episodes.push({ id: e.id, date: iso(e.date, now), topic, outcome: clip(e.outcome, 600), links: ids(e.links), consolidated: e.consolidated === true });
+    if (topic && fresh(e.id)) memory.episodes.push({ id: e.id, date: iso(e.date, now), topic, outcome: clip(e.outcome, 600), links: ids(e.links), consolidated: e.consolidated === true, score: score(e.score), weak: clip(e.weak, 300) });
   }
   for (const e of array(raw.entities)) {
     const name = clip(e?.name, 80);
@@ -77,6 +84,12 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
   }
   for (const e of array(raw.edges)) if (typeof e?.from === 'string' && typeof e.to === 'string' && e.from !== e.to && RELATIONS.includes(e.type)) memory.edges.push({ from: e.from.slice(0, 100), to: e.to.slice(0, 100), type: e.type, created: iso(e.created, now) });
   for (const d of array(raw.diary)) { const text = clip(d?.text, 2000); if (text && fresh(d.id)) memory.diary.push({ id: d.id, date: iso(d.date, now), text }); }
+  for (const t of array(raw.topics)) { const title = clip(t?.title, 80); if (title && fresh(t.id)) memory.topics.push({ id: t.id, title, area: category(t.area), summary: clip(t.summary, 600), facts: ids(t.facts, 60), created: iso(t.created, now), updated: iso(t.updated, now) }); }
+  if (clip(raw.understanding?.text, 1500)) memory.understanding = { text: clip(raw.understanding.text, 1500), updated: iso(raw.understanding.updated, now) };
+  for (const q of array(raw.questions)) {
+    const text = clip(q?.text, 300);
+    if (text && fresh(q.id)) memory.questions.push({ id: q.id, kind: q.kind === 'conflict' ? 'conflict' : 'gap', text, entity: typeof q.entity === 'string' ? q.entity.slice(0, 100) : null, facts: ids(q.facts), created: iso(q.created, now), asked: Number.isSafeInteger(q.asked) && q.asked > 0 ? q.asked : 0, lastAsked: typeof q.lastAsked === 'string' && Number.isFinite(Date.parse(q.lastAsked)) ? q.lastAsked : null });
+  }
   for (const j of array(raw.journal)) if (clip(j?.text)) memory.journal.push({ at: iso(j.at, now), kind: j.kind, text: clip(j.text) });
   for (const d of array(raw.dialogs)) {
     if (!validDialogId(d?.id) || !Array.isArray(d.messages)) continue;
@@ -86,7 +99,7 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
   for (const m of array(raw.marks)) if (validDialogId(m?.id) && typeof m.last === 'string') memory.marks.push({ id: m.id, last: m.last.slice(0, 40) });
   memory.marks = memory.marks.slice(-20);
   memory.items = memory.items.slice(-LIMITS.items); memory.episodes = memory.episodes.slice(-LIMITS.episodes); memory.entities = memory.entities.slice(-LIMITS.entities);
-  memory.edges = memory.edges.slice(-LIMITS.edges); memory.diary = memory.diary.slice(-LIMITS.diary);
+  memory.edges = memory.edges.slice(-LIMITS.edges); memory.diary = memory.diary.slice(-LIMITS.diary); memory.topics = memory.topics.slice(-LIMITS.topics); memory.questions = memory.questions.slice(-LIMITS.questions);
   memory.journal = memory.journal.slice(-LIMITS.journal); memory.dialogs = memory.dialogs.slice(-LIMITS.dialogs);
   memory.lastSleep = typeof raw.lastSleep === 'string' && Number.isFinite(Date.parse(raw.lastSleep)) ? raw.lastSleep : null;
   memory.notesSeen = typeof raw.notesSeen === 'string' && Number.isFinite(Date.parse(raw.notesSeen)) ? raw.notesSeen : null;
@@ -173,11 +186,51 @@ function prune(memory: Memory) {
   const own = new Set([...memory.items.map(i => i.id), ...memory.episodes.map(e => e.id), ...memory.entities.map(e => e.id)]);
   const mine = (id: string) => own.has(id) || !/^[0-9a-f]{12}$/.test(id);
   memory.edges = memory.edges.filter(e => mine(e.from) && mine(e.to));
+  const facts = new Set(memory.items.filter(i => i.kind === 'fact').map(i => i.id));
+  for (const topic of memory.topics) topic.facts = topic.facts.filter(id => facts.has(id));
+  memory.topics = memory.topics.filter(t => t.facts.length || t.summary);
+  memory.questions = memory.questions.filter(q => (!q.entity || own.has(q.entity)) && (q.kind !== 'conflict' || q.facts.filter(id => facts.has(id)).length >= 2));
 }
 function relink(memory: Memory, from: string[], to: string) {
   for (const record of [...memory.items, ...memory.episodes]) if (record.links.some(id => from.includes(id))) record.links = [...new Set(record.links.map(id => from.includes(id) ? to : id))].filter(id => id !== record.id);
   for (const edge of memory.edges) { if (from.includes(edge.from)) edge.from = to; if (from.includes(edge.to)) edge.to = to; }
+  for (const record of [...memory.topics, ...memory.questions]) if (record.facts.some(id => from.includes(id))) record.facts = [...new Set(record.facts.map(id => from.includes(id) ? to : id))];
   memory.edges = memory.edges.filter((e, i, all) => e.from !== e.to && all.findIndex(x => x.from === e.from && x.to === e.to && x.type === e.type) === i);
+}
+
+// A question Miyuneya will ask the user: about something unknown, or which of two facts is true now.
+export function ask(memory: Memory, kind: Question['kind'], text: unknown, extra: { entity?: string | null; facts?: string[] } = {}, now = new Date().toISOString()) {
+  const value = clip(text, 300);
+  if (!value || memory.questions.length >= LIMITS.questions) return null;
+  if (memory.questions.some(q => similarity(q.text, value) >= 0.5 || (extra.entity && q.entity === extra.entity) || (kind === 'conflict' && q.kind === 'conflict' && extra.facts?.every(id => q.facts.includes(id))))) return null;
+  const question: Question = { id: newId(), kind, text: value, entity: extra.entity ?? null, facts: extra.facts ?? [], created: now, asked: 0, lastAsked: null };
+  memory.questions.push(question);
+  journal(memory, 'question', `${kind === 'conflict' ? 'Хочу уточнить' : 'Хочу спросить'}: ${value}`, now);
+  return question;
+}
+// Gaps the memory can see by itself: someone or something mentioned but never explained.
+export function findGaps(memory: Memory, now = new Date().toISOString()) {
+  for (const entity of memory.entities) {
+    if (entity.about || memory.questions.length >= LIMITS.questions) continue;
+    ask(memory, 'gap', `Вы упоминали «${entity.name}». ${entity.type === 'person' ? 'Кто это' : 'Что это'} для вас?`, { entity: entity.id }, now);
+  }
+}
+// The user's answer settles the question: it becomes a fact, explains the entity, and outweighs contradicting facts.
+export function answer(memory: Memory, id: string, text: unknown, now = new Date().toISOString(), source: MemoryItem['source'] = 'user') {
+  const question = memory.questions.find(q => q.id === id);
+  const value = clip(text);
+  if (!question || !value) return null;
+  const entity = memory.entities.find(e => e.id === question.entity);
+  let fact = value;
+  if (entity) { if (!entity.about) entity.about = clip(value, 300); entity.seen = now; fact = `${entity.name}: ${value}`; }
+  const conflicting = memory.items.filter(i => question.facts.includes(i.id));
+  // The fact the answer agrees with is confirmed by the upsert below; the others lose weight.
+  for (const old of conflicting) if (!old.pinned && similarity(old.text, fact) < 0.6) weaken(memory, old, now, 0.3);
+  const added = upsert(memory, 'fact', fact, { source, weight: source === 'user' ? 0.9 : 0.7, now, category: entity?.type === 'person' ? 'people' : conflicting[0]?.category, links: conflicting.flatMap(i => i.links).slice(0, 10) });
+  if (added && entity) addEdge(memory, added.item.id, entity.id, 'about', now);
+  memory.questions = memory.questions.filter(q => q !== question);
+  journal(memory, 'question', `Узнала из ответа: ${fact}`, now);
+  return added?.item ?? null;
 }
 
 // «Запомни …» and «забудь …» work directly from the chat.
@@ -222,9 +275,14 @@ export const REFLECT_PROMPT = `Ты модуль памяти помощницы
 "rules":[{"text":"как пользователь хочет, чтобы ты отвечала или действовала","same":"id","conflicts":"id"}],
 "relations":[{"from":"id или имя","to":"id или имя","type":"part_of"}],
 "confirm":["id фактов и правил, которые разговор подтвердил"],
-"weaken":["id фактов и правил, которые оказались неверными"]}
+"weaken":["id фактов и правил, которые оказались неверными"],
+"review":{"score":4,"good":"что в твоих ответах получилось","weak":"главное слабое место","lesson":"как действовать в следующий раз"},
+"answers":[{"question":"id открытого вопроса","text":"что ты узнала из ответа пользователя"}],
+"questions":["вопрос пользователю о пробеле в памяти"]}
 Факты: только устойчивое и полезное в будущем — кто пользователь, его предпочтения, привычки, планы, важные обстоятельства. Пиши в третьем лице, коротко, по-русски. Не записывай содержимое заметок, разовые просьбы и общие знания.
 Правила: явные просьбы о стиле и порядке работы. Обязательно сделай рефлексию: оцени свои ответы. Если пользователь тебя поправил, переспросил, попросил короче, иначе или по-другому, сформулируй из этого правило.
+Самооценка (review): честно оцени свои ответы в этом разговоре от 1 до 5 (5 — пользователь получил то, что хотел, с первого раза). weak — главное слабое место одной фразой, если оно было. lesson — правило-навык для себя на будущее, только если слабое место повторимо, например «Перед длинным ответом уточнять, что именно нужно». Не выдумывай промахов, если всё прошло хорошо.
+Открытые вопросы: если пользователь в разговоре ответил на один из них, верни answers. Если в разговоре появилось что-то важное и непонятное (неизвестный человек или проект), можно добавить до двух вопросов в questions.
 Учитывай сигналы поведения: отменённая задача или заметка, созданная тобой, — промах (пойми, что было не так); скопированный или сохранённый ответ — удача; переспрос — ответ был непонятен; остановленный ответ — слишком длинно или не о том.
 ${SHAPES}
 links — id заметок, задач, фактов и правил из списков ниже, к которым относится запись. Необязательные поля можно опускать. Если тема пустая (только приветствие), episode равен null. Если запоминать нечего, верни пустые массивы.`;
@@ -238,6 +296,10 @@ export const SLEEP_PROMPT = `Ты модуль памяти помощницы �
 "note_facts":[{"text":"факт о пользователе из его заметок","note":"id заметки","category":"plans","until":"ГГГГ-ММ-ДД"}],
 "entities":[{"name":"имя","type":"project","about":"что это"}],
 "relations":[{"from":"id или имя","to":"id или имя","type":"part_of"}],
+"topics":[{"id":"id существующей темы или пусто","title":"тема","area":"work","summary":"что ты знаешь по теме","facts":["id"]}],
+"understanding":"общее понимание пользователя",
+"conflicts":[{"ids":["id","id"],"question":"вопрос пользователю, что из этого верно сейчас"}],
+"questions":["вопрос пользователю о пробеле в памяти"],
 "diary":"запись в дневник от первого лица",
 "summary":"одно-два предложения о том, что изменилось"}
 1. Объедини похожие факты и похожие правила (только одного вида).
@@ -246,9 +308,14 @@ export const SLEEP_PROMPT = `Ты модуль памяти помощницы �
 4. Из повторяющихся эпизодов сделай выводы о пользователе (insights) со ссылками на эпизоды.
 5. Перечитай новые и изменённые заметки: устойчивые факты о пользователе (планы, привычки, люди, проекты) запиши в note_facts со ссылкой на заметку. Не пересказывай заметки.
 6. Свяжи между собой сущности, факты, эпизоды, заметки и задачи (relations), если связь явная.
-7. Напиши запись в дневник Миюнэи: 2–5 тёплых предложений от первого лица о том, что ты узнала и поняла о пользователе за это время и что изменила в себе. Без выдумок; если нового мало, так и скажи.
+7. Собери факты в темы (topics) — иерархию памяти. Тема — узкая область жизни пользователя, например «Проект Календарь», «Утренний режим», «Японский язык»; area — категория области; summary — 1–3 предложения о том, что ты знаешь по теме; facts — id фактов этой темы. Существующие темы обновляй по их id, не плоди похожие. Факт входит не больше чем в одну тему.
+8. understanding — твоё общее понимание пользователя в 3–6 предложениях, собранное из тем: кто он, что для него важно, как с ним лучше работать. Обнови его, а не пиши заново, если нового мало.
+9. Найди противоречащие друг другу факты (conflicts), которые не можешь разрешить сама, и сформулируй мягкий вопрос пользователю, например «Вы писали, что работаете по утрам, а потом — что по вечерам. Как сейчас?». Если более свежий факт явно отменяет старый, просто убери старый через remove.
+10. Если в самооценках эпизодов повторяется одно слабое место, сделай из него правило в rules со ссылками на эти эпизоды.
+11. Если в памяти есть важные пробелы, добавь до трёх вопросов пользователю (questions). Не спрашивай то, что уже есть в открытых вопросах.
+12. Напиши запись в дневник Миюнэи: 2–5 тёплых предложений от первого лица о том, что ты узнала и поняла о пользователе за это время и что изменила в себе. Без выдумок; если нового мало, так и скажи.
 ${SHAPES}
-Записи с пометкой «закреплено» не удаляй и не переписывай. Ничего не выдумывай. Если менять нечего, верни пустые массивы.`;
+Записи с пометкой «закреплено» не удаляй, не переписывай и не считай устаревшими в conflicts. Ничего не выдумывай. Если менять нечего, верни пустые массивы.`;
 
 export const COMPACT_PROMPT = 'Ты сжимаешь начало разговора пользователя с помощницей Миюнэей, чтобы она не теряла нить. Напиши краткое резюме по-русски до 1200 знаков: о чём говорили, что решили, какие просьбы и договорённости остались в силе, открытые вопросы. Только резюме, без вступлений.';
 
@@ -270,6 +337,7 @@ export function reflectInput(memory: Memory, dialog: Dialog, workspace: Workspac
   return [`Известные факты:\n${facts.map(itemLine).join('\n') || '— нет'}`, `Правила:\n${rules.map(itemLine).join('\n') || '— нет'}`,
     `Сущности:\n${memory.entities.slice(-60).map(entityLine).join('\n') || '— нет'}`,
     `Заметки и задачи:\n${entries.join('\n') || '— нет доступа или пусто'}`,
+    `Открытые вопросы к пользователю:\n${memory.questions.map(q => `[${q.id}] ${q.text}`).join('\n') || '— нет'}`,
     `Сигналы поведения пользователя:\n${dialog.signals.map(s => '- ' + s).join('\n') || '— нет'}`,
     `Разговор ${day(dialog.updatedAt)}:\n${dialog.summary ? 'Начало (кратко): ' + dialog.summary + '\n' : ''}${transcript(dialog.messages)}`].join('\n\n');
 }
@@ -281,7 +349,7 @@ export function changedNotes(memory: Memory, workspace: Workspace | null) {
 export function sleepInput(memory: Memory, workspace: Workspace | null = null, now = Date.now()) {
   const fresh = memory.episodes.filter(e => !e.consolidated);
   const older = memory.episodes.filter(e => e.consolidated).slice(-30);
-  const episode = (e: Episode) => `[${e.id}] ${day(e.date)}: ${e.topic}${e.outcome ? ' — ' + e.outcome : ''}`;
+  const episode = (e: Episode) => `[${e.id}] ${day(e.date)}: ${e.topic}${e.outcome ? ' — ' + e.outcome : ''}${e.score ? ` (самооценка ${e.score}/5${e.weak ? ', слабое место: ' + e.weak : ''})` : ''}`;
   const item = (i: MemoryItem) => `${itemLine(i)} · сила ${strength(i, now).toFixed(2)}, подтверждений ${i.hits}`;
   let budget = 15_000;
   const notes = changedNotes(memory, workspace).map(n => { const body = n.body.length > 600 ? n.body.slice(0, 600) + '…' : n.body; const line = `[${n.id}] ${n.title}${body.trim() ? '\n' + body : ''}`; budget -= line.length; return budget > 0 ? line : ''; }).filter(Boolean);
@@ -289,6 +357,9 @@ export function sleepInput(memory: Memory, workspace: Workspace | null = null, n
   return [`Факты:\n${memory.items.filter(i => i.kind === 'fact').map(item).join('\n') || '— нет'}`, `Правила:\n${memory.items.filter(i => i.kind === 'rule').map(item).join('\n') || '— нет'}`,
     `Сущности:\n${memory.entities.map(entityLine).join('\n') || '— нет'}`,
     `Новые эпизоды:\n${fresh.map(episode).join('\n') || '— нет'}`, `Более ранние эпизоды:\n${older.map(episode).join('\n') || '— нет'}`,
+    `Темы:\n${memory.topics.map(t => `[${t.id}] ${t.title} {${t.area}}: ${t.summary || '—'} (факты: ${t.facts.join(', ') || 'нет'})`).join('\n') || '— нет'}`,
+    `Общее понимание пользователя:\n${memory.understanding?.text || '— ещё нет'}`,
+    `Открытые вопросы к пользователю:\n${memory.questions.map(q => `[${q.id}] ${q.text}`).join('\n') || '— нет'}`,
     `Новые и изменённые заметки:\n${notes.join('\n\n') || '— нет'}`, `Открытые задачи:\n${tasks.join('\n') || '— нет'}`].join('\n\n').slice(0, 80_000);
 }
 
@@ -315,7 +386,7 @@ export function applyReflection(memory: Memory, result: any, dialog: Dialog, kno
   let episode: Episode | null = null;
   const topic = clip(result.episode?.topic, 200);
   if (topic) {
-    episode = { id: newId(), date: dialog.updatedAt, topic, outcome: clip(result.episode.outcome, 600), links: valid(result.episode.links), consolidated: false };
+    episode = { id: newId(), date: dialog.updatedAt, topic, outcome: clip(result.episode.outcome, 600), links: valid(result.episode.links), consolidated: false, score: score(result.review?.score), weak: clip(result.review?.weak, 300) };
     memory.episodes.push(episode); changes++;
     journal(memory, 'episode', `Разговор: ${topic}`, now);
   }
@@ -332,6 +403,16 @@ export function applyReflection(memory: Memory, result: any, dialog: Dialog, kno
   for (const entry of list(result.relations)) { const from = resolve(entry.from), to = resolve(entry.to); if (from && to && addEdge(memory, from, to, entry.type, now)) changes++; }
   for (const id of ids(result.confirm)) { const found = item(id); if (found) { reinforce(found, now, 0.2); changes++; } }
   for (const id of ids(result.weaken)) { const found = item(id); if (found) { weaken(memory, found, now, 0.6); changes++; } }
+  // Self-review: a repeatable weak spot becomes a procedural rule, so the next answers avoid it.
+  const review = result.review && typeof result.review === 'object' ? result.review : null;
+  if (review && score(review.score)) {
+    const weak = clip(review.weak, 300);
+    journal(memory, 'review', `Самооценка ${score(review.score)}/5${weak ? ' · слабое место: ' + weak : ''}`, now);
+    if (upsert(memory, 'rule', review.lesson, { source: 'review', weight: 0.55, links: episode ? [episode.id] : [], now })) changes++;
+  }
+  for (const entry of list(result.answers)) if (typeof entry.question === 'string' && answer(memory, entry.question, entry.text, now, 'dialog')) changes++;
+  for (const text of Array.isArray(result.questions) ? result.questions.slice(0, 2) : []) if (ask(memory, 'gap', text, {}, now)) changes++;
+  findGaps(memory, now);
   memory.episodes = memory.episodes.slice(-LIMITS.episodes);
   return changes;
 }
@@ -340,7 +421,8 @@ export function applyReflection(memory: Memory, result: any, dialog: Dialog, kno
 export function applySleep(memory: Memory, result: any, now = Date.now(), known: Set<string> = new Set()) {
   const at = new Date(now).toISOString();
   const episodes = new Set(memory.episodes.map(e => e.id));
-  const find = (id: unknown) => memory.items.find(i => i.id === id);
+  const renamed = new Map<string, string>();
+  const find = (id: unknown) => memory.items.find(i => i.id === (typeof id === 'string' ? renamed.get(id) ?? id : id));
   if (result && typeof result === 'object') {
     for (const merge of list(result.merge)) {
       const group = ids(merge.ids).map(find).filter((i): i is MemoryItem => !!i);
@@ -351,6 +433,7 @@ export function applySleep(memory: Memory, result: any, now = Date.now(), known:
         category: group.find(i => i.category !== 'other')?.category ?? 'other', until: group.map(i => i.until).filter(Boolean).sort().at(-1) ?? null };
       memory.items = [...memory.items.filter(i => !group.includes(i)), merged];
       relink(memory, group.map(i => i.id), merged.id);
+      for (const old of group) renamed.set(old.id, merged.id);
       journal(memory, 'merged', `Объединила ${group.length}: ${text}`, at);
     }
     for (const entry of list(result.update)) {
@@ -373,14 +456,46 @@ export function applySleep(memory: Memory, result: any, now = Date.now(), known:
       upsert(memory, 'fact', entry.text, { links: [entry.note], source: 'note', weight: 0.45, now: at, category: entry.category, until: entry.until });
     }
     applyGraph(memory, result, resolver(memory, known, null), at);
+    applyTopics(memory, result, find, at);
+    for (const entry of list(result.conflicts)) {
+      const pair = [...new Set(ids(entry.ids).map(id => find(id)).filter((i): i is MemoryItem => !!i && i.kind === 'fact').map(i => i.id))];
+      if (pair.length >= 2) ask(memory, 'conflict', entry.question, { facts: pair }, at);
+    }
+    for (const text of Array.isArray(result.questions) ? result.questions.slice(0, 3) : []) ask(memory, 'gap', text, {}, at);
     const diary = clip(result.diary, 2000);
     if (diary) { memory.diary.push({ id: newId(), date: at, text: diary }); memory.diary = memory.diary.slice(-LIMITS.diary); }
   }
   for (const e of memory.episodes) e.consolidated = true;
   memory.lastSleep = at;
   decay(memory, now);
+  findGaps(memory, at);
   journal(memory, 'sleep', 'Сон: ' + (clip(result?.summary, 300) || 'память упорядочена'), at);
   return memory;
+}
+
+// Facts roll up into topics, and topics into one understanding of the user.
+function applyTopics(memory: Memory, result: any, find: (id: unknown) => MemoryItem | undefined, at: string) {
+  for (const entry of list(result.topics)) {
+    const title = clip(entry.title, 80);
+    const facts = [...new Set(ids(entry.facts, 60).map(id => find(id)).filter((i): i is MemoryItem => !!i && i.kind === 'fact').map(i => i.id))];
+    const summary = clip(entry.summary, 600);
+    let topic = memory.topics.find(t => t.id === entry.id) || (title ? memory.topics.find(t => similarity(t.title, title) >= 0.6) : undefined);
+    if (!topic) {
+      if (!title || (!facts.length && !summary) || memory.topics.length >= LIMITS.topics) continue;
+      topic = { id: newId(), title, area: category(entry.area), summary, facts: [], created: at, updated: at };
+      memory.topics.push(topic);
+      journal(memory, 'topic', `Новая тема: ${title}`, at);
+    }
+    if (title) topic.title = title;
+    if (entry.area !== undefined) topic.area = category(entry.area);
+    if (summary) topic.summary = summary;
+    // A fact belongs to one topic only.
+    for (const other of memory.topics) if (other !== topic) other.facts = other.facts.filter(id => !facts.includes(id));
+    topic.facts = [...new Set([...topic.facts, ...facts])].slice(0, 60);
+    topic.updated = at;
+  }
+  const understanding = clip(result.understanding, 1500);
+  if (understanding) memory.understanding = { text: understanding, updated: at };
 }
 
 type Options = {
@@ -526,6 +641,7 @@ export async function openMemory(dataDir: string, options: Options) {
       items: memory.items.map(i => ({ ...i, strength: Math.round(strength(i, now) * 100) / 100, expired: expired(i, now) })).sort((a, b) => b.strength - a.strength),
       episodes: [...memory.episodes].reverse(), entities: memory.entities.map(e => ({ ...e, degree: degree.get(e.id) || 0 })), edges: memory.edges,
       diary: [...memory.diary].reverse(), journal: [...memory.journal].reverse(),
+      topics: memory.topics, understanding: memory.understanding, questions: memory.questions, growth: growth(memory, now),
     };
   };
   return {
@@ -537,7 +653,13 @@ export async function openMemory(dataDir: string, options: Options) {
       let vector: number[] | undefined;
       if (embedReady() && vectors.size) { try { vector = (await options.embed!([query.slice(0, 4000)], 8000))[0]; } catch (e) { embedFailed(e); } }
       void index();
-      return memoryContext(memory, query, titles(), Date.now(), { query: vector, vector: text => vectors.get(key(text)) });
+      // One open question a day at most, three tries each, and never while nothing is being recorded.
+      const now = Date.now();
+      const question = this.recording && !memory.questions.some(q => q.lastAsked && now - Date.parse(q.lastAsked) < 20 * 3_600_000)
+        ? memory.questions.filter(q => q.asked < 3).sort((a, b) => a.asked - b.asked || a.created.localeCompare(b.created))[0] : undefined;
+      const context = memoryContext(memory, query, titles(), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text });
+      if (question && context.includes(question.text)) { question.asked++; question.lastAsked = new Date(now).toISOString(); await save(); }
+      return context;
     },
     touch() { lastActivity = Date.now(); },
     // Keeps the latest turns of a dialog until it goes quiet and can be reflected on.
@@ -569,8 +691,22 @@ export async function openMemory(dataDir: string, options: Options) {
       if (memory.settings.private || !memory.settings.enabled) memory.dialogs = [];
       await save();
     },
+    async answer(id: string, text: string) { const added = answer(memory, id, text); if (added) await changed(); return !!added; },
     async add(kind: MemoryKind, text: string, extra: { category?: unknown; until?: unknown } = {}) { const added = upsert(memory, kind, text, { source: 'user', pinned: true, ...extra }); await changed(); return added?.item ?? null; },
-    async edit(id: string, change: { text?: string; pinned?: boolean; topic?: string; outcome?: string; category?: string; until?: string | null; name?: string; about?: string; type?: string }) {
+    async edit(id: string, change: { text?: string; pinned?: boolean; topic?: string; outcome?: string; category?: string; until?: string | null; name?: string; about?: string; type?: string; title?: string; summary?: string }) {
+      if (id === 'understanding') {
+        if (!memory.understanding || change.text === undefined || !clip(change.text, 1500)) return false;
+        memory.understanding = { text: clip(change.text, 1500), updated: new Date().toISOString() };
+        await changed(); return true;
+      }
+      const topic = memory.topics.find(t => t.id === id);
+      if (topic) {
+        if (change.title !== undefined && clip(change.title, 80)) topic.title = clip(change.title, 80);
+        if (change.summary !== undefined) topic.summary = clip(change.summary, 600);
+        if (change.category !== undefined) topic.area = category(change.category);
+        topic.updated = new Date().toISOString();
+        await changed(); return true;
+      }
       const item = memory.items.find(i => i.id === id);
       const episode = memory.episodes.find(e => e.id === id);
       const entity = memory.entities.find(e => e.id === id);
@@ -596,14 +732,18 @@ export async function openMemory(dataDir: string, options: Options) {
       await changed(); return true;
     },
     async remove(id: string) {
-      const count = () => memory.items.length + memory.episodes.length + memory.entities.length + memory.diary.length;
+      if (id === 'understanding') { if (!memory.understanding) return false; memory.understanding = null; await changed(); return true; }
+      const count = () => memory.items.length + memory.episodes.length + memory.entities.length + memory.diary.length + memory.topics.length + memory.questions.length;
       const before = count();
+      memory.topics = memory.topics.filter(t => t.id !== id);
+      memory.questions = memory.questions.filter(q => q.id !== id);
       memory.items = memory.items.filter(i => i.id !== id);
       memory.episodes = memory.episodes.filter(e => e.id !== id);
       memory.entities = memory.entities.filter(e => e.id !== id);
       memory.diary = memory.diary.filter(d => d.id !== id);
       for (const record of [...memory.items, ...memory.episodes]) record.links = record.links.filter(link => link !== id);
       memory.edges = memory.edges.filter(e => e.from !== id && e.to !== id);
+      prune(memory);
       if (before === count()) return false;
       await changed(); return true;
     },
