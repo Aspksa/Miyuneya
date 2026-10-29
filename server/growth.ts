@@ -1,4 +1,4 @@
-import type { Memory, Category } from './memory.ts';
+import type { Memory, Category, Reasoning } from './memory.ts';
 import { strength, FORGET_BELOW } from './recall.ts';
 
 // Experience: how much Miyuneya knows about the user and how it grows. Nothing here is stored;
@@ -11,6 +11,27 @@ export function levelOf(points: number, step = 200) {
   let level = 1;
   while (points >= need(level + 1, step)) level++;
   return { level, floor: need(level, step), next: need(level + 1, step) };
+}
+
+export const LOGIC_LEVELS = ['Наблюдаю', 'Замечаю связи', 'Строю догадки', 'Рассуждаю', 'Предвижу', 'Вижу насквозь'];
+const KINDS: Reasoning[] = ['pattern', 'cause', 'habit', 'plan', 'analogy'];
+// The logic level: how often her predictions come true, how many of her conclusions held, and how many errors she turned into rules.
+export function logic(memory: Memory, now = Date.now()) {
+  const recent = (date: string | null) => !!date && Date.parse(date) >= now - 7 * DAY;
+  const checked = memory.predictions.filter(p => p.outcome), right = checked.filter(p => p.outcome === 'right');
+  // A conclusion is a checked prediction or a cause-and-effect link that came up again.
+  const confirmed = memory.causes.filter(c => c.hits > 1).length;
+  const fixed = memory.mistakes.filter(m => m.rule).length;
+  const points = right.length * 20 + (checked.length - right.length) * 6 + confirmed * 10 + memory.causes.length * 3 + fixed * 8 + memory.goals.length * 5 + memory.goals.filter(g => g.done).length * 10;
+  const level = levelOf(points, 60);
+  return {
+    points, ...level, name: LOGIC_LEVELS[Math.min(level.level, LOGIC_LEVELS.length) - 1],
+    predictions: { made: memory.predictions.length, open: memory.predictions.length - checked.length, checked: checked.length, right: right.length, accuracy: checked.length ? Math.round(right.length / checked.length * 100) : null },
+    conclusions: { right: right.length + confirmed, total: checked.length + confirmed, share: checked.length + confirmed ? Math.round((right.length + confirmed) / (checked.length + confirmed) * 100) : null },
+    corrections: memory.mistakes.length, fixed, causes: memory.causes.length, goals: memory.goals.filter(g => !g.done).length,
+    week: { predictions: memory.predictions.filter(p => recent(p.created)).length, checked: checked.filter(p => recent(p.checked)).length, right: right.filter(p => recent(p.checked)).length, corrections: memory.mistakes.filter(m => recent(m.at)).length },
+    kinds: KINDS.map(kind => { const done = checked.filter(p => p.kind === kind); return { kind, checked: done.length, right: done.filter(p => p.outcome === 'right').length }; }).filter(k => k.checked),
+  };
 }
 
 export function growth(memory: Memory, now = Date.now()) {
@@ -36,9 +57,11 @@ export function growth(memory: Memory, now = Date.now()) {
   const scores = (from: number, to: number) => memory.episodes.filter(e => e.score && Date.parse(e.date) >= from && Date.parse(e.date) < to).map(e => e.score!);
   const average = (list: number[]) => list.length ? Math.round(list.reduce((a, b) => a + b, 0) / list.length * 10) / 10 : null;
   const thisWeek = scores(week, Infinity), lastWeek = scores(fortnight, week);
+  const reasoning = logic(memory, now);
+  xp += reasoning.points;
   const self = levelOf(xp);
   return {
-    xp, ...self, name: LEVELS[Math.min(self.level, LEVELS.length) - 1],
+    logic: reasoning, xp, ...self, name: LEVELS[Math.min(self.level, LEVELS.length) - 1],
     week: {
       xp: gained,
       facts: memory.items.filter(i => i.kind === 'fact' && recent(i.created)).length,

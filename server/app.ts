@@ -4,7 +4,9 @@ import { atomicWrite } from '../scripts/runtime.mjs';
 import { join } from 'node:path';
 import { validateWorkspace, emptyWorkspace } from '../src/model.ts';
 import type { Workspace } from '../src/model.ts';
-import { openMemory, parseCommand, parseReminder, validDialogId, validDate, transcript, COMPACT_PROMPT } from './memory.ts';
+import { openMemory, parseCommand, parseReminder, validDialogId, validDate, transcript, parseJson, goalTree, COMPACT_PROMPT } from './memory.ts';
+import { complexity, exactCalcs, exactLines, readPlan, reasoningBlock, parseGoal, PLAN_PROMPT } from './logic.ts';
+import type { Plan } from './logic.ts';
 
 export const CLOUD_RU_URL = 'https://foundation-models.api.cloud.ru/v1';
 export const DEFAULT_MODEL = 'openai/gpt-oss-120b';
@@ -14,7 +16,8 @@ const PERSONA = 'Ты Миюнэя — тёплая и внимательная 
 // The browser turns these tags into real entries, so the model only uses them on an explicit request.
 const ACTIONS = 'Ты умеешь создавать записи в пространстве. Только когда пользователь прямо просит добавить задачу, допиши в конце ответа по строке <task>текст задачи</task> на каждую задачу. Только когда просит сохранить заметку, допиши <note title="Короткий заголовок">текст заметки</note>. В остальных случаях эти теги не используй и не показывай их как пример. Сами теги пользователь не увидит: приложение создаст записи и покажет подтверждение.';
 type CustomAvatar = { type: string; version: number };
-type AssistantConfig = { apiKey: string; model: string; embedModel: string; context: boolean; avatar: CustomAvatar | null };
+// model answers simple questions; smartModel, when chosen, takes complex ones, planning, sleep and thinking.
+type AssistantConfig = { apiKey: string; model: string; smartModel: string; embedModel: string; context: boolean; avatar: CustomAvatar | null };
 type ChatMessage = { role: 'user' | 'assistant'; content: string };
 const validKey = (value: unknown): value is string => typeof value === 'string' && /^[\x21-\x7e]{8,512}$/.test(value);
 const validModel = (value: unknown): value is string => typeof value === 'string' && /^[\w.:@\/-]{1,200}$/.test(value);
@@ -55,11 +58,11 @@ export async function createApp(root: string, instance: string, preview = false,
   // The cloud.ru key lives apart from workspace.json so it never reaches the browser or a backup.
   const assistantFile = join(dataDir, 'assistant.json');
   const cloudUrl = (options.cloudUrl || CLOUD_RU_URL).replace(/\/+$/, '');
-  let assistant: AssistantConfig = { apiKey: '', model: DEFAULT_MODEL, embedModel: DEFAULT_EMBED_MODEL, context: true, avatar: null };
+  let assistant: AssistantConfig = { apiKey: '', model: DEFAULT_MODEL, smartModel: '', embedModel: DEFAULT_EMBED_MODEL, context: true, avatar: null };
   try {
     const saved = JSON.parse(await readFile(assistantFile, 'utf8'));
     const avatar = imageTypes[saved.avatar?.type] && Number.isSafeInteger(saved.avatar?.version) ? { type: saved.avatar.type, version: saved.avatar.version } : null;
-    assistant = { apiKey: validKey(saved.apiKey) ? saved.apiKey : '', model: validModel(saved.model) ? saved.model : DEFAULT_MODEL, embedModel: saved.embedModel === '' || validModel(saved.embedModel) ? saved.embedModel : DEFAULT_EMBED_MODEL, context: saved.context !== false, avatar };
+    assistant = { apiKey: validKey(saved.apiKey) ? saved.apiKey : '', model: validModel(saved.model) ? saved.model : DEFAULT_MODEL, smartModel: validModel(saved.smartModel) ? saved.smartModel : '', embedModel: saved.embedModel === '' || validModel(saved.embedModel) ? saved.embedModel : DEFAULT_EMBED_MODEL, context: saved.context !== false, avatar };
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.error('Настройки cloud.ru не прочитаны: data/assistant.json повреждён.');
   }
@@ -80,7 +83,7 @@ export async function createApp(root: string, instance: string, preview = false,
     '/style.css': ['style.css', 'text/css'], '/fox.svg': ['fox.svg', 'image/svg+xml'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
     ...Object.fromEntries([1, 2, 3, 4].map(n => [`/avatars/avatar${n}.png`, [`avatars/avatar${n}.png`, 'image/png']]))
   };
-  const publicConfig = () => ({ configured: !!assistant.apiKey, keyHint: keyHint(assistant.apiKey), model: assistant.model, embedModel: assistant.embedModel, context: assistant.context, customAvatar: assistant.avatar?.version ?? null });
+  const publicConfig = () => ({ configured: !!assistant.apiKey, keyHint: keyHint(assistant.apiKey), model: assistant.model, smartModel: assistant.smartModel, embedModel: assistant.embedModel, context: assistant.context, customAvatar: assistant.avatar?.version ?? null });
   const avatarFile = (type: string) => join(dataDir, 'avatar-custom.' + imageTypes[type]);
   function saveAssistant(next: AssistantConfig) {
     const update = queue.then(async () => { await atomicWrite(assistantFile, JSON.stringify(next, null, 2)); assistant = next; });
@@ -122,8 +125,9 @@ export async function createApp(root: string, instance: string, preview = false,
     } finally { call.release(); }
   }
   // A one-shot, non-streaming request used by the memory: reflection, sleep and dialog compaction.
-  async function ask(system: string, user: string, timeout = 90_000) {
-    const call = await cloud('/chat/completions', { method: 'POST', body: JSON.stringify({ model: assistant.model, stream: false, temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }) }, timeout);
+  const modelFor = (strong: boolean) => strong && assistant.smartModel ? assistant.smartModel : assistant.model;
+  async function ask(system: string, user: string, timeout = 90_000, strong = false) {
+    const call = await cloud('/chat/completions', { method: 'POST', body: JSON.stringify({ model: modelFor(strong), stream: false, temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }) }, timeout);
     try {
       let text;
       try { text = JSON.parse(await call.response.text())?.choices?.[0]?.message?.content; } catch { if (call.controller.signal.aborted) throw call.explain(); throw fail('cloud.ru вернул ответ в неизвестном формате.', 502); }
@@ -181,8 +185,9 @@ export async function createApp(root: string, instance: string, preview = false,
           if (input.apiKey !== undefined && input.apiKey !== null && !validKey(input.apiKey)) return send(400, { error: 'Ключ должен содержать от 8 до 512 видимых символов без пробелов.' });
           if (input.model !== undefined && !validModel(input.model)) return send(400, { error: 'Неверное название модели.' });
           if (input.embedModel !== undefined && input.embedModel !== '' && !validModel(input.embedModel)) return send(400, { error: 'Неверное название модели для поиска.' });
+          if (input.smartModel !== undefined && input.smartModel !== '' && !validModel(input.smartModel)) return send(400, { error: 'Неверное название модели для сложных вопросов.' });
           if (input.context !== undefined && typeof input.context !== 'boolean') return send(400, { error: 'Неверный формат настроек.' });
-          await saveAssistant({ ...assistant, apiKey: input.apiKey === null ? '' : input.apiKey ?? assistant.apiKey, model: input.model ?? assistant.model, embedModel: input.embedModel ?? assistant.embedModel, context: input.context ?? assistant.context });
+          await saveAssistant({ ...assistant, apiKey: input.apiKey === null ? '' : input.apiKey ?? assistant.apiKey, model: input.model ?? assistant.model, smartModel: input.smartModel ?? assistant.smartModel, embedModel: input.embedModel ?? assistant.embedModel, context: input.context ?? assistant.context });
           return send(200, publicConfig());
         }
         if (route === '/avatar') {
@@ -262,12 +267,33 @@ export async function createApp(root: string, instance: string, preview = false,
             notes.push(removed.length ? `Ты только что удалила из памяти: ${removed.map(t => `«${t}»`).join(', ')}. Коротко подтверди.` : 'Пользователь просит забыть, но в памяти нет ничего похожего. Скажи об этом и предложи открыть меню «Память» (значок мозга вверху справа).');
             if (removed.length) events.push(`Забыла записей: ${removed.length}`);
           }
+          // «Разложи цель …» builds a tree of steps before the answer, so the answer can show it.
+          const goalTitle = memory.data.settings.enabled ? parseGoal(last) : null;
+          if (goalTitle) {
+            try {
+              const goal = await memory.plan(goalTitle);
+              notes.push(`Ты только что разложила цель «${goal.title}» на подзадачи и сохранила её в памяти («Дела»):\n${goalTree(goal)}\nПокажи это дерево коротко, списком с отступами, и скажи, с какого шага начать.`);
+              events.push(`Цель разложена на шаги: ${goal.title}`);
+            } catch { notes.push('Сохранить цель с подзадачами не получилось. Разложи её сама в ответе: дерево подзадач с зависимостями.'); }
+          }
           const recall = await memory.context(messages.filter((m: ChatMessage) => m.role === 'user').slice(-3).map((m: ChatMessage) => m.content).join('\n'), last);
+          // Strong logic: a complex question gets a hidden reasoning plan and the stronger model; numbers are counted by code.
+          const hard = complexity(last).complex || !!goalTitle;
+          const calcs = exactCalcs(last);
+          let plan: Plan | null = null;
+          if (hard && !goalTitle) {
+            try {
+              const asked = messages.filter((m: ChatMessage) => m.role === 'user').slice(-3).map((m: ChatMessage) => m.content.slice(0, 3000));
+              plan = readPlan(parseJson(await ask(PLAN_PROMPT, [`Сегодня ${new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`, recall.slice(0, 4000), 'Последние сообщения пользователя:\n' + asked.join('\n---\n')].filter(Boolean).join('\n\n'), 30_000, true)));
+            } catch {}
+          }
+          const reasoning = reasoningBlock(hard, plan, calcs);
+          const model = modelFor(hard);
           const system = [PERSONA, ACTIONS, assistant.context ? workspaceContext(state.data) : 'Доступ к заметкам и задачам пользователя выключен в настройках. Если спросят о них, мягко скажи об этом.',
-            recall, summary ? 'Краткое содержание более ранней части этого разговора:\n' + summary : '', ...notes].filter(Boolean).join('\n\n');
+            recall, summary ? 'Краткое содержание более ранней части этого разговора:\n' + summary : '', reasoning, ...notes].filter(Boolean).join('\n\n');
           let call;
           try {
-            call = await cloud('/chat/completions', { method: 'POST', body: JSON.stringify({ model: assistant.model, stream: true, temperature: 0.7, messages: [{ role: 'system', content: system }, ...messages.map((m: ChatMessage) => ({ role: m.role, content: m.content }))] }) });
+            call = await cloud('/chat/completions', { method: 'POST', body: JSON.stringify({ model, stream: true, temperature: 0.7, messages: [{ role: 'system', content: system }, ...messages.map((m: ChatMessage) => ({ role: m.role, content: m.content }))] }) });
           } catch (e) { return send((e as { status: number }).status, { error: (e as Error).message }); }
           // Stream the answer to the browser as JSON lines: {delta}, then {done} or {error}.
           const onClose = () => { if (!res.writableEnded) call.controller.abort(new Error('client closed')); };
@@ -303,7 +329,8 @@ export async function createApp(root: string, instance: string, preview = false,
               }
             }
             if (!received) throw fail('Модель вернула пустой ответ. Попробуйте переформулировать или выбрать другую модель.', 502);
-            write({ done: true, model: assistant.model });
+            const exact = exactLines(plan, calcs).length;
+            write({ done: true, model, ...(hard ? { reasoning: true } : {}), ...(plan ? { planned: true } : {}), ...(exact ? { exact } : {}) });
             // A reminder counts as given only once the answer that carries it has arrived.
             await memory.delivered(recall).catch(() => {});
             if (dialog) await memory.record(dialog, [...messages.map((m: ChatMessage) => ({ role: m.role, content: m.content })), { role: 'assistant', content: answer }], summary).catch(() => {});
@@ -361,7 +388,8 @@ export async function createApp(root: string, instance: string, preview = false,
           if (input === undefined) return;
           const textual = (v: unknown, max: number) => v === undefined || (typeof v === 'string' && v.length <= max);
           if (!input || typeof input !== 'object' || !textual(input.text, 2000) || !textual(input.topic, 200) || !textual(input.outcome, 600) || !textual(input.name, 80) || !textual(input.about, 300) || !textual(input.category, 20) || !textual(input.type, 20) || !textual(input.title, 80) || !textual(input.summary, 600)
-            || (input.until !== undefined && input.until !== null && !validDate(input.until)) || (input.pinned !== undefined && typeof input.pinned !== 'boolean') || (input.done !== undefined && typeof input.done !== 'boolean')) return send(400, { error: 'Неверный формат записи.' });
+            || (input.until !== undefined && input.until !== null && !validDate(input.until)) || (input.pinned !== undefined && typeof input.pinned !== 'boolean') || (input.done !== undefined && typeof input.done !== 'boolean')
+            || !textual(input.step, 100) || !textual(input.note, 300) || (input.result !== undefined && input.result !== 'right' && input.result !== 'wrong')) return send(400, { error: 'Неверный формат записи.' });
           return await memory.edit(item, input) ? ok() : send(404, { error: 'Запись не найдена.' });
         }
         if (item && req.method === 'DELETE') return await memory.remove(item) ? ok() : send(404, { error: 'Запись не найдена.' });
@@ -371,6 +399,13 @@ export async function createApp(root: string, instance: string, preview = false,
           if (typeof input?.about !== 'string' || typeof input.text !== 'string' || !input.about.trim() || !input.text.trim() || input.about.length > 120 || input.text.length > 300) return send(400, { error: 'Нужны тема до 120 символов и текст до 300.' });
           await memory.remind(input.about, input.text);
           return ok();
+        }
+        if (route === '/goals' && req.method === 'POST') {
+          if (!assistant.apiKey) return send(409, { error: 'Чтобы разложить цель, Миюнэе нужен ключ cloud.ru.' });
+          const input = await readJson(req, send, 10_000);
+          if (input === undefined) return;
+          if (typeof input?.title !== 'string' || !input.title.trim() || input.title.length > 200) return send(400, { error: 'Цель должна быть от 1 до 200 символов.' });
+          try { await memory.plan(input.title); return ok(); } catch (e) { return background(e); }
         }
         if (route === '/answer' && req.method === 'POST') {
           const input = await readJson(req, send, 10_000);

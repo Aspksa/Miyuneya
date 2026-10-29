@@ -1,16 +1,25 @@
 // The memory menu behind the brain icon: how she grows, what Miyuneya knows, the rules she follows, past dialogs, the knowledge map, her diary and journal.
 // Everything lives on the local server in data/memory.json; this panel only shows and edits it.
 export type Category = 'personal' | 'work' | 'health' | 'plans' | 'tastes' | 'people' | 'other';
-export type MemoryItemView = { id: string; kind: 'fact' | 'rule'; text: string; strength: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review' | 'thought'; links: string[]; category: Category; until: string | null; expired: boolean; origin: string | null };
+export type MemoryItemView = { id: string; kind: 'fact' | 'rule'; text: string; strength: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review' | 'thought' | 'logic'; links: string[]; category: Category; until: string | null; expired: boolean; origin: string | null };
 export type EpisodeView = { id: string; date: string; topic: string; outcome: string; links: string[]; consolidated: boolean; score: number | null; weak: string };
 export type ReminderView = { id: string; about: string; text: string; created: string; fired: string | null };
 export type PromiseView = { id: string; text: string; created: string; due: string | null; episode: string | null; done: string | null };
 export type ThoughtView = { id: string; at: string; kind: 'hypothesis' | 'idea' | 'reflection' | 'skill'; text: string; links: string[]; seen: boolean };
+type Level = { level: number; floor: number; next: number };
 export type ThinkingView = { enabled: boolean; intensity: 'low' | 'normal' | 'high'; today: number; perDay: number; next: string };
+export type CauseView = { id: string; cause: string; effect: string; confidence: number; evidence: string[]; created: string; hits: number };
+export type StepView = { id: string; text: string; parent: string | null; after: string[]; done: string | null };
+export type GoalView = { id: string; title: string; created: string; done: string | null; steps: StepView[]; next: string[] };
+export type Reasoning = 'pattern' | 'cause' | 'habit' | 'plan' | 'analogy';
+export type PredictionView = { id: string; text: string; kind: Reasoning; confidence: number; created: string; due: string | null; checked: string | null; outcome: 'right' | 'wrong' | null; note: string };
+export type MistakeView = { id: string; at: string; kind: 'calc' | 'assumption' | 'causality' | 'memory' | 'prediction' | 'other'; text: string; fix: string; rule: string | null; origin: string | null };
+export type LogicView = Level & { points: number; name: string; predictions: { made: number; open: number; checked: number; right: number; accuracy: number | null };
+  conclusions: { right: number; total: number; share: number | null }; corrections: number; fixed: number; causes: number; goals: number;
+  week: { predictions: number; checked: number; right: number; corrections: number }; kinds: { kind: Reasoning; checked: number; right: number }[] };
 export type TopicView = { id: string; title: string; area: Category; summary: string; facts: string[]; created: string; updated: string };
 export type QuestionView = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number };
-type Level = { level: number; floor: number; next: number };
-export type GrowthView = Level & { xp: number; name: string; week: { xp: number; facts: number; rules: number; lessons: number; episodes: number; entities: number; topics: number };
+export type GrowthView = Level & { xp: number; name: string; logic: LogicView; week: { xp: number; facts: number; rules: number; lessons: number; episodes: number; entities: number; topics: number };
   quality: { average: number | null; reviewed: number; previous: number | null }; skills: (Level & { area: Category; points: number; week: number; facts: number; topics: { id: string; title: string }[] })[] };
 export type EntityView = { id: string; name: string; type: 'person' | 'project' | 'place' | 'topic' | 'thing'; about: string; aliases: string[]; degree: number };
 export type EdgeView = { from: string; to: string; type: 'related' | 'part_of' | 'blocks' | 'after' | 'decided_in' | 'about' };
@@ -19,7 +28,8 @@ export type JournalView = { at: string; kind: string; text: string };
 export type MemoryView = { enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | 'think' | null; lastSleep: string | null; pending: number; newEpisodes: number;
   search: 'meaning' | 'words'; searchError: string; indexed: number;
   items: MemoryItemView[]; episodes: EpisodeView[]; entities: EntityView[]; edges: EdgeView[]; diary: DiaryView[]; journal: JournalView[];
-  topics: TopicView[]; understanding: { text: string; updated: string } | null; questions: QuestionView[]; growth: GrowthView; reminders: ReminderView[]; promises: PromiseView[]; thoughts: ThoughtView[]; thinking: ThinkingView };
+  topics: TopicView[]; understanding: { text: string; updated: string } | null; questions: QuestionView[]; growth: GrowthView; reminders: ReminderView[]; promises: PromiseView[]; thoughts: ThoughtView[]; thinking: ThinkingView;
+  causes: CauseView[]; goals: GoalView[]; predictions: PredictionView[]; mistakes: MistakeView[] };
 export type MemoryHost = {
   toast(message: string): void;
   confirm(title: string): Promise<boolean>;
@@ -27,18 +37,18 @@ export type MemoryHost = {
   openNote(id: string): void;
   changed(view: MemoryView): void;
 };
-export type Tab = 'growth' | 'plans' | 'thoughts' | 'fact' | 'rule' | 'episode' | 'timeline' | 'map' | 'diary' | 'journal';
+export type Tab = 'growth' | 'plans' | 'thoughts' | 'logic' | 'fact' | 'rule' | 'episode' | 'timeline' | 'map' | 'diary' | 'journal';
 type Request = RequestInit & { json?: unknown };
 
 export const brainIcon = '<path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill"/><path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill" transform="matrix(-1 0 0 1 24 0)"/><path d="M12 5.4v14.1M12 9.2c-1.3 0-2.2-.8-2.3-2M9.6 12.3c-1.4-.4-2.8.2-3.4 1.4M12 15.6c-1.2 0-2.2-.7-2.5-1.8M12 9.2c1.3 0 2.2-.8 2.3-2M14.4 12.3c1.4-.4 2.8.2 3.4 1.4M12 15.6c1.2 0 2.2-.7 2.5-1.8M6.7 8.9c.6.5 1.4.7 2.1.5M17.3 8.9c-.6.5-1.4.7-2.1.5" class="accent-stroke"/>';
-const tabs: [Tab, string][] = [['growth', 'Рост'], ['plans', 'Дела'], ['thoughts', 'Размышления'], ['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['timeline', 'Хронология'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
+const tabs: [Tab, string][] = [['growth', 'Рост'], ['plans', 'Дела'], ['thoughts', 'Размышления'], ['logic', 'Логика'], ['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['timeline', 'Хронология'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
 export const categories: [Category, string][] = [['personal', 'Личное'], ['work', 'Работа'], ['health', 'Здоровье'], ['plans', 'Планы'], ['tastes', 'Вкусы'], ['people', 'Люди'], ['other', 'Другое']];
 const categoryName = (c: Category) => categories.find(([key]) => key === c)?.[1] || 'Другое';
-const sources: Record<MemoryItemView['source'], string> = { user: 'от вас', dialog: 'из разговора', sleep: 'после сна', note: 'из заметки', review: 'из самооценки', thought: 'из размышлений' };
+const sources: Record<MemoryItemView['source'], string> = { user: 'от вас', dialog: 'из разговора', sleep: 'после сна', note: 'из заметки', review: 'из самооценки', thought: 'из размышлений', logic: 'из журнала ошибок' };
 const areaNames: Record<Category, string> = { personal: 'Личное', work: 'Работа', health: 'Здоровье', plans: 'Планы', tastes: 'Вкусы', people: 'Люди', other: 'Разное' };
 const entityTypes: Record<EntityView['type'], string> = { person: 'Человек', project: 'Проект', place: 'Место', topic: 'Тема', thing: 'Вещь' };
 export const relationNames: Record<EdgeView['type'], string> = { related: 'связано с', part_of: 'часть', blocks: 'мешает', after: 'после', decided_in: 'решено в', about: 'про' };
-const journalNames: Record<string, string> = { learned: 'Узнала', rule: 'Правило', reinforced: 'Подтвердилось', weakened: 'Сомнение', merged: 'Объединила', forgot: 'Забыла', episode: 'Эпизод', sleep: 'Сон', edited: 'Правка', entity: 'Карта', review: 'Самооценка', topic: 'Тема', question: 'Вопрос', reminder: 'Напоминание', promise: 'Обещание', thought: 'Размышление' };
+const journalNames: Record<string, string> = { learned: 'Узнала', rule: 'Правило', reinforced: 'Подтвердилось', weakened: 'Сомнение', merged: 'Объединила', forgot: 'Забыла', episode: 'Эпизод', sleep: 'Сон', edited: 'Правка', entity: 'Карта', review: 'Самооценка', topic: 'Тема', question: 'Вопрос', reminder: 'Напоминание', promise: 'Обещание', thought: 'Размышление', cause: 'Причина', goal: 'Цель', prediction: 'Прогноз', mistake: 'Ошибка' };
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const when = (date: string, time = false) => new Date(date).toLocaleString('ru-RU', time ? { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'long' });
 const short = (text: string, max: number) => text.length > max ? text.slice(0, max - 1) + '…' : text;
@@ -181,10 +191,42 @@ export function mountMemory(host: MemoryHost) {
     const reminder = (x: ReminderView) => `<article class="memory-item ${x.fired ? 'done' : ''}" id="memory-${escape(x.id)}">${editing === x.id
       ? `<form class="memory-edit" data-memory-save="${escape(x.id)}"><input name="about" maxlength="120" value="${escape(x.about)}" aria-label="Когда речь зайдёт о"><textarea name="text" maxlength="300" rows="2" aria-label="О чём напомнить">${escape(x.text)}</textarea>${save}</form>`
       : `<p><span class="memory-tag">о «${escape(x.about)}»</span>${escape(x.text)}</p>`}<div class="memory-meta"><span>${x.fired ? 'напомнила ' + when(x.fired, true) : 'поставлено ' + when(x.created)}</span></div><div class="memory-actions">${x.fired ? `<button type="button" class="chat-link" data-memory-rearm="${escape(x.id)}">Напомнить ещё раз</button>` : `<button type="button" class="chat-link" data-memory-edit="${escape(x.id)}">Изменить</button>`}<button type="button" class="chat-link danger" data-memory-delete="${escape(x.id)}">Удалить</button></div></article>`;
+    const goals = v.goals.filter(g => !g.done), reached = v.goals.filter(g => g.done).slice(0, 10);
+    const goalForm = `<form class="memory-goal"><input name="title" maxlength="200" autocomplete="off" placeholder="Цель, например «выучить японский до N4»" aria-label="Новая цель" ${busy || !v.available ? 'disabled' : ''}><button class="button" type="submit" ${busy || !v.available ? 'disabled' : ''}>Разложить на шаги</button></form>`;
+    const goalSection = `<section class="growth-section"><h4>Цели и шаги</h4>${goals.length ? goals.map(goalHtml).join('') : `<p class="memory-empty">${v.available ? 'Напишите цель ниже или скажите в чате: «Разложи цель „переезд“ на шаги». Я разложу её на дерево подзадач, отмечу, что от чего зависит и что можно делать уже сейчас.' : 'Подключите cloud.ru, чтобы я могла раскладывать цели на шаги.'}</p>`}${goalForm}${reached.length ? `<details class="memory-done"><summary>Достигнуто: ${reached.length}</summary>${reached.map(goalHtml).join('')}</details>` : ''}</section>`;
     const open = v.promises.filter(p => !p.done), kept = v.promises.filter(p => p.done).slice(0, 10);
     const waiting = v.reminders.filter(x => !x.fired), fired = v.reminders.filter(x => x.fired).slice(0, 10);
-    return `<section class="growth-section"><h4>Мои обещания</h4>${open.length ? open.map(promise).join('') : '<p class="memory-empty">Открытых обещаний нет. Если я пообещаю что-то проверить или подготовить, это появится здесь, и я закрою его сама.</p>'}${kept.length ? `<details class="memory-done"><summary>Выполнено: ${kept.length}</summary>${kept.map(promise).join('')}</details>` : ''}</section>`
+    return goalSection + `<section class="growth-section"><h4>Мои обещания</h4>${open.length ? open.map(promise).join('') : '<p class="memory-empty">Открытых обещаний нет. Если я пообещаю что-то проверить или подготовить, это появится здесь, и я закрою его сама.</p>'}${kept.length ? `<details class="memory-done"><summary>Выполнено: ${kept.length}</summary>${kept.map(promise).join('')}</details>` : ''}</section>`
       + `<section class="growth-section"><h4>Напомню, когда речь зайдёт о…</h4>${waiting.length ? waiting.map(reminder).join('') : '<p class="memory-empty">Скажите в чате: «Напомни, когда заговорим о поездке, что нужно купить адаптер», или добавьте ниже.</p>'}<form class="memory-remind"><input name="about" maxlength="120" autocomplete="off" placeholder="Когда речь зайдёт о…" aria-label="Тема" ${busy ? 'disabled' : ''}><input name="text" maxlength="300" autocomplete="off" placeholder="…напомнить, что" aria-label="О чём напомнить" ${busy ? 'disabled' : ''}><button class="button" type="submit" ${busy ? 'disabled' : ''}>Добавить</button></form>${fired.length ? `<details class="memory-done"><summary>Уже напомнила: ${fired.length}</summary>${fired.map(reminder).join('')}</details>` : ''}</section>`;
+  }
+  // A goal is a tree of steps: smaller steps sit inside bigger ones, «после» shows what a step waits for.
+  function goalHtml(g: GoalView) {
+    const name = (id: string) => g.steps.find(s => s.id === id)?.text || '';
+    const done = g.steps.filter(s => s.done).length;
+    const tree = (parent: string | null): string => {
+      const kids = g.steps.filter(s => s.parent === parent);
+      return kids.length ? `<ul class="goal-tree">${kids.map(s => `<li class="goal-step ${s.done ? 'done' : ''} ${g.next.includes(s.id) ? 'ready' : ''}"><label><input type="checkbox" data-goal="${escape(g.id)}" data-step="${escape(s.id)}" ${s.done ? 'checked' : ''} ${busy ? 'disabled' : ''}><span>${escape(s.text)}</span></label>${g.next.includes(s.id) && !g.done ? '<em>можно сейчас</em>' : ''}${s.after.length ? `<small>после: ${s.after.map(id => escape(short(name(id), 40))).join('; ')}</small>` : ''}${tree(s.id)}</li>`).join('')}</ul>` : '';
+    };
+    return `<article class="memory-item goal ${g.done ? 'done' : ''}" id="memory-${escape(g.id)}"><p><b>${escape(g.title)}</b></p>${bar(done, 0, g.steps.length)}<div class="memory-meta"><span>${g.done ? 'достигнута ' + when(g.done) : `сделано ${done} из ${g.steps.length} · поставлена ${when(g.created)}`}</span></div>${tree(null)}<div class="memory-actions"><button type="button" class="chat-link danger" data-memory-delete="${escape(g.id)}" data-what="goal">Удалить</button></div></article>`;
+  }
+  // «Логика»: her predictions and how they came true, cause and effect in the user's life, and the journal of reasoning errors.
+  const reasoningNames: Record<Reasoning, string> = { pattern: 'Закономерность', cause: 'Причина и следствие', habit: 'Привычка', plan: 'По планам', analogy: 'Аналогия' };
+  const mistakeNames: Record<MistakeView['kind'], string> = { calc: 'Расчёт', assumption: 'Допущение', causality: 'Причинность', memory: 'Память', prediction: 'Прогноз', other: 'Другое' };
+  function logicCard(l: LogicView, more = false) {
+    const pct = (n: number | null) => n === null ? '—' : n + '%';
+    return `<section class="growth-card logic-card"><div class="growth-level"><span class="growth-badge logic">${l.level}</span><div><b>Логика: ${escape(l.name)}</b><small>Уровень ${l.level} · ${l.points} из ${l.next} очков</small></div>${more ? '<button type="button" class="chat-link" data-memory-tab="logic">Подробнее</button>' : ''}</div>${bar(l.points, l.floor, l.next)}
+      <div class="logic-stats"><div><b>${pct(l.predictions.accuracy)}</b><small>прогнозов сбылось${l.predictions.checked ? ` (${l.predictions.right} из ${l.predictions.checked})` : ''}</small></div><div><b>${pct(l.conclusions.share)}</b><small>верных выводов${l.conclusions.total ? ` (${l.conclusions.right} из ${l.conclusions.total})` : ''}</small></div><div><b>${l.corrections}</b><small>исправлений${l.fixed ? `, правил из них: ${l.fixed}` : ''}</small></div></div>
+      ${l.week.predictions || l.week.checked || l.week.corrections ? `<p class="growth-line">За неделю: ${[l.week.predictions && plural(l.week.predictions, 'прогноз', 'прогноза', 'прогнозов'), l.week.checked && `проверено ${l.week.checked}, сбылось ${l.week.right}`, l.week.corrections && plural(l.week.corrections, 'исправление', 'исправления', 'исправлений')].filter(Boolean).join(' · ')}</p>` : ''}</section>`;
+  }
+  function logicHtml(v: MemoryView) {
+    const l = v.growth.logic;
+    const kinds = l.kinds.length ? `<section class="growth-section"><h4>Какие рассуждения мне удаются</h4>${l.kinds.map(k => `<div class="skill"><div class="skill-head"><b>${reasoningNames[k.kind]}</b><span>${Math.round(k.right / k.checked * 100)}%</span><em>${k.right} из ${k.checked}</em></div>${bar(k.right, 0, k.checked)}</div>`).join('')}</section>` : '';
+    const prediction = (p: PredictionView) => `<article class="memory-item prediction ${p.outcome || ''}" id="memory-${escape(p.id)}"><p><span class="memory-tag">${reasoningNames[p.kind]} · ${p.confidence}%</span>${escape(p.text)}</p><div class="memory-meta"><span>${p.outcome ? `${p.outcome === 'right' ? '✓ сбылось' : '✗ не сбылось'} · проверено ${when(p.checked!)}${p.note ? ' · ' + escape(p.note) : ''}` : `сделан ${when(p.created)}${p.due ? ' · проверю ' + when(p.due) : ''}`}</span></div><div class="memory-actions">${p.outcome ? '' : `<button type="button" class="chat-link" data-memory-check="${escape(p.id)}" data-value="right">Сбылось</button><button type="button" class="chat-link" data-memory-check="${escape(p.id)}" data-value="wrong">Не сбылось</button>`}<button type="button" class="chat-link danger" data-memory-delete="${escape(p.id)}">Удалить</button></div></article>`;
+    const open = v.predictions.filter(p => !p.outcome), checked = v.predictions.filter(p => p.outcome).slice(0, 30);
+    const predictions = `<section class="growth-section"><h4>Мои прогнозы</h4><p class="memory-note">Пока вас нет, я тренирую логику: делаю проверяемые прогнозы о ваших делах, а потом сверяю их с тем, что было на самом деле. Вы тоже можете отметить, сбылось ли.</p>${open.length ? open.map(prediction).join('') : '<p class="memory-empty">Открытых прогнозов нет. Они появятся после размышлений.</p>'}${checked.length ? `<details class="memory-done"><summary>Проверено: ${checked.length}</summary>${checked.map(prediction).join('')}</details>` : ''}</section>`;
+    const causes = `<section class="growth-section"><h4>Причины и следствия</h4>${v.causes.length ? v.causes.map(c => `<article class="memory-item cause" id="memory-${escape(c.id)}"><p>${escape(c.cause)} <span class="cause-arrow">→</span> ${escape(c.effect)}</p><div class="memory-meta"><span class="meter" data-strength="${c.confidence / 100}" title="Уверенность ${c.confidence}%"><i></i></span><span>уверенность ${c.confidence}%${c.hits > 1 ? ` · видела ${c.hits} раза` : ''} · ${when(c.created)}</span></div>${linkChips(c.evidence)}<div class="memory-actions"><button type="button" class="chat-link danger" data-memory-delete="${escape(c.id)}">Удалить</button></div></article>`).join('') : '<p class="memory-empty">Здесь появятся связи из вашей жизни, например «поздние встречи → тяжёлое утро». Я опираюсь на них в выводах.</p>'}</section>`;
+    const mistakes = `<section class="growth-section"><h4>Журнал логических ошибок</h4>${v.mistakes.length ? v.mistakes.map(m => `<article class="memory-item mistake" id="memory-${escape(m.id)}"><p><span class="memory-tag">${mistakeNames[m.kind]}</span>${escape(m.text)}</p>${m.fix ? `<p class="memory-fix">Правило: ${m.rule && v.items.some(i => i.id === m.rule) ? `<button type="button" class="chat-link" data-memory-goto="${escape(m.rule)}" data-tab="rule">${escape(m.fix)}</button>` : escape(m.fix)}</p>` : ''}<div class="memory-actions"><small>${when(m.at, true)}</small>${m.origin ? linkChips([m.origin]) : ''}<button type="button" class="chat-link danger" data-memory-delete="${escape(m.id)}">Удалить</button></div></article>`).join('') : '<p class="memory-empty">Ошибок пока не записано. Когда вы поправите мой расчёт или вывод, или прогноз не сбудется, я запишу, в чём ошиблась, и выведу правило, чтобы не повторять.</p>'}</section>`;
+    return logicCard(l) + kinds + predictions + causes + mistakes;
   }
   // «Размышления»: what Miyuneya thought about on her own while the user was away, and how often she may do it.
   const newest = (list: ThoughtView[]) => [...list].sort((a, b) => b.at.localeCompare(a.at));
@@ -216,6 +258,9 @@ export function mountMemory(host: MemoryHost) {
       ...v.topics.map(t => ({ at: t.created, label: 'Тема', html: escape(t.title) })),
       ...v.diary.map(d => ({ at: d.date, label: 'Дневник', html: goto(d.id, 'diary', short(d.text, 90)) })),
       ...v.thoughts.map(t => ({ at: t.at, label: 'Размышляла', html: goto(t.id, 'thoughts', short(t.text, 90)) })),
+      ...v.goals.flatMap(g => [{ at: g.created, label: 'Цель', html: goto(g.id, 'plans', g.title) }, ...(g.done ? [{ at: g.done, label: 'Достигнута', html: escape(g.title) }] : [])]),
+      ...v.predictions.flatMap(p => [{ at: p.created, label: 'Прогноз', html: goto(p.id, 'logic', short(p.text, 90)) }, ...(p.checked ? [{ at: p.checked, label: p.outcome === 'right' ? 'Сбылось' : 'Не сбылось', html: escape(short(p.text, 90)) }] : [])]),
+      ...v.mistakes.map(m => ({ at: m.at, label: 'Ошибка', html: goto(m.id, 'logic', short(m.text, 90)) })),
     ].filter(e => Number.isFinite(Date.parse(e.at))).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
     if (!events.length) return '<p class="memory-empty">Здесь по дням появится всё, что было: разговоры, что я узнала, обещала и напомнила.</p>';
     const days = new Map<string, Event[]>();
@@ -241,7 +286,7 @@ export function mountMemory(host: MemoryHost) {
       ? `<form class="memory-edit" data-memory-save="${escape(t.id)}"><input name="title" maxlength="80" value="${escape(t.title)}" aria-label="Тема">${categorySelect(t.area)}<textarea name="summary" maxlength="600" rows="3" aria-label="Что я знаю по теме">${escape(t.summary)}</textarea><div><button class="button primary" type="submit">Сохранить</button><button class="button quiet" type="button" data-memory-cancel>Отмена</button></div></form>`
       : `<p><span class="memory-tag">${areaNames[t.area]}</span><b>${escape(t.title)}</b>${t.summary ? '<br>' + escape(t.summary) : ''}</p>`}${linkChips(t.facts)}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${escape(t.id)}">Изменить</button><button type="button" class="chat-link danger" data-memory-delete="${escape(t.id)}">Удалить</button></div></article>`).join('')}</section>` : '';
     const questions = v.questions.length ? `<section class="growth-section"><h4>Хочу у вас спросить</h4>${v.questions.map(question => `<form class="memory-question ${question.kind}" data-question="${escape(question.id)}"><p>${question.kind === 'conflict' ? '<span class="memory-tag">Противоречие</span>' : ''}${escape(question.text)}</p>${question.kind === 'conflict' ? linkChips(question.facts) : ''}<div class="memory-answer"><input name="answer" maxlength="400" autocomplete="off" placeholder="Ваш ответ" aria-label="Ответ на вопрос" ${busy ? 'disabled' : ''}><button class="button" type="submit" ${busy ? 'disabled' : ''}>Ответить</button><button type="button" class="chat-link" data-memory-dismiss="${escape(question.id)}">Не спрашивать</button></div></form>`).join('')}</section>` : '';
-    return level + questions + skills + understanding + topics;
+    return level + logicCard(g.logic, true) + questions + skills + understanding + topics;
   }
   // Diary entries are written by Miyuneya herself during sleep; the user may correct or delete any of them.
   function diaryRow(e: DiaryView) {
@@ -294,6 +339,7 @@ export function mountMemory(host: MemoryHost) {
     if (tab === 'growth') return growthHtml(view);
     if (tab === 'plans') return plansHtml(view);
     if (tab === 'thoughts') return thoughtsHtml(view);
+    if (tab === 'logic') return logicHtml(view);
     if (tab === 'timeline') return timelineHtml(view);
     if (tab === 'map') return mapHtml();
     if (tab === 'diary') return view.diary.length ? '<p class="memory-note">Записи пишет сама Миюнэя после «сна». Любую можно поправить или удалить.</p>' + [...view.diary].sort((a, b) => b.date.localeCompare(a.date)).map(diaryRow).join('') : '<p class="memory-empty">Дневник пока пуст. Каждый раз во время сна Миюнэя записывает сюда, что узнала о вас и что изменила в себе.</p>';
@@ -313,7 +359,7 @@ export function mountMemory(host: MemoryHost) {
   }
   function render() {
     if (panel.hidden) return;
-    const count = (t: Tab) => !view || t === 'journal' || t === 'map' || t === 'growth' || t === 'timeline' ? '' : String((t === 'thoughts' ? view.thoughts.filter(x => !x.seen).length : t === 'plans' ? view.promises.filter(p => !p.done).length + view.reminders.filter(x => !x.fired).length : t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length) || '');
+    const count = (t: Tab) => !view || t === 'journal' || t === 'map' || t === 'growth' || t === 'timeline' ? '' : String((t === 'thoughts' ? view.thoughts.filter(x => !x.seen).length : t === 'plans' ? view.promises.filter(p => !p.done).length + view.reminders.filter(x => !x.fired).length + view.goals.filter(g => !g.done).length : t === 'logic' ? view.predictions.filter(p => !p.outcome).length : t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length) || '');
     const scroll = panel.querySelector('.memory-list')?.scrollTop || 0;
     const off = !view || busy ? 'disabled' : '';
     panel.classList.toggle('wide', tab === 'map');
@@ -379,11 +425,12 @@ export function mountMemory(host: MemoryHost) {
       return;
     }
     if (d.memoryDone) { await act('/items/' + d.memoryDone, { method: 'PATCH', json: { done: d.value === 'true' } }, d.value === 'true' ? 'Отметила как выполненное' : 'Обещание снова открыто'); return; }
+    if (d.memoryCheck) { await act('/items/' + d.memoryCheck, { method: 'PATCH', json: { result: d.value } }, d.value === 'right' ? 'Отметила: прогноз сбылся' : 'Отметила: прогноз не сбылся, запишу ошибку'); return; }
     if (d.memoryRearm) { const x = view?.reminders.find(r => r.id === d.memoryRearm); if (x) await act('/items/' + x.id, { method: 'PATCH', json: { text: x.text } }, 'Напомню ещё раз'); return; }
     if (d.memoryDismiss) { await act('/items/' + d.memoryDismiss, { method: 'DELETE' }, 'Больше не спрошу'); return; }
     if (d.memoryUnlink) { await act('/unlink', { method: 'POST', json: { from: selected, to: d.memoryUnlink } }, 'Связь убрана'); return; }
     if (d.memoryPin) { const item = view?.items.find(i => i.id === d.memoryPin); if (item) await act('/items/' + item.id, { method: 'PATCH', json: { pinned: !item.pinned } }, item.pinned ? 'Запись откреплена' : 'Закреплено: эта запись не будет забыта'); return; }
-    if (d.memoryDelete && await host.confirm(d.what === 'diary' ? 'Удалить запись дневника?' : d.what === 'thought' ? 'Удалить это размышление?' : d.memoryDelete === 'understanding' ? 'Удалить общее понимание? Я соберу его заново во время сна.' : 'Удалить запись из памяти?')) { if (await act('/items/' + d.memoryDelete, { method: 'DELETE' }, d.what === 'diary' ? 'Запись дневника удалена' : 'Запись удалена') && selected === d.memoryDelete) { selected = ''; render(); } return; }
+    if (d.memoryDelete && await host.confirm(d.what === 'diary' ? 'Удалить запись дневника?' : d.what === 'thought' ? 'Удалить это размышление?' : d.what === 'goal' ? 'Удалить цель вместе с шагами?' : d.memoryDelete === 'understanding' ? 'Удалить общее понимание? Я соберу его заново во время сна.' : 'Удалить запись из памяти?')) { if (await act('/items/' + d.memoryDelete, { method: 'DELETE' }, d.what === 'diary' ? 'Запись дневника удалена' : 'Запись удалена') && selected === d.memoryDelete) { selected = ''; render(); } return; }
     if (target.hasAttribute('data-memory-think')) { await act('/think', { method: 'POST' }, 'Подумала. Мысли — во вкладке «Размышления»'); return; }
     if (target.hasAttribute('data-memory-sleep')) { await act('/sleep', { method: 'POST' }, 'Сон завершён: память упорядочена'); return; }
     if (target.hasAttribute('data-memory-reset') && await host.confirm('Стереть всю память Миюнэи?')) { await act('', { method: 'DELETE' }, 'Память очищена'); return; }
@@ -395,6 +442,7 @@ export function mountMemory(host: MemoryHost) {
   });
   panel.addEventListener('change', event => {
     const input = event.target as HTMLInputElement;
+    if (input.dataset.goal && input.dataset.step) void act('/items/' + input.dataset.goal, { method: 'PATCH', json: { step: input.dataset.step, done: input.checked } }, input.checked ? 'Шаг выполнен' : 'Шаг снова открыт');
     if (input.hasAttribute('data-memory-enabled')) void act('', { method: 'PUT', json: { enabled: input.checked } }, input.checked ? 'Память включена' : 'Память выключена');
     if (input.hasAttribute('data-memory-thinking')) void act('', { method: 'PUT', json: { thinking: input.checked } }, input.checked ? 'Буду размышлять, пока вас нет' : 'Размышления выключены');
     if (input.hasAttribute('data-memory-intensity')) void act('', { method: 'PUT', json: { intensity: input.value } }, 'Частота размышлений изменена');
@@ -413,6 +461,11 @@ export function mountMemory(host: MemoryHost) {
       const about = field('about'), text = field('text');
       if (!about || !text) return host.toast('Укажите тему и о чём напомнить');
       await act('/reminders', { method: 'POST', json: { about, text } }, 'Напомню, когда речь зайдёт об этом');
+      return;
+    }
+    if (form.classList.contains('memory-goal')) {
+      const title = field('title');
+      if (title) await act('/goals', { method: 'POST', json: { title } }, 'Цель разложена на шаги');
       return;
     }
     if (form.dataset.question) {
