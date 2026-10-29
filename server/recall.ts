@@ -1,4 +1,4 @@
-import type { Memory, MemoryItem, Episode, Entity, RelationType, Topic, Category } from './memory.ts';
+import type { Memory, MemoryItem, Episode, Entity, RelationType, Topic, Category, Reminder } from './memory.ts';
 
 // Recall: what the assistant remembers before an answer. Records are scored by meaning (embedding vectors from
 // cloud.ru), by shared words, by strength and freshness; then the knowledge graph adds what the chosen records lead to.
@@ -43,7 +43,51 @@ export const itemText = (i: MemoryItem) => i.text;
 export const episodeText = (e: Episode) => e.topic + (e.outcome ? ' — ' + e.outcome : '');
 export const entityText = (e: Entity) => [e.name, ...e.aliases].join(', ') + (e.about ? ': ' + e.about : '');
 export const topicText = (t: Topic) => t.title + (t.summary ? ': ' + t.summary : '');
-export const searchTexts = (memory: Memory) => [...memory.items.map(itemText), ...memory.episodes.map(episodeText), ...memory.entities.map(entityText), ...memory.topics.map(topicText)];
+export const searchTexts = (memory: Memory) => [...memory.items.map(itemText), ...memory.episodes.map(episodeText), ...memory.entities.map(entityText), ...memory.topics.map(topicText), ...memory.reminders.filter(x => !x.fired).map(x => x.about)];
+
+// Time words in a question («вчера», «на прошлой неделе», «в прошлый вторник», «три дня назад») become a date range.
+const NUMBERS: Record<string, number> = { один: 1, одну: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5, шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10 };
+const WEEKDAYS = ['воскресень', 'понедельник', 'вторник', 'сред', 'четверг', 'пятниц', 'суббот'];
+export function timeRange(text: string, now = Date.now()) {
+  const t = text.toLocaleLowerCase('ru').replaceAll('ё', 'е');
+  const today = new Date(now); today.setHours(0, 0, 0, 0);
+  const at = (days: number) => { const d = new Date(today); d.setDate(d.getDate() + days); return d.getTime(); };
+  const monday = -((today.getDay() + 6) % 7);
+  const month = (shift: number) => new Date(today.getFullYear(), today.getMonth() + shift, 1).getTime();
+  const range = (from: number, to: number, label: string) => ({ from, to: Math.min(to, now + 1), label });
+  let m: RegExpExecArray | null;
+  if (/позавчера/.test(t)) return range(at(-2), at(-1), 'позавчера');
+  if (/вчера/.test(t)) return range(at(-1), at(0), 'вчера');
+  if ((m = /(\d+|один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)?\s*(дн[яейь]+|день|недел[июь]+)\s+назад/.exec(t))) {
+    const n = m[1] ? Number(m[1]) || NUMBERS[m[1]] : 1;
+    return m[2].startsWith('недел') ? range(at(-7 * n - 3), at(-7 * n + 4), m[0]) : range(at(-n - 1), at(-n + 2), m[0]);
+  }
+  if ((m = /(?:^|[\s,])во?\s+(прошл\S*\s+)?(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)/.exec(t))) {
+    const wanted = WEEKDAYS.findIndex(w => m![2].startsWith(w));
+    const back = (today.getDay() - wanted + 7) % 7 || 7;
+    return range(at(-back), at(-back + 1), m[0].trim());
+  }
+  if (/на\s+прошлой\s+неделе|прошлую\s+неделю/.test(t)) return range(at(monday - 7), at(monday), 'на прошлой неделе');
+  if (/на\s+этой\s+неделе|эту\s+неделю/.test(t)) return range(at(monday), at(1), 'на этой неделе');
+  if (/в\s+прошлом\s+месяце|прошлый\s+месяц/.test(t)) return range(month(-1), month(0), 'в прошлом месяце');
+  if (/в\s+этом\s+месяце/.test(t)) return range(month(0), at(1), 'в этом месяце');
+  if (/на\s+днях|недавно/.test(t)) return range(at(-3), at(1), 'на днях');
+  if (/сегодня/.test(t)) return range(at(0), at(1), 'сегодня');
+  return null;
+}
+// Loose stems for a reminder topic, so «о Кате» meets «Катя» and «поездке» meets «поездка».
+const stems = (text: string) => new Set((text.toLocaleLowerCase('ru').replaceAll('ё', 'е').match(/[\p{L}\p{N}]+/gu) || []).filter(w => w.length >= 3 && !STOP.has(w)).map(w => w.slice(0, Math.max(3, Math.min(5, w.length - 1)))));
+export function reminderDue(reminder: Pick<Reminder, 'about' | 'said'>, query: string, semantic: number | null) {
+  const flat = query.replace(/\s+/g, ' ');
+  const setNow = !!reminder.said && flat.includes(reminder.said);
+  const rest = setNow ? flat.replace(reminder.said, ' ') : flat;
+  if (!rest.trim()) return false;
+  const about = stems(reminder.about), q = stems(rest);
+  const shared = [...about].filter(t => q.has(t)).length;
+  if (about.size && shared >= Math.max(1, about.size / 2)) return true;
+  // Meaning only counts once the message that set the reminder has left the question.
+  return !setNow && semantic !== null && semantic >= 0.55;
+}
 export const categoryNames: Record<Category, string> = { personal: 'Личное', work: 'Работа', health: 'Здоровье', plans: 'Планы', tastes: 'Вкусы', people: 'Люди', other: 'Разное' };
 
 export const relationNames: Record<RelationType, string> = { related: 'связано с', part_of: 'часть', blocks: 'мешает', after: 'после', decided_in: 'решено в', about: 'про' };
@@ -90,7 +134,9 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   const rules = live.filter(x => x.item.kind === 'rule').sort((a, b) => b.power - a.power);
   const facts = live.filter(x => x.item.kind === 'fact').map(x => { const m = match(x.item.text) + (inTopic.has(x.item.id) ? 0.25 : 0); return { ...x, match: m, score: x.power * (0.3 + m) }; }).sort((a, b) => b.score - a.score);
   const recent = memory.episodes.slice(-3).map(e => e.id);
-  const episodes = memory.episodes.map(e => ({ e, score: match(episodeText(e)) + (recent.includes(e.id) ? 0.25 : 0) })).filter(x => x.score > 0.25).sort((a, b) => b.score - a.score).slice(0, 4);
+  const range = timeRange(query, now);
+  const during = (date: string) => !!range && Date.parse(date) >= range.from && Date.parse(date) < range.to;
+  const episodes = memory.episodes.map(e => ({ e, score: match(episodeText(e)) + (recent.includes(e.id) ? 0.25 : 0) + (during(e.date) ? 0.6 : 0) })).filter(x => x.score > 0.25).sort((a, b) => b.score - a.score).slice(0, 4);
   const entities = memory.entities.map(e => ({ e, score: match(entityText(e)) + ([e.name, ...e.aliases].some(name => tokens(name).size && [...tokens(name)].every(t => q.has(t))) ? 0.5 : 0) }))
     .filter(x => x.score > 0.35).sort((a, b) => b.score - a.score).slice(0, 4);
   const chosen = facts.slice(0, 12);
@@ -120,6 +166,22 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   const lines: string[] = [];
   let budget = 6000;
   const add = (line: string) => { if (line.length > budget) return false; lines.push(line); budget -= line.length + 1; return true; };
+  // Prospective memory: a reminder fires when the talk turns to its topic.
+  const due = memory.reminders.filter(x => !x.fired && reminderDue(x, query, semantic(x.about)));
+  for (const x of due) add(`Ты обещала напомнить, когда речь зайдёт о «${x.about}». Напомни сейчас, естественно, в начале или в конце ответа: «${x.text}».`);
+  if (due.length) add('');
+  if (range) {
+    const inRange = (date: string) => { const t = Date.parse(date); return t >= range.from && t < range.to; };
+    const period = `${new Date(range.from).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}${range.to - range.from > DAY + 1 ? ' — ' + new Date(range.to - 1).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) : ''}`;
+    const then = [
+      ...memory.episodes.filter(e => inRange(e.date)).sort((a, b) => a.date.localeCompare(b.date)).slice(-8).map(e => `- ${day(e.date)}, разговор: ${episodeText(e)}`),
+      ...memory.items.filter(i => i.kind === 'fact' && inRange(i.created)).slice(-6).map(i => `- ${day(i.created)} узнала: ${i.text}`),
+      ...memory.promises.filter(p => inRange(p.created)).slice(-4).map(p => `- ${day(p.created)} ты пообещала: ${p.text}${p.done ? ' (выполнено)' : ''}`),
+    ];
+    add(`Сегодня ${new Date(now).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}; пользователь спрашивает про время «${range.label}» (${period}).`);
+    add(then.length ? `Что было в это время:\n${then.join('\n')}` : 'В памяти нет записей за это время, так и скажи, если спросят.');
+    add('');
+  }
   if (memory.understanding) { add('Твоё общее понимание пользователя:'); add(memory.understanding.text); }
   if (topics.length) { add('\nТемы его жизни, к которым относится разговор:'); for (const { t } of topics) add(`- ${t.title} (${categoryNames[t.area].toLocaleLowerCase('ru')})${t.summary ? ': ' + t.summary : ''}`); }
   if (rules.length) { add((lines.length ? '\n' : '') + 'Как пользователь любит, чтобы ты отвечала и действовала (соблюдай всегда):'); for (const { item } of rules.slice(0, 25)) if (!add('- ' + item.text)) break; }
@@ -128,6 +190,8 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   if (entities.length) { add('\nЛюди, проекты и темы из разговора:'); for (const { e } of entities) add(`- ${e.name} (${entityNames[e.type]})${e.about ? ': ' + e.about : ''}`); }
   if (episodes.length) { add('\nПрошлые разговоры по теме:'); for (const { e } of episodes) add(`- ${day(e.date)}: ${episodeText(e)}${linked(e.links)}`); }
   if (chain.length) { add('\nСвязи по теме (учитывай всю историю вопроса):'); for (const line of chain) add('- ' + line); }
+  const promises = memory.promises.filter(p => !p.done).slice(-8);
+  if (promises.length) { add('\nТвои открытые обещания пользователю (выполни, когда будет к месту, и не обещай то же снова):'); for (const p of promises) add(`- ${p.text} (обещала ${day(p.created)}${p.due ? (p.due < today(now) ? '; срок прошёл ' : '; срок до ') + day(p.due) : ''})`); }
   if (recall.question) add(`\nПробел в твоей памяти. Если это к месту и не мешает ответу, в конце мягко спроси пользователя: «${recall.question}». Не спрашивай, если разговор о другом срочном деле.`);
   return lines.length ? 'Твоя долговременная память.\n' + lines.join('\n') : '';
 }

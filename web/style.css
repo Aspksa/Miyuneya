@@ -75,3 +75,11 @@ svg .fill{fill:currentColor;fill-opacity:.16}svg .fill-solid{fill:currentColor;s
 .memory-answer{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.memory-answer input{flex:1;min-width:140px;border:1px solid var(--line);border-radius:calc(7px*var(--round,1));background:var(--panel);color:var(--fg);padding:7px 9px;font-size:12px}.memory-answer .button{min-height:32px;padding:6px 12px}
 .memory-weak{margin:4px 0 0;font-size:10.5px;color:#a6662f;line-height:1.5}
 .memory-tabs{flex-shrink:0}
+.chat-link.memory-origin{padding:0;font-size:inherit;color:var(--gold);text-decoration:underline;text-decoration-color:color-mix(in srgb,var(--gold) 35%,transparent);text-underline-offset:2px}.chat-link.memory-origin:hover{text-decoration-color:var(--gold)}
+.memory-sub{margin:6px 0 -2px;font-size:10px;color:var(--muted)}
+.memory-item.done{opacity:.62}.memory-item.done p{text-decoration:line-through;text-decoration-color:color-mix(in srgb,var(--muted) 60%,transparent)}
+.memory-done{display:grid;gap:8px}.memory-done summary{cursor:pointer;font-size:11px;color:var(--muted);padding:2px}.memory-done[open] summary{margin-bottom:6px}
+.memory-remind{display:grid;grid-template-columns:1fr 1.4fr auto;gap:6px}.memory-remind input{min-width:0;border:1px solid var(--line);border-radius:calc(7px*var(--round,1));background:var(--panel);color:var(--fg);padding:8px 9px;font-size:12px}.memory-remind .button{min-height:34px;padding:6px 12px}
+@media(max-width:620px){.memory-remind{grid-template-columns:1fr}}
+.timeline-day{display:grid;gap:0}.timeline-day h4{margin:8px 2px 4px;font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--gold);font-weight:600}.timeline-day h4::first-letter{text-transform:uppercase}
+.timeline-event{display:grid;grid-template-columns:38px 86px 1fr;gap:8px;align-items:start;font-size:11.5px;padding:6px 4px;border-left:2px solid var(--line);margin-left:6px;padding-left:10px}.timeline-event small{color:var(--muted);font-size:10px}.timeline-event b{font-size:10.5px;font-weight:600;color:var(--muted)}.timeline-event span{line-height:1.5;overflow-wrap:anywhere}.timeline-event .chat-link{padding:0;font-size:inherit;color:var(--fg);text-align:left}.timeline-event .chat-link:hover{color:var(--gold)}
