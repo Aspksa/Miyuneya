@@ -88,7 +88,7 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
     const text = clip(item?.text);
     if (!text || !fresh(item.id) || (item.kind !== 'fact' && item.kind !== 'rule')) continue;
     memory.items.push({ id: item.id, kind: item.kind, text, weight: unit(item.weight, 0.5), hits: Number.isSafeInteger(item.hits) && item.hits > 0 ? item.hits : 1, created: iso(item.created, now), seen: iso(item.seen, now), pinned: item.pinned === true,
-      source: ['user', 'dialog', 'sleep', 'note', 'review'].includes(item.source) ? item.source : 'dialog', links: ids(item.links), category: category(item.category), until: validDate(item.until) ? item.until : null, origin: typeof item.origin === 'string' ? item.origin.slice(0, 100) : null });
+      source: ['user', 'dialog', 'sleep', 'note', 'review', 'thought'].includes(item.source) ? item.source : 'dialog', links: ids(item.links), category: category(item.category), until: validDate(item.until) ? item.until : null, origin: typeof item.origin === 'string' ? item.origin.slice(0, 100) : null });
   }
   for (const e of array(raw.episodes)) {
     const topic = clip(e?.topic, 200);
@@ -663,7 +663,8 @@ export async function openMemory(dataDir: string, options: Options) {
   const write = (path: string, value: () => unknown) => { const next = writing.then(() => atomicWrite(path, JSON.stringify(value(), null, path === file ? 2 : 0))); writing = next.catch(() => {}); return next; };
   const save = () => write(file, () => memory);
   const saveVectors = () => write(vectorFile, () => ({ model: vectorModel, vectors: Object.fromEntries(vectors) }));
-  let lastActivity = 0;
+  // The app has just been opened, so the user is here: the quiet time before thinking starts counting now.
+  let lastActivity = Date.now();
   let job: { kind: 'reflect' | 'sleep' | 'think'; done: Promise<unknown> } | null = null;
   let retryThinkAt = 0;
   let retrySleepAt = 0;
@@ -757,8 +758,11 @@ export async function openMemory(dataDir: string, options: Options) {
     return { today: today.length, perDay: limit.perDay, next, left: limit.perDay - today.length };
   }
   const canThink = () => memory.settings.enabled && memory.settings.thinking && !memory.settings.private && options.available() && memory.items.length + memory.episodes.length >= 3;
+  // Checked again when the job actually starts: settings may have changed and other requests may have used the limit while it waited.
   async function think() {
     const now = Date.now();
+    if (!canThink()) throw Object.assign(new Error(memory.settings.private ? 'В приватном режиме Миюнэя не размышляет.' : 'Размышления выключены или в памяти пока слишком мало.'), { status: 409 });
+    if (thinking(now).left <= 0) throw Object.assign(new Error('На сегодня размышлений достаточно: лимит выбранной частоты исчерпан.'), { status: 429 });
     let result;
     try { result = parseJson(await options.ask(THINK_PROMPT, thinkInput(memory, options.workspace(), now), 120_000)); }
     catch (e) { retryThinkAt = Date.now() + 3_600_000; memory.thinks = [...memory.thinks, new Date(now).toISOString()].slice(-20); await save(); throw e; }
@@ -853,7 +857,7 @@ export async function openMemory(dataDir: string, options: Options) {
     // Thoughts shown to the user once («пока вас не было…») are no longer new.
     async seen() { let dirty = false; for (const t of memory.thoughts) if (!t.seen) { t.seen = true; dirty = true; } if (dirty) await save(); },
     // «Подумать сейчас» skips the wait for the user to be away but keeps the daily limit.
-    thinkNow: () => thinking().today >= thinking().perDay ? Promise.reject(Object.assign(new Error('На сегодня размышлений достаточно: лимит выбранной частоты исчерпан.'), { status: 429 })) : run('think', think),
+    thinkNow: () => run('think', think),
     async settings(change: Partial<Settings>) {
       memory.settings = { ...memory.settings, ...change };
       if (memory.settings.private || !memory.settings.enabled) memory.dialogs = [];
