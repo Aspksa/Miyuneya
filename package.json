@@ -1,0 +1,15 @@
+{
+  "name": "miyuneya",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Личное пространство Miyuneya",
+  "engines": { "node": ">=22.18.0" },
+  "scripts": {
+    "start": "node scripts/start.mjs --open",
+    "dev": "node scripts/start.mjs --preview",
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node scripts/build.mjs --check"
+  }
+}

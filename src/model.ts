@@ -1,0 +1,23 @@
+export type Note = { id: string; title: string; body: string; updatedAt: string };
+export type Task = { id: string; title: string; done: boolean; createdAt: string };
+export type Workspace = { version: 1; notes: Note[]; tasks: Task[]; settings: { theme: 'light' | 'dark' | 'auto'; name: string } };
+export function emptyWorkspace(): Workspace {
+  return { version: 1, notes: [], tasks: [], settings: { theme: 'light', name: 'Хозяин' } };
+}
+function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value); }
+function text(value: unknown, max: number): value is string { return typeof value === 'string' && value.length <= max; }
+function date(value: unknown): value is string { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
+export function validateWorkspace(value: unknown): value is Workspace {
+  if (!record(value) || value.version !== 1 || !Array.isArray(value.notes) || !Array.isArray(value.tasks) || !record(value.settings)) return false;
+  if (value.notes.length > 5000 || value.tasks.length > 5000 || !['light', 'dark', 'auto'].includes(String(value.settings.theme)) || !text(value.settings.name, 80)) return false;
+  const ids = new Set<string>();
+  for (const item of [...value.notes, ...value.tasks]) {
+    if (!record(item) || !text(item.id, 100) || !item.id || ids.has(item.id) || !text(item.title, 200) || !item.title.trim()) return false;
+    ids.add(item.id);
+  }
+  return value.notes.every(n => record(n) && text(n.body, 100000) && date(n.updatedAt)) && value.tasks.every(t => record(t) && typeof t.done === 'boolean' && date(t.createdAt));
+}
+export function searchNotes(notes: Note[], query: string): Note[] {
+  const q = query.trim().toLocaleLowerCase('ru');
+  return notes.filter(n => `${n.title} ${n.body}`.toLocaleLowerCase('ru').includes(q)).sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
+}
