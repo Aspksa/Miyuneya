@@ -1,0 +1,29 @@
+name: Быстрые проверки
+on:
+  push:
+  pull_request:
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  quick:
+    name: Проверка (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: '24'
+          - os: windows-latest
+            node: '22.18.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - run: npm run check
+        if: matrix.node == '24'
