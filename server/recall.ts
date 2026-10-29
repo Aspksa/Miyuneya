@@ -3,7 +3,8 @@ import type { Memory, MemoryItem, Episode, Entity, RelationType, Topic, Category
 // Recall: what the assistant remembers before an answer. Records are scored by meaning (embedding vectors from
 // cloud.ru), by shared words, by strength and freshness; then the knowledge graph adds what the chosen records lead to.
 export type Titles = Map<string, { kind: 'note' | 'task'; title: string }>;
-export type Recall = { query?: number[]; vector?: (text: string) => number[] | undefined; question?: string };
+// latest is the user's newest message: time words are read from it alone, while topics come from the recent turns.
+export type Recall = { query?: number[]; vector?: (text: string) => number[] | undefined; question?: string; latest?: string };
 
 export const FORGET_BELOW = 0.12;
 const DAY = 86_400_000;
@@ -75,6 +76,7 @@ export function timeRange(text: string, now = Date.now()) {
   if (/сегодня/.test(t)) return range(at(0), at(1), 'сегодня');
   return null;
 }
+export const reminderLine = (x: Pick<Reminder, 'about' | 'text'>) => `Ты обещала напомнить, когда речь зайдёт о «${x.about}». Напомни сейчас, естественно, в начале или в конце ответа: «${x.text}».`;
 // Loose stems for a reminder topic, so «о Кате» meets «Катя» and «поездке» meets «поездка».
 const stems = (text: string) => new Set((text.toLocaleLowerCase('ru').replaceAll('ё', 'е').match(/[\p{L}\p{N}]+/gu) || []).filter(w => w.length >= 3 && !STOP.has(w)).map(w => w.slice(0, Math.max(3, Math.min(5, w.length - 1)))));
 export function reminderDue(reminder: Pick<Reminder, 'about' | 'said'>, query: string, semantic: number | null) {
@@ -134,7 +136,7 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   const rules = live.filter(x => x.item.kind === 'rule').sort((a, b) => b.power - a.power);
   const facts = live.filter(x => x.item.kind === 'fact').map(x => { const m = match(x.item.text) + (inTopic.has(x.item.id) ? 0.25 : 0); return { ...x, match: m, score: x.power * (0.3 + m) }; }).sort((a, b) => b.score - a.score);
   const recent = memory.episodes.slice(-3).map(e => e.id);
-  const range = timeRange(query, now);
+  const range = timeRange(recall.latest ?? query, now);
   const during = (date: string) => !!range && Date.parse(date) >= range.from && Date.parse(date) < range.to;
   const episodes = memory.episodes.map(e => ({ e, score: match(episodeText(e)) + (recent.includes(e.id) ? 0.25 : 0) + (during(e.date) ? 0.6 : 0) })).filter(x => x.score > 0.25).sort((a, b) => b.score - a.score).slice(0, 4);
   const entities = memory.entities.map(e => ({ e, score: match(entityText(e)) + ([e.name, ...e.aliases].some(name => tokens(name).size && [...tokens(name)].every(t => q.has(t))) ? 0.5 : 0) }))
@@ -168,7 +170,7 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   const add = (line: string) => { if (line.length > budget) return false; lines.push(line); budget -= line.length + 1; return true; };
   // Prospective memory: a reminder fires when the talk turns to its topic.
   const due = memory.reminders.filter(x => !x.fired && reminderDue(x, query, semantic(x.about)));
-  for (const x of due) add(`Ты обещала напомнить, когда речь зайдёт о «${x.about}». Напомни сейчас, естественно, в начале или в конце ответа: «${x.text}».`);
+  for (const x of due) add(reminderLine(x));
   if (due.length) add('');
   if (range) {
     const inRange = (date: string) => { const t = Date.parse(date); return t >= range.from && t < range.to; };
@@ -179,7 +181,8 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
       ...memory.promises.filter(p => inRange(p.created)).slice(-4).map(p => `- ${day(p.created)} ты пообещала: ${p.text}${p.done ? ' (выполнено)' : ''}`),
     ];
     add(`Сегодня ${new Date(now).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}; пользователь спрашивает про время «${range.label}» (${period}).`);
-    add(then.length ? `Что было в это время:\n${then.join('\n')}` : 'В памяти нет записей за это время, так и скажи, если спросят.');
+    if (!then.length) add('В памяти нет записей за это время, так и скажи, если спросят.');
+    else if (add('Что было в это время:')) for (const line of then) if (!add(line)) break;
     add('');
   }
   if (memory.understanding) { add('Твоё общее понимание пользователя:'); add(memory.understanding.text); }

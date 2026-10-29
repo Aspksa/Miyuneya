@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import type { Workspace } from '../src/model.ts';
-import { tokens, overlap, similarity, strength, expired, memoryContext, searchTexts, FORGET_BELOW, entityNames, relationNames, categoryNames } from './recall.ts';
+import { tokens, overlap, similarity, strength, expired, memoryContext, searchTexts, FORGET_BELOW, entityNames, relationNames, categoryNames, reminderLine } from './recall.ts';
 import type { Titles } from './recall.ts';
 import { growth } from './growth.ts';
 export { tokens, similarity, strength, memoryContext } from './recall.ts';
@@ -275,8 +275,8 @@ export function keep(memory: Memory, id: unknown, now = new Date().toISOString()
 }
 // «Напомни, когда заговорим о X, что Y» and «Когда заговорим о X, напомни Y».
 const TALK = String.raw`когда\s+(?:мы\s+)?(?:снова\s+|опять\s+)?(?:заговорим|поговорим|будем\s+говорить|будем\s+обсуждать|начнём\s+обсуждать|начнем\s+обсуждать|вспомним|речь\s+зайд[её]т|зайд[её]т\s+речь|коснёмся|коснемся|дойд[её]м\s+до)\s+(?:(?:о|об|обо|про|до|темы)\s+)?`;
-const REMIND_FIRST = new RegExp(String.raw`^\s*(?:миюнэя[\s,!.]*)?(?:пожалуйста[\s,]*)?напомни(?:\s+мне)?(?:[\s,]+пожалуйста)?[\s,]+${TALK}(.{2,120}?)\s*(?:,|:|—|-|\s+то\s+)\s*(?:то\s+)?(?:о\s+том,?\s+что|что|про|о|об)?\s*([\s\S]{2,300}?)[\s.!]*$`, 'i');
-const TALK_FIRST = new RegExp(String.raw`^\s*(?:миюнэя[\s,!.]*)?${TALK}(.{2,120}?)\s*[,:—-]?\s*(?:то\s+)?напомни(?:\s+мне)?[\s,:—-]*(?:о\s+том,?\s+что|что|про|о|об)?\s*([\s\S]{2,300}?)[\s.!]*$`, 'i');
+const REMIND_FIRST = new RegExp(String.raw`^\s*(?:миюнэя[\s,!.]*)?(?:пожалуйста[\s,]*)?напомни(?:\s+мне)?(?:[\s,]+пожалуйста)?[\s,]+${TALK}(.{2,120}?)\s*(?:,|:|—|-|\s+то\s+)\s*(?:то\s+)?(?:(?:о\s+том,?\s+что|что|про|обо|об|о)\s+)?([\s\S]{2,300}?)[\s.!]*$`, 'i');
+const TALK_FIRST = new RegExp(String.raw`^\s*(?:миюнэя[\s,!.]*)?${TALK}(.{2,120}?)\s*[,:—-]?\s*(?:то\s+)?напомни(?:\s+мне)?[\s,:—-]*(?:(?:о\s+том,?\s+что|что|про|обо|об|о)\s+)?([\s\S]{2,300}?)[\s.!]*$`, 'i');
 export function parseReminder(text: string) {
   const m = REMIND_FIRST.exec(text) || TALK_FIRST.exec(text);
   return m ? { about: m[1].trim(), text: m[2].trim() } : null;
@@ -713,7 +713,7 @@ export async function openMemory(dataDir: string, options: Options) {
     get data() { return memory; },
     get recording() { return memory.settings.enabled && !memory.settings.private; },
     // Recall for the next answer: the question is embedded once; records without a vector yet fall back to words.
-    async context(query: string) {
+    async context(query: string, latest = query) {
       let vector: number[] | undefined;
       if (embedReady() && vectors.size) { try { vector = (await options.embed!([query.slice(0, 4000)], 8000))[0]; } catch (e) { embedFailed(e); } }
       void index();
@@ -721,13 +721,16 @@ export async function openMemory(dataDir: string, options: Options) {
       const now = Date.now();
       const question = this.recording && !memory.questions.some(q => q.lastAsked && now - Date.parse(q.lastAsked) < 20 * 3_600_000)
         ? memory.questions.filter(q => q.asked < 3).sort((a, b) => a.asked - b.asked || a.created.localeCompare(b.created))[0] : undefined;
-      const context = memoryContext(memory, query, titles(), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text });
-      let dirty = false;
-      if (question && context.includes(question.text)) { question.asked++; question.lastAsked = new Date(now).toISOString(); dirty = true; }
-      // A reminder fires once; it stays in the list as done.
-      for (const x of memory.reminders) if (!x.fired && context.includes(`«${x.about}». Напомни сейчас`)) { x.fired = new Date(now).toISOString(); journal(memory, 'reminder', `Напомнила: ${x.text}`, x.fired); dirty = true; }
-      if (dirty) await save();
+      const context = memoryContext(memory, query, titles(), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text, latest });
+      if (question && context.includes(question.text)) { question.asked++; question.lastAsked = new Date(now).toISOString(); await save(); }
       return context;
+    },
+    // A reminder fires once, after the answer that carried it was delivered; it stays in the list as done.
+    async delivered(context: string) {
+      const at = new Date().toISOString();
+      let dirty = false;
+      for (const x of memory.reminders) if (!x.fired && context.includes(reminderLine(x))) { x.fired = at; journal(memory, 'reminder', `Напомнила: ${x.text}`, at); dirty = true; }
+      if (dirty) await save();
     },
     touch() { lastActivity = Date.now(); },
     // Keeps the latest turns of a dialog until it goes quiet and can be reflected on.

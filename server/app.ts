@@ -262,7 +262,7 @@ export async function createApp(root: string, instance: string, preview = false,
             notes.push(removed.length ? `Ты только что удалила из памяти: ${removed.map(t => `«${t}»`).join(', ')}. Коротко подтверди.` : 'Пользователь просит забыть, но в памяти нет ничего похожего. Скажи об этом и предложи открыть меню «Память» (значок мозга вверху справа).');
             if (removed.length) events.push(`Забыла записей: ${removed.length}`);
           }
-          const recall = await memory.context(messages.filter((m: ChatMessage) => m.role === 'user').slice(-3).map((m: ChatMessage) => m.content).join('\n'));
+          const recall = await memory.context(messages.filter((m: ChatMessage) => m.role === 'user').slice(-3).map((m: ChatMessage) => m.content).join('\n'), last);
           const system = [PERSONA, ACTIONS, assistant.context ? workspaceContext(state.data) : 'Доступ к заметкам и задачам пользователя выключен в настройках. Если спросят о них, мягко скажи об этом.',
             recall, summary ? 'Краткое содержание более ранней части этого разговора:\n' + summary : '', ...notes].filter(Boolean).join('\n\n');
           let call;
@@ -304,6 +304,8 @@ export async function createApp(root: string, instance: string, preview = false,
             }
             if (!received) throw fail('Модель вернула пустой ответ. Попробуйте переформулировать или выбрать другую модель.', 502);
             write({ done: true, model: assistant.model });
+            // A reminder counts as given only once the answer that carries it has arrived.
+            await memory.delivered(recall).catch(() => {});
             if (dialog) await memory.record(dialog, [...messages.map((m: ChatMessage) => ({ role: m.role, content: m.content })), { role: 'assistant', content: answer }], summary).catch(() => {});
           } catch (e) {
             write({ error: (e as { status?: number }).status ? (e as Error).message : call.explain().message });

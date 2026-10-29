@@ -41,6 +41,12 @@ test('Recall answers «when» questions from the dated memory', () => {
   assert.match(context,/Что было в это время:\n- 27 октября, разговор: Обсуждали отпуск — Решили ехать в горы\n- 27 октября узнала: Любит горы\n- 27 октября ты пообещала: Подобрать маршрут/);
   assert.doesNotMatch(context.split('Что было')[1].split('\n\n')[0],/ноутбук/);
   assert.match(memoryContext(memory,'Что было вчера?',new Map(),now),/В памяти нет записей за это время/);
+  // Time words come from the newest message only.
+  assert.match(memoryContext(memory,'Что мы обсуждали вчера?\nА во вторник?',new Map(),now,{latest:'А во вторник?'}),/про время «во вторник»/);
+  // A long period is cut to the budget instead of disappearing.
+  for(let i=0;i<8;i++) memory.episodes.push({id:'x'+i,date:new Date(local(26,9+i)).toISOString(),topic:'Т'.repeat(200),outcome:'И'.repeat(600),links:[],consolidated:true,score:null,weak:''});
+  const long=memoryContext(memory,'Что было на этой неделе?',new Map(),now);
+  assert.match(long,/Что было в это время:\n- 26 октября, разговор: Т+/);assert.ok(long.length<=6400);
 });
 
 test('Reminders are set from the chat and fire when the talk turns to their topic', () => {
@@ -48,6 +54,10 @@ test('Reminders are set from the chat and fire when the talk turns to their topi
   assert.deepEqual(parseReminder('напомни мне когда будем обсуждать отпуск — забронировать отель'),{about:'отпуск',text:'забронировать отель'});
   assert.deepEqual(parseReminder('Когда заговорим о Кате, напомни про её день рождения'),{about:'Кате',text:'её день рождения'});
   assert.equal(parseReminder('Напомни купить хлеб'),null);
+  // Words that begin like «о», «об» or «про» stay whole.
+  assert.deepEqual(parseReminder('Когда заговорим о поездке, напомни проверить билеты'),{about:'поездке',text:'проверить билеты'});
+  assert.deepEqual(parseReminder('Напомни, когда заговорим о поездке, оплатить отель'),{about:'поездке',text:'оплатить отель'});
+  assert.deepEqual(parseReminder('Напомни, когда заговорим о поездке, об отеле'),{about:'поездке',text:'отеле'});
   const memory=emptyMemory();
   const said='Когда заговорим о Кате, напомни про её день рождения';
   const reminder=remind(memory,'Кате','её день рождения',said);
@@ -92,10 +102,11 @@ test('Promises and provenance come from reflection and sleep', () => {
 
 test('Memory over HTTP sets a reminder in chat, fires it later and tracks promises', async t => {
   const root=await mkdtemp(join(tmpdir(),'Miyuneya время '));
-  const seen=[];
+  const seen=[];let broken=false;
   const fake=createServer(async(req,res)=>{
     let body='';for await(const c of req)body+=c;
     seen.push(JSON.parse(body||'{}'));
+    if(broken){res.writeHead(500,{'Content-Type':'application/json'});return res.end(JSON.stringify({error:{message:'упало'}}));}
     res.writeHead(200,{'Content-Type':'text/event-stream'});
     res.end(`data: ${JSON.stringify({choices:[{delta:{content:'Хорошо.'}}]})}\n\ndata: [DONE]\n\n`);
   });
@@ -120,6 +131,10 @@ test('Memory over HTTP sets a reminder in chat, fires it later and tracks promis
   assert.match(system,/Твои открытые обещания пользователю[^\n]*\n- Проверить курс иены/);
   await chat([{role:'user',content:set},{role:'assistant',content:'Хорошо.'},{role:'user',content:'Какая погода?'}]);
   assert.doesNotMatch(seen.at(-1).messages[0].content,/Напомни сейчас/);
+  // A failed answer does not use up the reminder.
+  broken=true;await chat([{role:'user',content:'Давай обсудим поездку в Японию'}]);broken=false;
+  assert.match(seen.at(-1).messages[0].content,/Напомни сейчас/);
+  assert.equal((await (await fetch(url+'/api/memory')).json()).reminders[0].fired,null);
   await chat([{role:'user',content:'Давай обсудим поездку в Японию'}]);
   assert.match(seen.at(-1).messages[0].content,/когда речь зайдёт о «поездке»\. Напомни сейчас[^\n]*«нужно купить адаптер»/);
   let view=await (await fetch(url+'/api/memory')).json();
