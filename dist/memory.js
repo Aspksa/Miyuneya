@@ -18,11 +18,11 @@
                              
                                   
   
-                                                           
+                                                                            
                                                 
 
 export const brainIcon = '<path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill"/><path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill" transform="matrix(-1 0 0 1 24 0)"/><path d="M12 5.4v14.1M12 9.2c-1.3 0-2.2-.8-2.3-2M9.6 12.3c-1.4-.4-2.8.2-3.4 1.4M12 15.6c-1.2 0-2.2-.7-2.5-1.8M12 9.2c1.3 0 2.2-.8 2.3-2M14.4 12.3c1.4-.4 2.8.2 3.4 1.4M12 15.6c1.2 0 2.2-.7 2.5-1.8M6.7 8.9c.6.5 1.4.7 2.1.5M17.3 8.9c-.6.5-1.4.7-2.1.5" class="accent-stroke"/>';
-const tabs                  = [['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['map', 'Карта'], ['journal', 'Журнал']];
+const tabs                  = [['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
 export const categories                       = [['personal', 'Личное'], ['work', 'Работа'], ['health', 'Здоровье'], ['plans', 'Планы'], ['tastes', 'Вкусы'], ['people', 'Люди'], ['other', 'Другое']];
 const categoryName = (c          ) => categories.find(([key]) => key === c)?.[1] || 'Другое';
 const sources                                           = { user: 'от вас', dialog: 'из разговора', sleep: 'после сна', note: 'из заметки' };
@@ -150,6 +150,14 @@ export function mountMemory(host            ) {
       : `<p><b>${escape(e.topic)}</b>${e.outcome ? '<br>' + escape(e.outcome) : ''}</p>`;
     return `<article class="memory-item" id="memory-${id}">${body}<div class="memory-meta"><span>${when(e.date, true)}${e.consolidated ? '' : ' · <em>ещё не осмыслен во сне</em>'}</span></div>${linkChips([...e.links, ...related(e.id)])}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${id}">Изменить</button><button type="button" class="chat-link" data-memory-select="${id}">На карте</button><button type="button" class="chat-link danger" data-memory-delete="${id}">Удалить</button></div></article>`;
   }
+  // Diary entries are written by Miyuneya herself during sleep; the user may correct or delete any of them.
+  function diaryRow(e           ) {
+    const id = escape(e.id);
+    const body = editing === e.id
+      ? `<form class="memory-edit" data-memory-save="${id}"><textarea name="text" maxlength="2000" rows="5" aria-label="Запись дневника">${escape(e.text)}</textarea><div><button class="button primary" type="submit">Сохранить</button><button class="button quiet" type="button" data-memory-cancel>Отмена</button></div></form>`
+      : `<p>${escape(e.text)}</p>`;
+    return `<article class="memory-item diary-entry" id="memory-${id}"><h3>${new Date(e.date).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h3>${body}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${id}">Изменить</button><button type="button" class="chat-link danger" data-memory-delete="${id}" data-what="diary">Удалить</button></div></article>`;
+  }
   function currentGraph() {
     if (!view) return null;
     const key = JSON.stringify([view.items.map(i => i.id + i.links.join()), view.episodes.map(e => e.id + e.links.join()), view.entities.map(e => e.id), view.edges]);
@@ -191,6 +199,7 @@ export function mountMemory(host            ) {
   function listHtml() {
     if (!view) return '<p class="memory-empty">Загружаю память…</p>';
     if (tab === 'map') return mapHtml();
+    if (tab === 'diary') return view.diary.length ? '<p class="memory-note">Записи пишет сама Миюнэя после «сна». Любую можно поправить или удалить.</p>' + [...view.diary].sort((a, b) => b.date.localeCompare(a.date)).map(diaryRow).join('') : '<p class="memory-empty">Дневник пока пуст. Каждый раз во время сна Миюнэя записывает сюда, что узнала о вас и что изменила в себе.</p>';
     if (tab === 'journal') return view.journal.length ? view.journal.map(j => `<div class="memory-journal"><small>${when(j.at, true)}</small><b>${journalNames[j.kind] || 'Запись'}</b><span>${escape(j.text)}</span></div>`).join('') : '<p class="memory-empty">Здесь появится история: что Миюнэя узнала, объединила и забыла.</p>';
     if (tab === 'episode') return view.episodes.length ? view.episodes.map(episodeRow).join('') : '<p class="memory-empty">Эпизодов пока нет. После разговора Миюнэя запишет, о чём он был и чем закончился.</p>';
     const all = view.items.filter(i => i.kind === tab);
@@ -207,7 +216,7 @@ export function mountMemory(host            ) {
   }
   function render() {
     if (panel.hidden) return;
-    const count = (t     ) => !view || t === 'journal' || t === 'map' ? '' : String(t === 'episode' ? view.episodes.length : view.items.filter(i => i.kind === t).length);
+    const count = (t     ) => !view || t === 'journal' || t === 'map' ? '' : String(t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length);
     const scroll = panel.querySelector('.memory-list')?.scrollTop || 0;
     const off = !view || busy ? 'disabled' : '';
     panel.classList.toggle('wide', tab === 'map');
@@ -216,7 +225,7 @@ export function mountMemory(host            ) {
       + `<div class="memory-tabs" role="tablist">${tabs.map(([key, label]) => `<button type="button" role="tab" aria-selected="${tab === key}" class="${tab === key ? 'active' : ''}" data-memory-tab="${key}">${label}${count(key) ? ` <small>${count(key)}</small>` : ''}</button>`).join('')}</div>`
       + `<div class="memory-list" role="tabpanel">${listHtml()}</div>`
       + (tab === 'fact' || tab === 'rule' ? `<form class="memory-add"><input name="text" maxlength="400" autocomplete="off" placeholder="${tab === 'fact' ? 'Добавить факт, например «работает по утрам»' : 'Добавить правило, например «задачи писать коротко»'}" aria-label="Новая запись" ${off}>${tab === 'fact' ? categorySelect(filter === 'all' ? 'other' : filter) : ''}<button class="button" type="submit" ${off}>Добавить</button></form>` : '')
-      + `<footer class="memory-foot"><button type="button" class="button" data-memory-sleep ${off || (view?.available && view.enabled ? '' : 'disabled')}>Уснуть сейчас</button><a class="button" href="#diary" data-memory-diary>Дневник</a><a class="button" href="/api/memory/export" download>Экспорт</a><button type="button" class="button quiet danger" data-memory-reset ${off}>Сбросить</button></footer>`;
+      + `<footer class="memory-foot"><button type="button" class="button" data-memory-sleep ${off || (view?.available && view.enabled ? '' : 'disabled')}>Уснуть сейчас</button><a class="button" href="/api/memory/export" download>Экспорт</a><button type="button" class="button quiet danger" data-memory-reset ${off}>Сбросить</button></footer>`;
     for (const meter of panel.querySelectorAll             ('[data-strength]')) meter.style.setProperty('--strength', String(Math.max(0.04, Number(meter.dataset.strength))));
     const list = panel.querySelector('.memory-list'); if (list) list.scrollTop = scroll;
     clearTimeout(poll);
@@ -226,7 +235,7 @@ export function mountMemory(host            ) {
     try { await request(''); } catch {}
     render();
   }
-  function open() { panel.hidden = false; render(); void refresh(); panel.querySelector             ('[data-memory-close]')?.focus(); sync(); }
+  function open(start      ) { if (start) { tab = start; editing = ''; } panel.hidden = false; render(); void refresh(); panel.querySelector             ('[data-memory-close]')?.focus(); sync(); }
   function close() { if (panel.hidden) return; panel.hidden = true; editing = ''; clearTimeout(poll); sync(); document.querySelector             ('[data-memory-toggle]')?.focus(); }
   const sync = () => document.querySelector('[data-memory-toggle]')?.setAttribute('aria-expanded', String(!panel.hidden));
   function select(id        ) { tab = 'map'; selected = id; editing = ''; render(); }
@@ -238,7 +247,6 @@ export function mountMemory(host            ) {
     if (!target) return;
     const d = target.dataset;
     if (target.hasAttribute('data-memory-close')) return close();
-    if (target.hasAttribute('data-memory-diary')) { close(); return; }
     if (d.memoryTab) { tab = d.memoryTab       ; editing = ''; render(); panel.querySelector('.memory-list') .scrollTop = 0; return; }
     if (d.memoryFilter) { filter = d.memoryFilter                    ; render(); return; }
     if (d.memorySelect) { select(d.memorySelect); return; }
@@ -253,7 +261,7 @@ export function mountMemory(host            ) {
     }
     if (d.memoryUnlink) { await act('/unlink', { method: 'POST', json: { from: selected, to: d.memoryUnlink } }, 'Связь убрана'); return; }
     if (d.memoryPin) { const item = view?.items.find(i => i.id === d.memoryPin); if (item) await act('/items/' + item.id, { method: 'PATCH', json: { pinned: !item.pinned } }, item.pinned ? 'Запись откреплена' : 'Закреплено: эта запись не будет забыта'); return; }
-    if (d.memoryDelete && await host.confirm('Удалить запись из памяти?')) { if (await act('/items/' + d.memoryDelete, { method: 'DELETE' }, 'Запись удалена') && selected === d.memoryDelete) { selected = ''; render(); } return; }
+    if (d.memoryDelete && await host.confirm(d.what === 'diary' ? 'Удалить запись дневника?' : 'Удалить запись из памяти?')) { if (await act('/items/' + d.memoryDelete, { method: 'DELETE' }, d.what === 'diary' ? 'Запись дневника удалена' : 'Запись удалена') && selected === d.memoryDelete) { selected = ''; render(); } return; }
     if (target.hasAttribute('data-memory-sleep')) { await act('/sleep', { method: 'POST' }, 'Сон завершён: память упорядочена'); return; }
     if (target.hasAttribute('data-memory-reset') && await host.confirm('Стереть всю память Миюнэи?')) { await act('', { method: 'DELETE' }, 'Память очищена'); return; }
   });
@@ -292,6 +300,7 @@ export function mountMemory(host            ) {
 
   return {
     toggle() { panel.hidden ? open() : close(); },
+    open,
     isOpen: () => !panel.hidden,
     refresh,
     view: () => view,
