@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { atomicWrite } from '../scripts/runtime.mjs';
 import { join } from 'node:path';
 import { validateWorkspace, emptyWorkspace } from '../src/model.ts';
 import type { Workspace } from '../src/model.ts';
 
-export async function createApp(root: string, instance: string, preview = false) {
+export async function createApp(root: string, instance: string, preview = false, options: { launchId?: string; onShutdown?: () => void } = {}) {
   const dataDir = join(root, 'data');
   const dataFile = join(dataDir, 'workspace.json');
   let state: { revision: number; data: Workspace } = { revision: 0, data: emptyWorkspace() };
@@ -18,10 +19,19 @@ export async function createApp(root: string, instance: string, preview = false)
   let queue = Promise.resolve();
   const files: Record<string, [string, string]> = {
     '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'],
-    '/main.js': ['main.js', 'text/javascript'], '/model.js': ['model.js', 'text/javascript'],
+    '/calendar.js': ['calendar.js', 'text/javascript'], '/main.js': ['main.js', 'text/javascript'], '/model.js': ['model.js', 'text/javascript'],
     '/style.css': ['style.css', 'text/css'], '/fox.svg': ['fox.svg', 'image/svg+xml'], '/favicon.svg': ['favicon.svg', 'image/svg+xml']
   };
-  return createServer(async (req, res) => {
+  let stopping = false;
+  const active = new Set<Promise<void>>();
+  const server = createServer((req, res) => {
+    const operation = handle(req, res);
+    active.add(operation);
+    operation.finally(() => active.delete(operation)).catch(() => {});
+  });
+  server.requestTimeout = 5000;
+  server.headersTimeout = 5000;
+  async function handle(req, res) {
     const send = (status: number, value: unknown) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); };
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'no-store');
@@ -32,7 +42,14 @@ export async function createApp(root: string, instance: string, preview = false)
     if (!preview && req.headers.origin && req.headers.origin !== origin) return send(403, { error: 'Недопустимый источник запроса' });
     try {
       const path = new URL(req.url || '/', origin).pathname;
-      if (req.method === 'GET' && path === '/__miyuneya/health') return send(200, { app: 'Miyuneya', instance });
+      if (req.method === 'GET' && path === '/__miyuneya/health') return send(stopping ? 503 : 200, { app: 'Miyuneya', instance, launchId: options.launchId, ready: !stopping });
+      if (path === '/__miyuneya/shutdown' && req.method === 'POST') {
+        if (!options.launchId || req.headers['x-miyuneya-session'] !== options.launchId) return send(403, { error: 'Недопустимый сеанс' });
+        send(200, { stopping: true });
+        setImmediate(() => options.onShutdown?.());
+        return;
+      }
+      if (stopping) return send(503, { error: 'Сервер завершает работу' });
       if (path === '/api/workspace') {
         if (req.method === 'GET') return send(200, state);
         if (req.method !== 'PUT') return send(405, { error: 'Метод не поддерживается' });
@@ -49,10 +66,7 @@ export async function createApp(root: string, instance: string, preview = false)
         const update = queue.then(async () => {
           if (input.revision !== state.revision) return send(409, { error: 'Данные изменены в другой вкладке. Экспортируйте свою копию и обновите страницу.' });
           const next = { revision: state.revision + 1, data: input.data };
-          await mkdir(dataDir, { recursive: true });
-          const temp = join(dataDir, `workspace-${process.pid}.tmp`);
-          await writeFile(temp, JSON.stringify(next, null, 2), { mode: 0o600 });
-          await rename(temp, dataFile);
+          await atomicWrite(dataFile, JSON.stringify(next, null, 2));
           state = next;
           send(200, state);
         });
@@ -67,9 +81,21 @@ export async function createApp(root: string, instance: string, preview = false)
       res.writeHead(200, { 'Content-Type': asset[1] + '; charset=utf-8' });
       res.end(req.method === 'HEAD' ? undefined : content);
     } catch (e) {
-      console.error('Ошибка запроса:', (e as Error).message);
+      console.error('Ошибка запроса:', (e as NodeJS.ErrnoException).code || 'REQUEST_FAILED');
       if (!res.headersSent) send(500, { error: 'Ошибка чтения или записи. Проверьте доступ к папке проекта.' });
       else res.end();
+    }
+  }
+  let shutdownPromise: Promise<void> | undefined;
+  return Object.assign(server, {
+    shutdown() {
+      if (!shutdownPromise) shutdownPromise = (async () => {
+        stopping = true;
+        if (server.listening) await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()));
+        await Promise.all([...active]);
+        await queue;
+      })();
+      return shutdownPromise;
     }
   });
 }
