@@ -85,7 +85,8 @@ export function calculate(expr: string): number | null {
     return at === tokens.length && Number.isFinite(value) ? value : null;
   } catch { return null; }
 }
-export const formatNumber = (n: number) => Math.abs(n) >= 1e15 ? n.toExponential(6) : n.toLocaleString('ru-RU', { maximumFractionDigits: 6 }).replace(/ /g, ' ');
+// Very small results keep six significant digits, so a nonzero answer never shows as 0.
+export const formatNumber = (n: number) => Math.abs(n) >= 1e15 || (n !== 0 && Math.abs(n) < 1e-6) ? n.toExponential(5).replace(/\.?0+e/, 'e').replace('.', ',') : n !== 0 && Math.abs(n) < 0.01 ? String(Number(n.toPrecision(6))).replace('.', ',') : n.toLocaleString('ru-RU', { maximumFractionDigits: 6 }).replace(/ /g, ' ');
 
 // Dates are counted in the user's local calendar: midnight to midnight, so a summer-time switch does not shift a day.
 const MONTHS = ['январ', 'феврал', 'март', 'апрел', 'ма', 'июн', 'июл', 'август', 'сентябр', 'октябр', 'ноябр', 'декабр'];
@@ -113,7 +114,8 @@ export function parseDate(text: string, now = Date.now()): Date | null {
   if (m) return future(MONTHS.findIndex(x => m![2].startsWith(x) && (x !== 'ма' || m![2] === 'мая')), +m[1], m[3] ? +m[3] : undefined);
   return null;
 }
-const DATE = String.raw`(?:\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{1,2}(?:\.\d{2,4})?|\d{1,2}\s+${MONTH_WORD}(?:\s+\d{4})?|сегодня|послезавтра|завтра)`;
+// A dotted number followed by a unit («1.5 недели», «2.5 часа») is a quantity, not a date.
+const DATE = String.raw`(?:\d{4}-\d{2}-\d{2}|(?<![\d.,])\d{1,2}\.\d{1,2}(?:\.\d{2,4})?(?![\d.,]|\s*(?:%|недел|дн|день|час|мин|сек|мес|год|лет|раз|км|кг|литр|руб|тыс|млн|₽|\$|€))|\d{1,2}\s+${MONTH_WORD}(?:\s+\d{4})?|сегодня|послезавтра|завтра)`;
 export const isoDate = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 export const dateName = (d: Date) => `${d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).replace(/\s*г\.$/, '')} (${WEEKDAYS[d.getDay()]})`;
 export const daysBetween = (a: Date, b: Date) => Math.round((midnight(b).getTime() - midnight(a).getTime()) / DAY);

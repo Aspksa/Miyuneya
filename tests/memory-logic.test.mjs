@@ -33,6 +33,11 @@ test('Code counts sums, percents and dates exactly', () => {
   assert.deepEqual(exactCalcs('Встреча 2026-11-03 в 10:30, телефон +7 914 123-45-67, отпуск 10-15 ноября',now),[]);
   assert.equal(runCalc({op:'add',date:'2026-10-29',days:100},now),'29 октября 2026 (четверг) + 100 дней = 6 февраля 2027 (суббота)');
   assert.equal(runCalc({op:'math',expr:'process.exit()'},now),null);
+  // A dotted number with a unit is a quantity, and tiny results never round to zero.
+  assert.deepEqual(exactCalcs('Сколько дней в 1.5 недели?',now),[]);
+  assert.match(exactCalcs('Сколько дней до 31.12?',now)[0],/: 63 дня/);
+  assert.equal(runCalc({op:'math',expr:'1/10000000'},now),'1/10000000 = 1e-7');
+  assert.deepEqual(exactCalcs('Посчитай 0.0001 * 0.0001',now),['0.0001 * 0.0001 = 1e-8']);
   assert.equal(parseDate('31.02',now),null);assert.equal(parseDate('1 мая',now).getFullYear(),2027);
 });
 
@@ -104,6 +109,10 @@ test('Thinking trains logic; reflection and sleep feed it', () => {
   const input=thinkInput(memory,null,now);
   assert.match(input,new RegExp(`\\[${old.id}\\] Он перенесёт созвон на вечер \\(pattern, 60%, сделан 29 октября, срок прошёл — проверь\\)`));
   assert.match(input,/Точность твоих рассуждений по типам: прогнозов ещё не проверяли/);
+  // An overdue prediction stays on the list however many newer ones there are.
+  for (let i=0;i<20;i++) predict(memory,{text:`Новый прогноз номер ${i} про отдельную тему ${'абвгдежзиклмнопрстуф'[i]}`,due:'2026-11-10'},new Date(now+i*1000).toISOString());
+  assert.match(thinkInput(memory,null,now),new RegExp(`\\[${old.id}\\]`));
+  memory.predictions=memory.predictions.filter(p=>p===old);
   applyThinking(memory,{thoughts:[],checks:[{id:old.id,outcome:'right',note:'перенёс'}],predictions:[{text:'Вечером он спросит про задачи',kind:'habit',confidence:65,due:'2026-11-02'},{text:'',kind:'cause'}],
     causes:[{cause:'Работает по вечерам',effect:'Утром отвечает позже',confidence:60,evidence:[fact.id,'чужой']}]},now);
   assert.equal(memory.predictions.find(p=>p.id===old.id).outcome,'right');
@@ -115,11 +124,17 @@ test('Thinking trains logic; reflection and sleep feed it', () => {
   assert.match(reflectInput(memory,dialog,null),new RegExp(`Твои непроверенные прогнозы:\\n\\[${open.id}\\]`));
   assert.match(reflectInput(memory,dialog,null),/Цели пользователя:\n\[\w+\] Выучить японский: \[\w+\] Хирагана/);
   applyReflection(memory,{episode:{topic:'Бюджет'},logic_errors:[{kind:'calc',text:'Неверно сложила расходы',fix:'Суммы проверять кодом'}],checks:[{id:open.id,outcome:'wrong',note:'не спросил'}],
-    causes:[{cause:'Большие траты',effect:'Тревога',confidence:55}],goals:[{title:'Накопить на отпуск',steps:[{id:'s1',text:'Завести копилку'}]}],steps_done:[{goal:goal.id,step:goal.steps[0].id}]},dialog,new Set(),at);
+    causes:[{cause:'Большие траты',effect:'Тревога',confidence:55}],goals:[{title:'Накопить на отпуск',steps:[{id:'s1',text:'Завести копилку'},{id:'s2',text:'Посчитать бюджет'}]}],steps_done:[{goal:goal.id,step:goal.steps[0].id}]},dialog,new Set(),at);
   assert.deepEqual(memory.mistakes.map(m=>m.kind).sort(),['calc','prediction']);
   assert.ok(memory.items.some(i=>i.kind==='rule'&&i.source==='logic'&&i.text==='Суммы проверять кодом'));
   assert.equal(memory.causes.at(-1).evidence[0],memory.episodes[0].id);
   assert.ok(goal.done);assert.equal(memory.goals.length,2);
+  // Talking about a known goal again does not wipe its progress; an explicit replanning keeps what is done.
+  const trip=memory.goals.find(g=>g.title==='Накопить на отпуск');stepDone(memory,trip,trip.steps[0].id,true,at);
+  applyReflection(memory,{goals:[{title:'Накопить на отпуск',steps:[{id:'s1',text:'Совсем другой план'}]}]},dialog,new Set(),at);
+  assert.deepEqual(trip.steps.map(s=>[s.text,!!s.done]),[['Завести копилку',true],['Посчитать бюджет',false]]);
+  addGoal(memory,'Накопить на отпуск',[{id:'a',text:'Завести копилку'},{id:'b',text:'Откладывать 10%'}],at);
+  assert.deepEqual(trip.steps.map(s=>[s.text,!!s.done]),[['Завести копилку',true],['Откладывать 10%',false]]);
   applySleep(memory,{causes:[{cause:'Большие траты',effect:'Тревога',confidence:70,evidence:[memory.episodes[0].id]},{cause:'Без доказательств',effect:'Не сохраняется',evidence:['нет']}]},now);
   assert.deepEqual([memory.causes.length,memory.causes.at(-1).hits],[2,2]);
 });

@@ -343,10 +343,12 @@ export function addCause(memory: Memory, cause: unknown, effect: unknown, confid
   return entry;
 }
 // A goal becomes a tree of steps; the model's own ids (s1, s2…) turn into stored ones, and a step waits only for steps above it.
-export function addGoal(memory: Memory, title: unknown, steps: unknown, now = new Date().toISOString()) {
+// replan: an explicit request to plan again; otherwise (reflection) a known goal and its progress stay as they are.
+export function addGoal(memory: Memory, title: unknown, steps: unknown, now = new Date().toISOString(), replan = true) {
   const value = clip(title, 200);
   if (!value) return null;
   const open = memory.goals.find(g => !g.done && similarity(g.title, value) >= 0.6);
+  if (open && !replan) return null;
   const map = new Map<string, string>();
   const tree: Step[] = [];
   for (const x of list(steps).slice(0, LIMITS.steps)) {
@@ -358,7 +360,10 @@ export function addGoal(memory: Memory, title: unknown, steps: unknown, now = ne
     tree.push({ id, text, parent: parent !== id ? parent : null, after: (Array.isArray(x.after) ? x.after : []).map((a: unknown) => typeof a === 'string' ? map.get(a) : undefined).filter((a: string | undefined): a is string => !!a && a !== id).slice(0, 10), done: null });
   }
   if (!tree.length) return null;
-  if (open) { open.steps = tree; journal(memory, 'goal', `Заново разложила цель: ${open.title}`, now); return open; }
+  if (open) {
+    // Steps already done stay done in the new plan when they say the same thing.
+    for (const step of tree) if (open.steps.some(old => old.done && similarity(old.text, step.text) >= 0.6)) step.done = now;
+    open.steps = tree; journal(memory, 'goal', `Заново разложила цель: ${open.title}`, now); return open; }
   const goal: Goal = { id: newId(), title: value, created: now, done: null, steps: tree };
   memory.goals = [...memory.goals, goal].slice(-LIMITS.goals);
   journal(memory, 'goal', `Разложила цель на ${tree.length} шагов: ${value}`, now);
@@ -416,6 +421,8 @@ const kindNames: Record<Reasoning, string> = { pattern: 'закономерно�
 export function accuracy(memory: Memory) {
   return REASONINGS.map(kind => { const done = memory.predictions.filter(p => p.kind === kind && p.outcome); return { kind, checked: done.length, right: done.filter(p => p.outcome === 'right').length }; });
 }
+// Predictions to check: overdue ones first, so newer ones never push them out of the list.
+const toCheck = (memory: Memory, now = Date.now()) => memory.predictions.filter(p => !p.outcome).map(p => ({ p, due: !!p.due && p.due <= today(now) })).sort((a, b) => Number(b.due) - Number(a.due) || b.p.created.localeCompare(a.p.created)).slice(0, 15).map(x => x.p);
 const accuracyLine = (memory: Memory) => accuracy(memory).filter(a => a.checked).map(a => `${kindNames[a.kind]} (${a.kind}): ${a.right} из ${a.checked}, ${Math.round(a.right / a.checked * 100)}%`).join('; ') || 'прогнозов ещё не проверяли';
 const causeLine = (c: Cause) => `[${c.id}] ${c.cause} → ${c.effect} (уверенность ${c.confidence}%${c.hits > 1 ? `, видела ${c.hits} раза` : ''})`;
 const goalLine = (g: Goal) => `[${g.id}] ${g.title}: ${g.steps.map(s => `[${s.id}] ${s.done ? '(готово) ' : ''}${s.text}`).join('; ')}`;
@@ -568,7 +575,7 @@ export function reflectInput(memory: Memory, dialog: Dialog, workspace: Workspac
     `Открытые вопросы к пользователю:\n${memory.questions.map(q => `[${q.id}] ${q.text}`).join('\n') || '— нет'}`,
     `Твои открытые обещания:\n${openPromises(memory).map(p => `[${p.id}] ${p.text}`).join('\n') || '— нет'}`,
     `Поставленные напоминания:\n${memory.reminders.filter(x => !x.fired).map(x => `когда речь о «${x.about}»: ${x.text}`).join('\n') || '— нет'}`,
-    `Твои непроверенные прогнозы:\n${memory.predictions.filter(p => !p.outcome).slice(-15).map(p => `[${p.id}] ${p.text}`).join('\n') || '— нет'}`,
+    `Твои непроверенные прогнозы:\n${toCheck(memory).map(p => `[${p.id}] ${p.text}`).join('\n') || '— нет'}`,
     `Цели пользователя:\n${memory.goals.filter(g => !g.done).map(goalLine).join('\n') || '— нет'}`,
     `Сигналы поведения пользователя:\n${dialog.signals.map(s => '- ' + s).join('\n') || '— нет'}`,
     `Разговор ${day(dialog.updatedAt)}:\n${dialog.summary ? 'Начало (кратко): ' + dialog.summary + '\n' : ''}${transcript(dialog.messages)}`].join('\n\n');
@@ -651,7 +658,7 @@ export function applyReflection(memory: Memory, result: any, dialog: Dialog, kno
   for (const entry of list(result.causes).slice(0, 5)) if (addCause(memory, entry.cause, entry.effect, entry.confidence, origin ? [origin] : [], now)) changes++;
   for (const entry of list(result.logic_errors).slice(0, 3)) if (mistake(memory, entry, origin, now)) changes++;
   for (const entry of list(result.checks)) if (check(memory, entry.id, entry.outcome, entry.note, entry.fix, now)) changes++;
-  for (const entry of list(result.goals).slice(0, 2)) if (addGoal(memory, entry.title, entry.steps, now)) changes++;
+  for (const entry of list(result.goals).slice(0, 2)) if (addGoal(memory, entry.title, entry.steps, now, false)) changes++;
   for (const entry of list(result.steps_done)) { const goal = memory.goals.find(g => g.id === entry.goal); if (goal && typeof entry.step === 'string' && stepDone(memory, goal, entry.step, true, now)) changes++; }
   for (const entry of list(result.answers)) if (typeof entry.question === 'string' && answer(memory, entry.question, entry.text, now, 'dialog', episode?.id ?? null)) changes++;
   for (const text of Array.isArray(result.questions) ? result.questions.slice(0, 2) : []) if (ask(memory, 'gap', text, {}, now)) changes++;
@@ -732,7 +739,7 @@ export function thinkInput(memory: Memory, workspace: Workspace | null = null, n
     `Открытые вопросы к пользователю:\n${memory.questions.map(q => q.text).join('\n') || '— нет'}`,
     `Твои открытые обещания:\n${openPromises(memory).map(p => p.text).join('\n') || '— нет'}`,
     `Заметки:\n${notes.join('\n') || '— нет доступа или пусто'}`, `Открытые задачи:\n${tasks.join('\n') || '— нет'}`,
-    `Твои прогнозы на проверку:\n${memory.predictions.filter(p => !p.outcome).slice(-15).map(p => `[${p.id}] ${p.text} (${p.kind}, ${p.confidence}%, сделан ${day(p.created)}${p.due ? (p.due <= today(now) ? ', срок прошёл — проверь' : ', проверить ' + day(p.due)) : ''})`).join('\n') || '— нет'}`,
+    `Твои прогнозы на проверку:\n${toCheck(memory, now).map(p => `[${p.id}] ${p.text} (${p.kind}, ${p.confidence}%, сделан ${day(p.created)}${p.due ? (p.due <= today(now) ? ', срок прошёл — проверь' : ', проверить ' + day(p.due)) : ''})`).join('\n') || '— нет'}`,
     `Точность твоих рассуждений по типам: ${accuracyLine(memory)}.`,
     `Журнал логических ошибок (последние):\n${memory.mistakes.slice(-8).map(m => `- ${m.text}${m.fix ? ' → ' + m.fix : ''}`).join('\n') || '— нет'}`,
     `Известные причины и следствия:\n${memory.causes.slice(-20).map(causeLine).join('\n') || '— нет'}`,
