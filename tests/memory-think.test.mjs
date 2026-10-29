@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { removeTemp } from './helpers/lifecycle.mjs';
 import { createApp } from '../server/app.ts';
 import { emptyWorkspace } from '../src/model.ts';
-import { emptyMemory, upsert, applyThinking, thinkInput, normalizeMemory, INTENSITY } from '../server/memory.ts';
+import { emptyMemory, upsert, applyThinking, thinkInput, normalizeMemory, openMemory, INTENSITY } from '../server/memory.ts';
 import { memoryContext } from '../server/recall.ts';
 
 const now=Date.parse('2026-10-29T15:00:00.000Z');const at=new Date(now).toISOString();
@@ -37,6 +37,7 @@ test('Thinking keeps new thoughts, questions, contradictions and skills', () => 
   assert.equal(applyThinking(memory,null,now).length,0);assert.equal(memory.thinks.length,3,'a failed or empty cycle still counts');
   const restored=normalizeMemory(JSON.parse(JSON.stringify(memory)));
   assert.deepEqual([restored.thoughts.length,restored.thinks.length,restored.settings.thinking,restored.settings.intensity],[2,3,true,'normal']);
+  assert.equal(restored.items.find(i=>i.kind==='rule').source,'thought','a skill keeps its origin after a restart');
   assert.equal(normalizeMemory({version:1,settings:{thinking:false,intensity:'turbo'}}).settings.intensity,'normal');
   assert.deepEqual(Object.values(INTENSITY).map(i=>i.perDay),[2,4,8]);
   // Unseen thoughts reach the next answer so she can share one.
@@ -89,4 +90,28 @@ test('Memory over HTTP thinks while the user is away, within the daily limit', a
   view=await memoryView();assert.ok(view.thoughts.every(t=>t.seen));
   view=await (await call('/api/memory/items/'+view.thoughts[0].id,'DELETE')).json();assert.equal(view.thoughts.length,1);
   view=await (await call('/api/memory/thoughts/seen','POST')).json();assert.equal(view.thoughts.length,1);
+});
+
+test('Thinking waits after a start, keeps the limit for queued requests and respects the settings', async t => {
+  const root=await mkdtemp(join(tmpdir(),'Miyuneya очередь '));
+  t.after(()=>removeTemp(root));
+  const memory=emptyMemory();memory.settings.intensity='low';
+  for(const text of ['Любит чай','Работает дизайнером','Живёт во Владивостоке']) upsert(memory,'fact',text);
+  await writeFile(join(root,'memory.json'),JSON.stringify(memory));
+  let calls=0;
+  const store=await openMemory(root,{available:()=>true,workspace:()=>null,tickMs:3_600_000,thinkIdleMs:60_000,
+    ask:async()=>{calls++;await new Promise(r=>setTimeout(r,20));return JSON.stringify({thoughts:[{kind:'idea',text:`Мысль ${calls}: ${['план недели','отпуск','книги'][calls-1]}`}]});}});
+  t.after(()=>store.shutdown());
+  // Opening the app means the user is here, so the first tick does not start thinking.
+  await store.tick();assert.equal(calls,0);
+  await store.tick(Date.now()+61_000);assert.equal(calls,1);
+  // Two requests queued together get one remaining slot between them.
+  const results=await Promise.allSettled([store.thinkNow(),store.thinkNow()]);
+  assert.deepEqual(results.map(r=>r.status),['fulfilled','rejected']);
+  assert.equal(results[1].reason.status,429);assert.equal(calls,2);
+  await store.settings({intensity:'high',private:true});
+  await assert.rejects(store.thinkNow(),e=>e.status===409);
+  await store.settings({private:false,thinking:false});
+  await assert.rejects(store.thinkNow(),e=>e.status===409);
+  assert.equal(calls,2);
 });
