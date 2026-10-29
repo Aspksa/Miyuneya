@@ -14,7 +14,11 @@
                                         
                                                       
                                                
+                                                   
+                        
   
+// Short-term memory: the oldest turns of a long dialog fold into a summary that travels with every request.
+                                               
                                                                                
                                                                                                       
                                                                             
@@ -28,6 +32,10 @@ const MIN_W = 340;
 const MIN_H = 380;
 const HISTORY_LIMIT = 60;
 const UPLOAD_LIMIT = 15_000_000;
+const KEEP_RECENT = 12;
+const COMPACT_AFTER = 24;
+export const newDialogId = () => Array.from(crypto.getRandomValues(new Uint32Array(3)), n => n.toString(16).padStart(8, '0')).join('');
+const validDialog = (value         )                  => typeof value === 'string' && /^[a-z0-9-]{8,64}$/.test(value);
 export const avatarUrl = (n        ) => `/avatars/avatar${n}.png`;
 export function avatarSrc(look               , status                 ) {
   if (look.avatar === 5 && status.customAvatar) return `/api/assistant/avatar?v=${status.customAvatar}`;
@@ -101,6 +109,12 @@ export function mountAssistant(host               ) {
   let position = stored                 ('avatar-position', null);
   let frame = stored             ('chat-frame', null);
   let streaming                                                                                   = null;
+  let dialog = stored        ('chat-dialog', '');
+  if (!validDialog(dialog)) { dialog = newDialogId(); remember('chat-dialog', dialog); }
+  let summary = stored         ('chat-summary', { text: '', count: 0 });
+  if (typeof summary?.text !== 'string' || !Number.isSafeInteger(summary.count) || summary.count < 0) summary = { text: '', count: 0 };
+  summary.count = Math.min(summary.count, history.length);
+  let compacting = false;
   let error = '';
   let shownSrc = '';
 
@@ -145,7 +159,31 @@ export function mountAssistant(host               ) {
     return rect;
   }
 
-  const saveHistory = () => { history = history.slice(-HISTORY_LIMIT); remember('chat', history.map(({ role, content, actions, stopped }) => ({ role, content, actions, stopped }))); };
+  const saveHistory = () => {
+    const extra = history.length - HISTORY_LIMIT;
+    if (extra > 0) { history = history.slice(extra); summary = { ...summary, count: Math.max(0, summary.count - extra) }; remember('chat-summary', summary); }
+    remember('chat', history.map(({ role, content, actions, stopped }) => ({ role, content, actions, stopped })));
+  };
+  const plain = (list           ) => list.map(({ role, content }) => ({ role, content: role === 'assistant' ? visibleText(content) || content : content })).filter(m => m.content.trim());
+  // Folds everything but the latest turns into the running summary once the dialog grows long.
+  async function compact() {
+    if (compacting || !host.memory().enabled || history.length - summary.count <= COMPACT_AFTER) return;
+    compacting = true;
+    const id = dialog; const boundary = history[history.length - KEEP_RECENT - 1];
+    try {
+      const response = await fetch('/api/assistant/compact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ summary: summary.text, messages: plain(history.slice(summary.count, history.indexOf(boundary) + 1)) }) });
+      const result = await response.json().catch(() => ({}));
+      const at = history.indexOf(boundary);
+      if (response.ok && typeof result.summary === 'string' && id === dialog && at >= 0) { summary = { text: result.summary, count: at + 1 }; remember('chat-summary', summary); }
+    } catch {} finally { compacting = false; }
+  }
+  // A cleared chat is a finished dialog: the server turns it into an episode and new facts.
+  function endDialog() {
+    if (history.some(m => m.role === 'user') && host.memory().enabled && !host.memory().private)
+      void fetch('/api/memory/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dialog }) }).then(() => host.memoryChanged(), () => {});
+    dialog = newDialogId(); remember('chat-dialog', dialog);
+    summary = { text: '', count: 0 }; forget('chat-summary');
+  }
   function actionChip(action        ) {
     const chip = element('div', 'chat-action' + (action.undone ? ' undone' : ''));
     chip.append(element('span', '', `${action.undone ? 'Отменено' : '✓'} ${action.kind === 'task' ? 'Задача' : 'Заметка'}: ${action.title}`));
@@ -174,7 +212,8 @@ export function mountAssistant(host               ) {
   }
   function renderChat() {
     const status = host.status();
-    chat.querySelector('.chat-title small') .textContent = status.configured ? 'cloud.ru · ' + status.model : 'cloud.ru не подключён';
+    const mode = host.memory();
+    chat.querySelector('.chat-title small') .textContent = status.configured ? 'cloud.ru · ' + status.model + (!mode.enabled ? ' · без памяти' : mode.private ? ' · приватно' : '') : 'cloud.ru не подключён';
     log.replaceChildren();
     if (!status.configured) {
       const note = element('div', 'chat-note');
@@ -227,12 +266,12 @@ export function mountAssistant(host               ) {
     if (!text || streaming) return;
     if (!host.status().configured) { error = ''; renderChat(); host.toast('Сначала подключите cloud.ru в настройках'); return; }
     history.push({ role: 'user', content: text }); input.value = ''; error = '';
-    const outgoing = history.slice(-40).map(({ role, content }) => ({ role, content }));
+    const outgoing = history.slice(summary.count).slice(-40).map(({ role, content }) => ({ role, content })).filter(m => m.content);
     const message          = { role: 'assistant', content: '' };
     const current = streaming = { message, abort: new AbortController() };
     history.push(message); saveHistory(); avatar.classList.add('talking'); renderChat();
     try {
-      const response = await fetch('/api/assistant/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: outgoing }), signal: current.abort.signal });
+      const response = await fetch('/api/assistant/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: outgoing, dialog, summary: summary.text || undefined }), signal: current.abort.signal });
       if (!response.ok || !response.body) throw new Error((await response.json().catch(() => ({}))).error || 'Не удалось получить ответ.');
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
       let buffer = '', finished = false;
@@ -246,11 +285,13 @@ export function mountAssistant(host               ) {
           const event = JSON.parse(line);
           if (event.error) throw new Error(event.error);
           if (typeof event.delta === 'string') { message.content += event.delta; showDelta(); }
+          if (typeof event.memory === 'string') { host.toast(event.memory); host.memoryChanged(); }
           if (event.done) finished = true;
         }
       }
       if (!finished) throw new Error('Ответ оборвался. Попробуйте ещё раз.');
       applyActions(message);
+      void compact();
     } catch (e) {
       if (current.abort.signal.aborted) message.stopped = true;
       else error = e instanceof TypeError ? 'Локальный сервер недоступен. Проверьте окно Miyuneya.bat.' : (e         ).message;
@@ -266,7 +307,7 @@ export function mountAssistant(host               ) {
     const target = (event.target               ).closest             ('button,a');
     if (!target) return;
     if (target.hasAttribute('data-chat-close')) closeChat();
-    if (target.hasAttribute('data-chat-clear')) { streaming?.abort.abort(); history = []; error = ''; forget('chat'); renderChat(); input.focus(); }
+    if (target.hasAttribute('data-chat-clear')) { streaming?.abort.abort(); endDialog(); history = []; error = ''; forget('chat'); renderChat(); input.focus(); }
   });
   chat.addEventListener('keydown', event => { if (event.key === 'Escape') { event.stopPropagation(); closeChat(); } });
 

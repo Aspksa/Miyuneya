@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { atomicWrite, readJSON } from './runtime.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const assets=['index.html','style.css','fox.svg','favicon.svg',...[1,2,3,4].map(n=>`avatars/avatar${n}.png`)];
-const modules=['main','model','calendar','assistant','appearance'];
+const modules=['main','model','calendar','assistant','appearance','memory'];
 export async function ensureBuild(root, check = false) {
   const pkg = await readJSON(join(root,'package.json'));
   if (Object.keys(pkg.dependencies || {}).length || Object.keys(pkg.devDependencies || {}).length || pkg.workspaces) throw new Error('Изменился набор зависимостей. Эта версия запуска поддерживает проект без внешних пакетов; установка не выполнена.');
