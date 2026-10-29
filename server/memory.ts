@@ -145,7 +145,7 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
       // A step may only wait for or belong to the steps above it, so the tree never loops.
       steps.push({ id: x.id, text, parent: steps.some(y => y.id === x.parent) ? x.parent : null, after: ids(x.after, 10).filter(id => steps.some(y => y.id === id)), done: stamp(x.done) });
     }
-    memory.goals.push({ id: g.id, title, created: iso(g.created, now), done: stamp(g.done), steps });
+    memory.goals.push({ id: g.id, title, created: iso(g.created, now), done: stamp(g.done), steps: untangle(steps) });
   }
   for (const x of array(raw.predictions)) {
     const text = clip(x?.text, 300);
@@ -343,6 +343,22 @@ export function addCause(memory: Memory, cause: unknown, effect: unknown, confid
   return entry;
 }
 // A goal becomes a tree of steps; the model's own ids (s1, s2…) turn into stored ones, and a step waits only for steps above it.
+// A parent waits for its smaller steps and a step waits for its «after»; a dependency that would close a loop
+// (a child after its own parent, or after something that waits for that parent) is dropped, so a next step always exists.
+function untangle(steps: Step[]) {
+  const waits = (s: Step) => [...s.after, ...steps.filter(c => c.parent === s.id).map(c => c.id)];
+  const reaches = (from: string, to: string, seen = new Set<string>()): boolean => {
+    if (from === to) return true;
+    if (seen.has(from)) return false;
+    seen.add(from);
+    const step = steps.find(x => x.id === from);
+    return !!step && waits(step).some(id => reaches(id, to, seen));
+  };
+  // Dependencies are added back one by one in listing order, each only if it closes no loop.
+  const wanted = steps.map(s => { const after = s.after; s.after = []; return after; });
+  steps.forEach((step, i) => { for (const id of wanted[i]) if (!reaches(id, step.id)) step.after.push(id); });
+  return steps;
+}
 // replan: an explicit request to plan again; otherwise (reflection) a known goal and its progress stay as they are.
 export function addGoal(memory: Memory, title: unknown, steps: unknown, now = new Date().toISOString(), replan = true) {
   const value = clip(title, 200);
@@ -360,6 +376,7 @@ export function addGoal(memory: Memory, title: unknown, steps: unknown, now = ne
     tree.push({ id, text, parent: parent !== id ? parent : null, after: (Array.isArray(x.after) ? x.after : []).map((a: unknown) => typeof a === 'string' ? map.get(a) : undefined).filter((a: string | undefined): a is string => !!a && a !== id).slice(0, 10), done: null });
   }
   if (!tree.length) return null;
+  untangle(tree);
   if (open) {
     // Steps already done stay done in the new plan when they say the same thing.
     for (const step of tree) if (open.steps.some(old => old.done && similarity(old.text, step.text) >= 0.6)) step.done = now;

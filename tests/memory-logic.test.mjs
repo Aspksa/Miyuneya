@@ -75,6 +75,11 @@ test('Causes, goals, predictions and the errors journal live in memory', () => {
   assert.match(goalTree(goal),/^- \[готово\] Найти квартиру\n  - \[готово\] Посмотреть объявления\n- Собрать вещи \(после: Найти квартиру\)/);
   for (const s of goal.steps) stepDone(memory,goal,s.id,true,at);
   assert.ok(goal.done);stepDone(memory,goal,move.id,false,at);assert.equal(goal.done,null);
+  // A child after its own parent, or after a step that waits for that parent, would deadlock: such a dependency is dropped.
+  const knot=addGoal(memory,'Узел',[{id:'p',text:'Большой шаг'},{id:'q',text:'После большого',after:['p']},{id:'c',text:'Часть большого',parent:'p',after:['p']},{id:'d',text:'Ещё часть',parent:'p',after:['q']}],at);
+  assert.deepEqual(knot.steps.map(s=>s.after.length),[0,1,0,0]);
+  assert.deepEqual(nextSteps(knot).map(s=>s.text),['Часть большого','Ещё часть']);
+  memory.goals=memory.goals.filter(g=>g!==knot);
   assert.equal(addGoal(memory,'Переезд',[{text:'Заново'}],at),goal,'the same open goal is planned again, not twice');
   // A prediction that fails becomes an error with a rule.
   const p=predict(memory,{text:'В пятницу он попросит план выходных',kind:'habit',confidence:70,due:'2026-10-30'},at);
