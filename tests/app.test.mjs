@@ -181,3 +181,18 @@ test('Chat helpers hide action tags and build the model context', async () => {
   assert.match(context,/Позвонить маме/);assert.match(context,/### Длинная/);assert.ok(context.length<2000);
   assert.match(workspaceContext(data,new Date(),200),/не все записи/);
 });
+
+test('Appearance offers 30 distinct accents and readable button text', async () => {
+  const { accents, normalizeAppearance, accentPalette, luminance, defaultAppearance } = await import('../src/appearance.ts');
+  assert.equal(accents.length,30);
+  assert.equal(new Set(accents.map(a=>a[0])).size,30);assert.equal(new Set(accents.map(a=>a[1])).size,30);
+  for(const name of ['Золото','Сакура','Нефрит','Фиалка'])assert.ok(accents.some(a=>a[0]===name));
+  assert.deepEqual(normalizeAppearance({accent:'#ABCDEF',radius:'round',scale:'huge'}),{accent:'#abcdef',radius:'round',scale:'normal'});
+  assert.deepEqual(normalizeAppearance('broken'),defaultAppearance());
+  const contrast=(a,b)=>{const [x,y]=[luminance(a),luminance(b)].sort((p,q)=>q-p);return (x+.05)/(y+.05);};
+  for(const [,hex] of accents) for(const dark of [false,true]) {
+    const p=accentPalette(hex,dark);
+    assert.ok(contrast(p.accent,p.on)>=4.5,`${hex} ${dark}`);
+  }
+  assert.equal(accentPalette('#986f24',false).on,'#ffffff');assert.equal(accentPalette('#986f24',true).on,'#221e14');
+});

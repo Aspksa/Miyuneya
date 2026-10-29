@@ -73,7 +73,7 @@ export async function createApp(root: string, instance: string, preview = false,
   const files: Record<string, [string, string]> = {
     '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'],
     '/calendar.js': ['calendar.js', 'text/javascript'], '/main.js': ['main.js', 'text/javascript'], '/model.js': ['model.js', 'text/javascript'],
-    '/assistant.js': ['assistant.js', 'text/javascript'],
+    '/assistant.js': ['assistant.js', 'text/javascript'], '/appearance.js': ['appearance.js', 'text/javascript'],
     '/style.css': ['style.css', 'text/css'], '/fox.svg': ['fox.svg', 'image/svg+xml'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
     ...Object.fromEntries([1, 2, 3, 4].map(n => [`/avatars/avatar${n}.png`, [`avatars/avatar${n}.png`, 'image/png']]))
   };
