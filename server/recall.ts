@@ -4,7 +4,7 @@ import type { Memory, MemoryItem, Episode, Entity, RelationType, Topic, Category
 // cloud.ru), by shared words, by strength and freshness; then the knowledge graph adds what the chosen records lead to.
 export type Titles = Map<string, { kind: 'note' | 'task'; title: string }>;
 // latest is the user's newest message: time words are read from it alone, while topics come from the recent turns.
-export type Recall = { query?: number[]; vector?: (text: string) => number[] | undefined; question?: string; latest?: string };
+export type Recall = { query?: number[]; vector?: (text: string) => number[] | undefined; question?: string; latest?: string; thoughts?: string[] };
 
 export const FORGET_BELOW = 0.12;
 const DAY = 86_400_000;
@@ -195,6 +195,7 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   if (chain.length) { add('\nСвязи по теме (учитывай всю историю вопроса):'); for (const line of chain) add('- ' + line); }
   const promises = memory.promises.filter(p => !p.done).slice(-8);
   if (promises.length) { add('\nТвои открытые обещания пользователю (выполни, когда будет к месту, и не обещай то же снова):'); for (const p of promises) add(`- ${p.text} (обещала ${day(p.created)}${p.due ? (p.due < today(now) ? '; срок прошёл ' : '; срок до ') + day(p.due) : ''})`); }
+  if (recall.thoughts?.length) { add('\nПока пользователя не было, ты размышляла. Если к месту, можешь коротко поделиться одной мыслью («пока вас не было, я думала о…»), но не навязывай:'); for (const t of recall.thoughts) add('- ' + t); }
   if (recall.question) add(`\nПробел в твоей памяти. Если это к месту и не мешает ответу, в конце мягко спроси пользователя: «${recall.question}». Не спрашивай, если разговор о другом срочном деле.`);
   return lines.length ? 'Твоя долговременная память.\n' + lines.join('\n') : '';
 }

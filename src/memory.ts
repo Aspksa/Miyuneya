@@ -1,10 +1,12 @@
 // The memory menu behind the brain icon: how she grows, what Miyuneya knows, the rules she follows, past dialogs, the knowledge map, her diary and journal.
 // Everything lives on the local server in data/memory.json; this panel only shows and edits it.
 export type Category = 'personal' | 'work' | 'health' | 'plans' | 'tastes' | 'people' | 'other';
-export type MemoryItemView = { id: string; kind: 'fact' | 'rule'; text: string; strength: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review'; links: string[]; category: Category; until: string | null; expired: boolean; origin: string | null };
+export type MemoryItemView = { id: string; kind: 'fact' | 'rule'; text: string; strength: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review' | 'thought'; links: string[]; category: Category; until: string | null; expired: boolean; origin: string | null };
 export type EpisodeView = { id: string; date: string; topic: string; outcome: string; links: string[]; consolidated: boolean; score: number | null; weak: string };
 export type ReminderView = { id: string; about: string; text: string; created: string; fired: string | null };
 export type PromiseView = { id: string; text: string; created: string; due: string | null; episode: string | null; done: string | null };
+export type ThoughtView = { id: string; at: string; kind: 'hypothesis' | 'idea' | 'reflection' | 'skill'; text: string; links: string[]; seen: boolean };
+export type ThinkingView = { enabled: boolean; intensity: 'low' | 'normal' | 'high'; today: number; perDay: number; next: string };
 export type TopicView = { id: string; title: string; area: Category; summary: string; facts: string[]; created: string; updated: string };
 export type QuestionView = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number };
 type Level = { level: number; floor: number; next: number };
@@ -14,10 +16,10 @@ export type EntityView = { id: string; name: string; type: 'person' | 'project' 
 export type EdgeView = { from: string; to: string; type: 'related' | 'part_of' | 'blocks' | 'after' | 'decided_in' | 'about' };
 export type DiaryView = { id: string; date: string; text: string };
 export type JournalView = { at: string; kind: string; text: string };
-export type MemoryView = { enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | null; lastSleep: string | null; pending: number; newEpisodes: number;
+export type MemoryView = { enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | 'think' | null; lastSleep: string | null; pending: number; newEpisodes: number;
   search: 'meaning' | 'words'; searchError: string; indexed: number;
   items: MemoryItemView[]; episodes: EpisodeView[]; entities: EntityView[]; edges: EdgeView[]; diary: DiaryView[]; journal: JournalView[];
-  topics: TopicView[]; understanding: { text: string; updated: string } | null; questions: QuestionView[]; growth: GrowthView; reminders: ReminderView[]; promises: PromiseView[] };
+  topics: TopicView[]; understanding: { text: string; updated: string } | null; questions: QuestionView[]; growth: GrowthView; reminders: ReminderView[]; promises: PromiseView[]; thoughts: ThoughtView[]; thinking: ThinkingView };
 export type MemoryHost = {
   toast(message: string): void;
   confirm(title: string): Promise<boolean>;
@@ -25,18 +27,18 @@ export type MemoryHost = {
   openNote(id: string): void;
   changed(view: MemoryView): void;
 };
-export type Tab = 'growth' | 'plans' | 'fact' | 'rule' | 'episode' | 'timeline' | 'map' | 'diary' | 'journal';
+export type Tab = 'growth' | 'plans' | 'thoughts' | 'fact' | 'rule' | 'episode' | 'timeline' | 'map' | 'diary' | 'journal';
 type Request = RequestInit & { json?: unknown };
 
 export const brainIcon = '<path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill"/><path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill" transform="matrix(-1 0 0 1 24 0)"/><path d="M12 5.4v14.1M12 9.2c-1.3 0-2.2-.8-2.3-2M9.6 12.3c-1.4-.4-2.8.2-3.4 1.4M12 15.6c-1.2 0-2.2-.7-2.5-1.8M12 9.2c1.3 0 2.2-.8 2.3-2M14.4 12.3c1.4-.4 2.8.2 3.4 1.4M12 15.6c1.2 0 2.2-.7 2.5-1.8M6.7 8.9c.6.5 1.4.7 2.1.5M17.3 8.9c-.6.5-1.4.7-2.1.5" class="accent-stroke"/>';
-const tabs: [Tab, string][] = [['growth', 'Рост'], ['plans', 'Дела'], ['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['timeline', 'Хронология'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
+const tabs: [Tab, string][] = [['growth', 'Рост'], ['plans', 'Дела'], ['thoughts', 'Размышления'], ['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['timeline', 'Хронология'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
 export const categories: [Category, string][] = [['personal', 'Личное'], ['work', 'Работа'], ['health', 'Здоровье'], ['plans', 'Планы'], ['tastes', 'Вкусы'], ['people', 'Люди'], ['other', 'Другое']];
 const categoryName = (c: Category) => categories.find(([key]) => key === c)?.[1] || 'Другое';
-const sources: Record<MemoryItemView['source'], string> = { user: 'от вас', dialog: 'из разговора', sleep: 'после сна', note: 'из заметки', review: 'из самооценки' };
+const sources: Record<MemoryItemView['source'], string> = { user: 'от вас', dialog: 'из разговора', sleep: 'после сна', note: 'из заметки', review: 'из самооценки', thought: 'из размышлений' };
 const areaNames: Record<Category, string> = { personal: 'Личное', work: 'Работа', health: 'Здоровье', plans: 'Планы', tastes: 'Вкусы', people: 'Люди', other: 'Разное' };
 const entityTypes: Record<EntityView['type'], string> = { person: 'Человек', project: 'Проект', place: 'Место', topic: 'Тема', thing: 'Вещь' };
 export const relationNames: Record<EdgeView['type'], string> = { related: 'связано с', part_of: 'часть', blocks: 'мешает', after: 'после', decided_in: 'решено в', about: 'про' };
-const journalNames: Record<string, string> = { learned: 'Узнала', rule: 'Правило', reinforced: 'Подтвердилось', weakened: 'Сомнение', merged: 'Объединила', forgot: 'Забыла', episode: 'Эпизод', sleep: 'Сон', edited: 'Правка', entity: 'Карта', review: 'Самооценка', topic: 'Тема', question: 'Вопрос', reminder: 'Напоминание', promise: 'Обещание' };
+const journalNames: Record<string, string> = { learned: 'Узнала', rule: 'Правило', reinforced: 'Подтвердилось', weakened: 'Сомнение', merged: 'Объединила', forgot: 'Забыла', episode: 'Эпизод', sleep: 'Сон', edited: 'Правка', entity: 'Карта', review: 'Самооценка', topic: 'Тема', question: 'Вопрос', reminder: 'Напоминание', promise: 'Обещание', thought: 'Размышление' };
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const when = (date: string, time = false) => new Date(date).toLocaleString('ru-RU', time ? { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'long' });
 const short = (text: string, max: number) => text.length > max ? text.slice(0, max - 1) + '…' : text;
@@ -184,6 +186,24 @@ export function mountMemory(host: MemoryHost) {
     return `<section class="growth-section"><h4>Мои обещания</h4>${open.length ? open.map(promise).join('') : '<p class="memory-empty">Открытых обещаний нет. Если я пообещаю что-то проверить или подготовить, это появится здесь, и я закрою его сама.</p>'}${kept.length ? `<details class="memory-done"><summary>Выполнено: ${kept.length}</summary>${kept.map(promise).join('')}</details>` : ''}</section>`
       + `<section class="growth-section"><h4>Напомню, когда речь зайдёт о…</h4>${waiting.length ? waiting.map(reminder).join('') : '<p class="memory-empty">Скажите в чате: «Напомни, когда заговорим о поездке, что нужно купить адаптер», или добавьте ниже.</p>'}<form class="memory-remind"><input name="about" maxlength="120" autocomplete="off" placeholder="Когда речь зайдёт о…" aria-label="Тема" ${busy ? 'disabled' : ''}><input name="text" maxlength="300" autocomplete="off" placeholder="…напомнить, что" aria-label="О чём напомнить" ${busy ? 'disabled' : ''}><button class="button" type="submit" ${busy ? 'disabled' : ''}>Добавить</button></form>${fired.length ? `<details class="memory-done"><summary>Уже напомнила: ${fired.length}</summary>${fired.map(reminder).join('')}</details>` : ''}</section>`;
   }
+  // «Размышления»: what Miyuneya thought about on her own while the user was away, and how often she may do it.
+  const newest = (list: ThoughtView[]) => [...list].sort((a, b) => b.at.localeCompare(a.at));
+  const thoughtKinds: Record<ThoughtView['kind'], string> = { hypothesis: 'Догадка', idea: 'Идея', reflection: 'Вывод', skill: 'Навык' };
+  const intensities: [ThinkingView['intensity'], string][] = [['low', 'Редко: 2 раза в день'], ['normal', 'Обычно: 4 раза в день'], ['high', 'Часто: 8 раз в день']];
+  function thoughtsHtml(v: MemoryView) {
+    const t = v.thinking;
+    const off = busy || !v.enabled ? 'disabled' : '';
+    const limit = t.today >= t.perDay;
+    const state = !v.available ? 'Подключите cloud.ru, чтобы я могла размышлять.' : v.private ? 'В приватном режиме я не размышляю.' : !t.enabled ? 'Размышления выключены.'
+      : `Сегодня ${t.today} из ${t.perDay}${limit ? ' · на сегодня хватит' : Date.parse(t.next) > Date.now() ? ` · следующий раз не раньше ${when(t.next, true)}` : ' · подумаю, когда вас не будет 20 минут'}`;
+    const settings = `<section class="growth-card thinking-card"><p class="growth-line thinking-intro">Когда вас нет рядом, я перечитываю память, строю догадки о вас, ищу пробелы и противоречия, придумываю, чем помочь, и учусь на своих промахах. Каждое размышление — один запрос к cloud.ru.</p>
+      <div class="thinking-controls"><label class="switch"><input type="checkbox" data-memory-thinking ${t.enabled ? 'checked' : ''} ${off}><span>Размышлять, пока вас нет</span></label><select data-memory-intensity aria-label="Как часто размышлять" ${off || (t.enabled ? '' : 'disabled')}>${intensities.map(([key, label]) => `<option value="${key}" ${key === t.intensity ? 'selected' : ''}>${label}</option>`).join('')}</select></div>
+      <div class="thinking-state"><small>${escape(state)}</small><button type="button" class="button" data-memory-think ${off || (v.available && t.enabled && !limit && !v.private ? '' : 'disabled')}>Подумать сейчас</button></div></section>`;
+    if (!v.thoughts.length) return settings + '<p class="memory-empty">Пока я ещё ни о чём не думала. Первые мысли появятся, когда вы отойдёте, а в памяти будет хоть немного о вас.</p>';
+    const days = new Map<string, ThoughtView[]>();
+    for (const thought of newest(v.thoughts)) { const key = new Date(thought.at).toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }); days.set(key, [...(days.get(key) || []), thought]); }
+    return settings + [...days].map(([key, list]) => `<section class="timeline-day"><h4>${key}</h4>${list.map(thought => `<article class="memory-item thought ${thought.kind} ${thought.seen ? '' : 'new'}" id="memory-${escape(thought.id)}"><p><span class="memory-tag">${thoughtKinds[thought.kind]}</span>${escape(thought.text)}</p>${linkChips(thought.links)}<div class="memory-actions"><small>${new Date(thought.at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</small><button type="button" class="chat-link danger" data-memory-delete="${escape(thought.id)}" data-what="thought">Удалить</button></div></article>`).join('')}</section>`).join('');
+  }
   // «Хронология»: the memory laid out by days, newest first.
   function timelineHtml(v: MemoryView) {
     type Event = { at: string; label: string; html: string };
@@ -195,6 +215,7 @@ export function mountMemory(host: MemoryHost) {
       ...v.reminders.flatMap(x => [{ at: x.created, label: 'Напоминание', html: `о «${escape(x.about)}»: ${escape(x.text)}` }, ...(x.fired ? [{ at: x.fired, label: 'Напомнила', html: escape(x.text) }] : [])]),
       ...v.topics.map(t => ({ at: t.created, label: 'Тема', html: escape(t.title) })),
       ...v.diary.map(d => ({ at: d.date, label: 'Дневник', html: goto(d.id, 'diary', short(d.text, 90)) })),
+      ...v.thoughts.map(t => ({ at: t.at, label: 'Размышляла', html: goto(t.id, 'thoughts', short(t.text, 90)) })),
     ].filter(e => Number.isFinite(Date.parse(e.at))).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
     if (!events.length) return '<p class="memory-empty">Здесь по дням появится всё, что было: разговоры, что я узнала, обещала и напомнила.</p>';
     const days = new Map<string, Event[]>();
@@ -272,6 +293,7 @@ export function mountMemory(host: MemoryHost) {
     if (!view) return '<p class="memory-empty">Загружаю память…</p>';
     if (tab === 'growth') return growthHtml(view);
     if (tab === 'plans') return plansHtml(view);
+    if (tab === 'thoughts') return thoughtsHtml(view);
     if (tab === 'timeline') return timelineHtml(view);
     if (tab === 'map') return mapHtml();
     if (tab === 'diary') return view.diary.length ? '<p class="memory-note">Записи пишет сама Миюнэя после «сна». Любую можно поправить или удалить.</p>' + [...view.diary].sort((a, b) => b.date.localeCompare(a.date)).map(diaryRow).join('') : '<p class="memory-empty">Дневник пока пуст. Каждый раз во время сна Миюнэя записывает сюда, что узнала о вас и что изменила в себе.</p>';
@@ -285,13 +307,13 @@ export function mountMemory(host: MemoryHost) {
   function statusLine() {
     if (!view) return '';
     if (!view.enabled) return 'Память выключена: Миюнэя ничего не вспоминает и не запоминает';
-    if (view.busy) return view.busy === 'sleep' ? 'Сейчас сон: перечитываю эпизоды и заметки, навожу порядок…' : 'Разбираю недавний разговор…';
+    if (view.busy) return view.busy === 'sleep' ? 'Сейчас сон: перечитываю эпизоды и заметки, навожу порядок…' : view.busy === 'think' ? 'Размышляю о вас…' : 'Разбираю недавний разговор…';
     if (!view.available) return 'Подключите cloud.ru, чтобы память пополнялась сама';
     return `Уровень ${view.growth.level} · сон: ${view.lastSleep ? when(view.lastSleep, true) : 'ещё не было'} · новых эпизодов ${view.newEpisodes} · поиск ${view.search === 'meaning' ? 'по смыслу' : 'по словам'}${view.private ? ' · приватный режим' : ''}`;
   }
   function render() {
     if (panel.hidden) return;
-    const count = (t: Tab) => !view || t === 'journal' || t === 'map' || t === 'growth' || t === 'timeline' ? '' : String(t === 'plans' ? view.promises.filter(p => !p.done).length + view.reminders.filter(x => !x.fired).length : t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length);
+    const count = (t: Tab) => !view || t === 'journal' || t === 'map' || t === 'growth' || t === 'timeline' ? '' : String((t === 'thoughts' ? view.thoughts.filter(x => !x.seen).length : t === 'plans' ? view.promises.filter(p => !p.done).length + view.reminders.filter(x => !x.fired).length : t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length) || '');
     const scroll = panel.querySelector('.memory-list')?.scrollTop || 0;
     const off = !view || busy ? 'disabled' : '';
     panel.classList.toggle('wide', tab === 'map');
@@ -311,7 +333,28 @@ export function mountMemory(host: MemoryHost) {
     try { await request(''); } catch {}
     render();
   }
-  function open(start?: Tab) { if (start) { tab = start; editing = ''; } panel.hidden = false; render(); void refresh(); panel.querySelector<HTMLElement>('[data-memory-close]')?.focus(); sync(); }
+  // «Пока вас не было, я думала о…»: new thoughts greet the user when they come back.
+  const note = document.createElement('aside');
+  note.className = 'thought-note'; note.hidden = true; note.setAttribute('role', 'status');
+  document.body.append(note);
+  let greeted = '';
+  function welcome() {
+    const fresh = newest((view?.thoughts || []).filter(t => !t.seen));
+    if (!fresh.length || !panel.hidden || greeted === fresh[0].id) { if (!fresh.length) note.hidden = true; return; }
+    greeted = fresh[0].id;
+    note.innerHTML = `<p><b>Пока вас не было, я думала о…</b>${escape(short(fresh[0].text, 180))}${fresh.length > 1 ? `<small>и ещё ${fresh.length - 1}</small>` : ''}</p><div><button type="button" class="button" data-thought-open>Почитать</button><button type="button" class="icon-button" data-thought-close aria-label="Скрыть">×</button></div>`;
+    note.hidden = false;
+  }
+  function markSeen() { note.hidden = true; if (view?.thoughts.some(t => !t.seen)) void request('/thoughts/seen', { method: 'POST' }).then(render).catch(() => {}); }
+  note.addEventListener('click', event => {
+    const target = (event.target as HTMLElement).closest('button');
+    if (target?.hasAttribute('data-thought-open')) { open('thoughts'); markSeen(); }
+    if (target?.hasAttribute('data-thought-close')) markSeen();
+  });
+  // The server thinks while the page sits in the background; look again when the user comes back.
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void request('').then(welcome).catch(() => {}); });
+  setInterval(() => { if (panel.hidden && document.visibilityState === 'visible') void request('').then(welcome).catch(() => {}); }, 10 * 60_000);
+  function open(start?: Tab) { if (start) { tab = start; editing = ''; } note.hidden = true; panel.hidden = false; render(); void refresh(); panel.querySelector<HTMLElement>('[data-memory-close]')?.focus(); sync(); }
   function close() { if (panel.hidden) return; panel.hidden = true; editing = ''; clearTimeout(poll); sync(); document.querySelector<HTMLElement>('[data-memory-toggle]')?.focus(); }
   const sync = () => document.querySelector('[data-memory-toggle]')?.setAttribute('aria-expanded', String(!panel.hidden));
   function select(id: string) { tab = 'map'; selected = id; editing = ''; render(); }
@@ -323,7 +366,7 @@ export function mountMemory(host: MemoryHost) {
     if (!target) return;
     const d = target.dataset;
     if (target.hasAttribute('data-memory-close')) return close();
-    if (d.memoryTab) { tab = d.memoryTab as Tab; editing = ''; render(); panel.querySelector('.memory-list')!.scrollTop = 0; return; }
+    if (d.memoryTab) { tab = d.memoryTab as Tab; editing = ''; render(); panel.querySelector('.memory-list')!.scrollTop = 0; if (tab === 'thoughts') markSeen(); return; }
     if (d.memoryFilter) { filter = d.memoryFilter as Category | 'all'; render(); return; }
     if (d.memorySelect) { select(d.memorySelect); return; }
     if (d.memoryEdit) { editing = d.memoryEdit; render(); panel.querySelector<HTMLElement>('.memory-edit textarea, .memory-edit input')?.focus(); return; }
@@ -340,7 +383,8 @@ export function mountMemory(host: MemoryHost) {
     if (d.memoryDismiss) { await act('/items/' + d.memoryDismiss, { method: 'DELETE' }, 'Больше не спрошу'); return; }
     if (d.memoryUnlink) { await act('/unlink', { method: 'POST', json: { from: selected, to: d.memoryUnlink } }, 'Связь убрана'); return; }
     if (d.memoryPin) { const item = view?.items.find(i => i.id === d.memoryPin); if (item) await act('/items/' + item.id, { method: 'PATCH', json: { pinned: !item.pinned } }, item.pinned ? 'Запись откреплена' : 'Закреплено: эта запись не будет забыта'); return; }
-    if (d.memoryDelete && await host.confirm(d.what === 'diary' ? 'Удалить запись дневника?' : d.memoryDelete === 'understanding' ? 'Удалить общее понимание? Я соберу его заново во время сна.' : 'Удалить запись из памяти?')) { if (await act('/items/' + d.memoryDelete, { method: 'DELETE' }, d.what === 'diary' ? 'Запись дневника удалена' : 'Запись удалена') && selected === d.memoryDelete) { selected = ''; render(); } return; }
+    if (d.memoryDelete && await host.confirm(d.what === 'diary' ? 'Удалить запись дневника?' : d.what === 'thought' ? 'Удалить это размышление?' : d.memoryDelete === 'understanding' ? 'Удалить общее понимание? Я соберу его заново во время сна.' : 'Удалить запись из памяти?')) { if (await act('/items/' + d.memoryDelete, { method: 'DELETE' }, d.what === 'diary' ? 'Запись дневника удалена' : 'Запись удалена') && selected === d.memoryDelete) { selected = ''; render(); } return; }
+    if (target.hasAttribute('data-memory-think')) { await act('/think', { method: 'POST' }, 'Подумала. Мысли — во вкладке «Размышления»'); return; }
     if (target.hasAttribute('data-memory-sleep')) { await act('/sleep', { method: 'POST' }, 'Сон завершён: память упорядочена'); return; }
     if (target.hasAttribute('data-memory-reset') && await host.confirm('Стереть всю память Миюнэи?')) { await act('', { method: 'DELETE' }, 'Память очищена'); return; }
   });
@@ -352,6 +396,8 @@ export function mountMemory(host: MemoryHost) {
   panel.addEventListener('change', event => {
     const input = event.target as HTMLInputElement;
     if (input.hasAttribute('data-memory-enabled')) void act('', { method: 'PUT', json: { enabled: input.checked } }, input.checked ? 'Память включена' : 'Память выключена');
+    if (input.hasAttribute('data-memory-thinking')) void act('', { method: 'PUT', json: { thinking: input.checked } }, input.checked ? 'Буду размышлять, пока вас нет' : 'Размышления выключены');
+    if (input.hasAttribute('data-memory-intensity')) void act('', { method: 'PUT', json: { intensity: input.value } }, 'Частота размышлений изменена');
     if (input.hasAttribute('data-memory-private')) void act('', { method: 'PUT', json: { private: input.checked } }, input.checked ? 'Приватный режим: разговоры не запоминаются' : 'Приватный режим выключен');
   });
   panel.addEventListener('submit', async event => {
@@ -399,6 +445,6 @@ export function mountMemory(host: MemoryHost) {
     refresh,
     view: () => view,
     act,
-    load: () => request('').catch(() => null),
+    load: () => request('').then(v => { welcome(); return v; }).catch(() => null),
   };
 }

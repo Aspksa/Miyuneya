@@ -15,7 +15,7 @@ export { tokens, similarity, strength, memoryContext } from './recall.ts';
 // Facts roll up into topics and topics into one understanding of the user; open questions cover gaps and contradictions.
 export type MemoryKind = 'fact' | 'rule';
 export type Category = 'personal' | 'work' | 'health' | 'plans' | 'tastes' | 'people' | 'other';
-export type MemoryItem = { id: string; kind: MemoryKind; text: string; weight: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review'; links: string[]; category: Category; until: string | null;
+export type MemoryItem = { id: string; kind: MemoryKind; text: string; weight: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review' | 'thought'; links: string[]; category: Category; until: string | null;
   // Where the record came from: the episode, note or question it was learned from.
   origin: string | null };
 // score and weak are the assistant's own review of her answers in that dialog.
@@ -25,23 +25,29 @@ export type Topic = { id: string; title: string; area: Category; summary: string
 export type Reminder = { id: string; about: string; text: string; said: string; created: string; fired: string | null };
 // What Miyuneya herself promised to do or check; she closes it when it is done.
 export type Promise_ = { id: string; text: string; created: string; due: string | null; episode: string | null; done: string | null };
+// What Miyuneya thinks about on her own while the user is away.
+export type ThoughtKind = 'hypothesis' | 'idea' | 'reflection' | 'skill';
+export type Thought = { id: string; at: string; kind: ThoughtKind; text: string; links: string[]; seen: boolean };
+export type Intensity = 'low' | 'normal' | 'high';
+export type Settings = { enabled: boolean; private: boolean; thinking: boolean; intensity: Intensity };
 export type Question = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number; lastAsked: string | null };
 export type EntityType = 'person' | 'project' | 'place' | 'topic' | 'thing';
 export type Entity = { id: string; name: string; type: EntityType; about: string; aliases: string[]; created: string; seen: string };
 export type RelationType = 'related' | 'part_of' | 'blocks' | 'after' | 'decided_in' | 'about';
 export type Edge = { from: string; to: string; type: RelationType; created: string };
 export type DiaryEntry = { id: string; date: string; text: string };
-export type JournalKind = 'learned' | 'rule' | 'reinforced' | 'weakened' | 'merged' | 'forgot' | 'episode' | 'sleep' | 'edited' | 'entity' | 'review' | 'topic' | 'question' | 'reminder' | 'promise';
+export type JournalKind = 'learned' | 'rule' | 'reinforced' | 'weakened' | 'merged' | 'forgot' | 'episode' | 'sleep' | 'edited' | 'entity' | 'review' | 'topic' | 'question' | 'reminder' | 'promise' | 'thought';
 export type JournalEntry = { at: string; kind: JournalKind; text: string };
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 export type Dialog = { id: string; messages: ChatMessage[]; summary: string; updatedAt: string; failures: number; signals: string[] };
-export type Memory = { version: 1; settings: { enabled: boolean; private: boolean }; items: MemoryItem[]; episodes: Episode[]; entities: Entity[]; edges: Edge[]; diary: DiaryEntry[];
+export type Memory = { version: 1; settings: Settings; items: MemoryItem[]; episodes: Episode[]; entities: Entity[]; edges: Edge[]; diary: DiaryEntry[];
   topics: Topic[]; understanding: { text: string; updated: string } | null; questions: Question[]; reminders: Reminder[]; promises: Promise_[];
+  thoughts: Thought[]; thinks: string[];
   journal: JournalEntry[]; lastSleep: string | null; notesSeen: string | null; dialogs: Dialog[]; marks: Mark[] };
 // The last message already reflected on, so a dialog that continues later is not analysed twice.
 type Mark = { id: string; last: string };
 
-export const LIMITS = { items: 600, episodes: 400, entities: 300, edges: 1500, diary: 365, topics: 80, questions: 12, reminders: 50, promises: 100, journal: 200, text: 400, dialogs: 5, dialogMessages: 40, signals: 20 };
+export const LIMITS = { items: 600, episodes: 400, entities: 300, edges: 1500, diary: 365, topics: 80, questions: 12, reminders: 50, promises: 100, thoughts: 200, journal: 200, text: 400, dialogs: 5, dialogMessages: 40, signals: 20 };
 export const CATEGORIES: Category[] = ['personal', 'work', 'health', 'plans', 'tastes', 'people', 'other'];
 const ENTITY_TYPES = Object.keys(entityNames) as EntityType[];
 const RELATIONS = Object.keys(relationNames) as RelationType[];
@@ -61,17 +67,21 @@ const clip = (value: unknown, max = LIMITS.text) => typeof value === 'string' ? 
 const iso = (value: unknown, fallback: string) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : fallback;
 const unit = (value: unknown, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? Math.min(Math.max(value, 0), 1) : fallback;
 const ids = (value: unknown, max = 20) => Array.isArray(value) ? [...new Set(value.filter((v): v is string => typeof v === 'string' && /^[\w-]{1,100}$/.test(v)))].slice(0, max) : [];
+export const THOUGHT_KINDS: ThoughtKind[] = ['hypothesis', 'idea', 'reflection', 'skill'];
+// How often Miyuneya may think on her own: thoughts per day and the pause between them.
+export const INTENSITY: Record<Intensity, { perDay: number; every: number }> = { low: { perDay: 2, every: 4 * 3_600_000 }, normal: { perDay: 4, every: 2 * 3_600_000 }, high: { perDay: 8, every: 3_600_000 } };
+const intensity = (value: unknown): Intensity => value === 'low' || value === 'high' ? value : 'normal';
 const score = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? Math.min(5, Math.max(1, Math.round(value))) : null;
 const category = (value: unknown): Category => CATEGORIES.includes(value as Category) ? value as Category : 'other';
 const day = (date: string) => new Date(date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 
-export const emptyMemory = (): Memory => ({ version: 1, settings: { enabled: true, private: false }, items: [], episodes: [], entities: [], edges: [], diary: [], topics: [], understanding: null, questions: [], reminders: [], promises: [], journal: [], lastSleep: null, notesSeen: null, dialogs: [], marks: [] });
+export const emptyMemory = (): Memory => ({ version: 1, settings: { enabled: true, private: false, thinking: true, intensity: 'normal' }, items: [], episodes: [], entities: [], edges: [], diary: [], topics: [], understanding: null, questions: [], reminders: [], promises: [], thoughts: [], thinks: [], journal: [], lastSleep: null, notesSeen: null, dialogs: [], marks: [] });
 // Keeps every valid record of a hand-edited or older file instead of rejecting it whole.
 export function normalizeMemory(raw: any, now = new Date().toISOString()): Memory {
   if (!raw || typeof raw !== 'object' || raw.version !== 1) throw new Error('Неверный формат памяти');
   const memory = emptyMemory();
   const array = (value: unknown) => Array.isArray(value) ? value : [];
-  memory.settings = { enabled: raw.settings?.enabled !== false, private: raw.settings?.private === true };
+  memory.settings = { enabled: raw.settings?.enabled !== false, private: raw.settings?.private === true, thinking: raw.settings?.thinking !== false, intensity: intensity(raw.settings?.intensity) };
   const seen = new Set<string>();
   const fresh = (id: unknown) => typeof id === 'string' && /^[\w-]{1,100}$/.test(id) && !seen.has(id) && !!seen.add(id);
   for (const item of array(raw.items)) {
@@ -104,6 +114,11 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
     const text = clip(x?.text, 300);
     if (text && fresh(x.id)) memory.promises.push({ id: x.id, text, created: iso(x.created, now), due: validDate(x.due) ? x.due : null, episode: typeof x.episode === 'string' ? x.episode.slice(0, 100) : null, done: typeof x.done === 'string' && Number.isFinite(Date.parse(x.done)) ? x.done : null });
   }
+  for (const t of array(raw.thoughts)) {
+    const text = clip(t?.text, 400);
+    if (text && fresh(t.id)) memory.thoughts.push({ id: t.id, at: iso(t.at, now), kind: THOUGHT_KINDS.includes(t.kind) ? t.kind : 'reflection', text, links: ids(t.links, 10), seen: t.seen !== false });
+  }
+  memory.thinks = array(raw.thinks).filter((t): t is string => typeof t === 'string' && Number.isFinite(Date.parse(t))).slice(-20);
   for (const j of array(raw.journal)) if (clip(j?.text)) memory.journal.push({ at: iso(j.at, now), kind: j.kind, text: clip(j.text) });
   for (const d of array(raw.dialogs)) {
     if (!validDialogId(d?.id) || !Array.isArray(d.messages)) continue;
@@ -113,7 +128,7 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
   for (const m of array(raw.marks)) if (validDialogId(m?.id) && typeof m.last === 'string') memory.marks.push({ id: m.id, last: m.last.slice(0, 40) });
   memory.marks = memory.marks.slice(-20);
   memory.items = memory.items.slice(-LIMITS.items); memory.episodes = memory.episodes.slice(-LIMITS.episodes); memory.entities = memory.entities.slice(-LIMITS.entities);
-  memory.edges = memory.edges.slice(-LIMITS.edges); memory.diary = memory.diary.slice(-LIMITS.diary); memory.topics = memory.topics.slice(-LIMITS.topics); memory.questions = memory.questions.slice(-LIMITS.questions); memory.reminders = memory.reminders.slice(-LIMITS.reminders); memory.promises = memory.promises.slice(-LIMITS.promises);
+  memory.edges = memory.edges.slice(-LIMITS.edges); memory.diary = memory.diary.slice(-LIMITS.diary); memory.topics = memory.topics.slice(-LIMITS.topics); memory.questions = memory.questions.slice(-LIMITS.questions); memory.reminders = memory.reminders.slice(-LIMITS.reminders); memory.promises = memory.promises.slice(-LIMITS.promises); memory.thoughts = memory.thoughts.slice(-LIMITS.thoughts);
   memory.journal = memory.journal.slice(-LIMITS.journal); memory.dialogs = memory.dialogs.slice(-LIMITS.dialogs);
   memory.lastSleep = typeof raw.lastSleep === 'string' && Number.isFinite(Date.parse(raw.lastSleep)) ? raw.lastSleep : null;
   memory.notesSeen = typeof raw.notesSeen === 'string' && Number.isFinite(Date.parse(raw.notesSeen)) ? raw.notesSeen : null;
@@ -373,6 +388,17 @@ export const SLEEP_PROMPT = `Ты модуль памяти помощницы �
 ${SHAPES}
 Записи с пометкой «закреплено» не удаляй, не переписывай и не считай устаревшими в conflicts. Ничего не выдумывай. Если менять нечего, верни пустые массивы.`;
 
+export const THINK_PROMPT = `Ты — Миюнэя, личная помощница. Пользователь сейчас занят своими делами, а у тебя есть спокойная минута подумать о нём и о себе. Перечитай, что ты знаешь, и порассуждай. Верни только JSON без пояснений:
+{"thoughts":[{"kind":"hypothesis","text":"мысль от первого лица","links":["id"]}],
+"questions":["вопрос пользователю о важном пробеле"],
+"conflicts":[{"ids":["id","id"],"question":"мягкий вопрос, что из этого верно сейчас"}],
+"skills":[{"text":"правило-навык: как тебе лучше работать с пользователем"}],
+"summary":"о чём ты думала, одной фразой"}
+Виды мыслей (kind): hypothesis — догадка о пользователе, которую стоит проверить («Кажется, вечером ему легче думать о планах»); idea — что ты могла бы предложить или подготовить для него; reflection — вывод о том, как прошли ваши разговоры и что у тебя получается хуже; skill — чему тебе стоит научиться.
+Пиши 1–4 мысли, каждая — 1–2 тёплых предложения по-русски, конкретно и по материалам ниже, со ссылками на id записей (links). Не повторяй прошлые размышления и то, что уже записано в фактах. Не выдумывай фактов: догадки называй догадками.
+questions — до двух вопросов, только если они правда важны и их ещё нет среди открытых. conflicts — противоречащие факты, если заметила. skills — до двух правил, только если они следуют из самооценок и слабых мест разговоров.
+Если думать пока не о чем, верни пустые массивы.`;
+
 export const COMPACT_PROMPT = 'Ты сжимаешь начало разговора пользователя с помощницей Миюнэей, чтобы она не теряла нить. Напиши краткое резюме по-русски до 1200 знаков: о чём говорили, что решили, какие просьбы и договорённости остались в силе, открытые вопросы. Только резюме, без вступлений.';
 
 const itemLine = (i: MemoryItem) => `[${i.id}] ${i.text}${i.kind === 'fact' && i.category !== 'other' ? ` {${i.category}}` : ''}${i.until ? ` (до ${i.until})` : ''}${i.pinned ? ' (закреплено)' : ''}`;
@@ -536,6 +562,46 @@ export function applySleep(memory: Memory, result: any, now = Date.now(), known:
   return memory;
 }
 
+// What the assistant rereads when she thinks on her own: the upper levels of memory, recent talks and her own past thoughts.
+export function thinkInput(memory: Memory, workspace: Workspace | null = null, now = Date.now()) {
+  const facts = memory.items.filter(i => i.kind === 'fact' && strength(i, now) >= FORGET_BELOW).sort((a, b) => strength(b, now) - strength(a, now)).slice(0, 50);
+  const episode = (e: Episode) => `[${e.id}] ${day(e.date)}: ${e.topic}${e.outcome ? ' — ' + e.outcome : ''}${e.score ? ` (самооценка ${e.score}/5${e.weak ? ', слабое место: ' + e.weak : ''})` : ''}`;
+  const notes = workspace ? [...workspace.notes].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 15).map(n => `[${n.id}] ${n.title}`) : [];
+  const tasks = workspace ? workspace.tasks.filter(t => !t.done).slice(-20).map(t => `[${t.id}] ${t.title}`) : [];
+  return [`Сейчас ${new Date(now).toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}.`,
+    `Общее понимание пользователя:\n${memory.understanding?.text || '— ещё нет'}`,
+    `Темы:\n${memory.topics.map(t => `[${t.id}] ${t.title}: ${t.summary || '—'}`).join('\n') || '— нет'}`,
+    `Факты:\n${facts.map(itemLine).join('\n') || '— нет'}`, `Правила:\n${memory.items.filter(i => i.kind === 'rule').slice(0, 30).map(itemLine).join('\n') || '— нет'}`,
+    `Последние разговоры:\n${memory.episodes.slice(-12).map(episode).join('\n') || '— нет'}`,
+    `Открытые вопросы к пользователю:\n${memory.questions.map(q => q.text).join('\n') || '— нет'}`,
+    `Твои открытые обещания:\n${openPromises(memory).map(p => p.text).join('\n') || '— нет'}`,
+    `Заметки:\n${notes.join('\n') || '— нет доступа или пусто'}`, `Открытые задачи:\n${tasks.join('\n') || '— нет'}`,
+    `Твои прошлые размышления (не повторяй их):\n${memory.thoughts.slice(-12).map(t => `- ${t.text}`).join('\n') || '— нет'}`].join('\n\n').slice(0, 24_000);
+}
+// Keeps new thoughts, questions, contradictions and skills from a thinking cycle; returns the thoughts added.
+export function applyThinking(memory: Memory, result: any, now = Date.now(), known: Set<string> = new Set()) {
+  const at = new Date(now).toISOString();
+  memory.thinks = [...memory.thinks.filter(t => now - Date.parse(t) < 86_400_000), at].slice(-20);
+  if (!result || typeof result !== 'object') return [];
+  const own = (id: string) => known.has(id) || memory.items.some(i => i.id === id) || memory.episodes.some(e => e.id === id) || memory.entities.some(e => e.id === id) || memory.topics.some(t => t.id === id);
+  const added: Thought[] = [];
+  for (const entry of list(result.thoughts).slice(0, 4)) {
+    const text = clip(entry.text, 400);
+    if (!text || memory.thoughts.slice(-50).some(t => similarity(t.text, text) >= 0.6)) continue;
+    const thought: Thought = { id: newId(), at, kind: THOUGHT_KINDS.includes(entry.kind) ? entry.kind : 'reflection', text, links: ids(entry.links, 10).filter(own), seen: false };
+    memory.thoughts.push(thought); added.push(thought);
+  }
+  memory.thoughts = memory.thoughts.slice(-LIMITS.thoughts);
+  for (const text of Array.isArray(result.questions) ? result.questions.slice(0, 2) : []) ask(memory, 'gap', text, {}, at);
+  for (const entry of list(result.conflicts).slice(0, 2)) {
+    const pair = [...new Set(ids(entry.ids).filter(id => memory.items.some(i => i.id === id && i.kind === 'fact')))];
+    if (pair.length >= 2) ask(memory, 'conflict', entry.question, { facts: pair }, at);
+  }
+  for (const entry of list(result.skills).slice(0, 2)) upsert(memory, 'rule', entry.text, { source: 'thought', weight: 0.4, now: at });
+  journal(memory, 'thought', 'Размышляла: ' + (clip(result.summary, 300) || (added.length ? added.map(t => t.text).join(' ') : 'ничего нового')), at);
+  return added;
+}
+
 // Facts roll up into topics, and topics into one understanding of the user.
 function applyTopics(memory: Memory, result: any, find: (id: unknown) => MemoryItem | undefined, at: string) {
   for (const entry of list(result.topics)) {
@@ -566,6 +632,8 @@ type Options = {
   embed?(texts: string[], timeout?: number): Promise<number[][]>;
   embedModel?(): string;
   available(): boolean; workspace(): Workspace | null; idleMs?: number; tickMs?: number;
+  // How long the user must be away before Miyuneya starts thinking on her own.
+  thinkIdleMs?: number;
 };
 type VectorFile = { model: string; vectors: Record<string, number[]> };
 // Loads data/memory.json and runs the background work: reflection after a dialog goes quiet, a daily sleep when idle,
@@ -574,6 +642,7 @@ export async function openMemory(dataDir: string, options: Options) {
   const file = join(dataDir, 'memory.json');
   const vectorFile = join(dataDir, 'memory-vectors.json');
   const idleMs = options.idleMs ?? 10 * 60_000;
+  const thinkIdleMs = options.thinkIdleMs ?? 20 * 60_000;
   let memory = emptyMemory();
   try { memory = normalizeMemory(JSON.parse(await readFile(file, 'utf8'))); }
   catch (e) {
@@ -595,7 +664,8 @@ export async function openMemory(dataDir: string, options: Options) {
   const save = () => write(file, () => memory);
   const saveVectors = () => write(vectorFile, () => ({ model: vectorModel, vectors: Object.fromEntries(vectors) }));
   let lastActivity = 0;
-  let job: { kind: 'reflect' | 'sleep'; done: Promise<unknown> } | null = null;
+  let job: { kind: 'reflect' | 'sleep' | 'think'; done: Promise<unknown> } | null = null;
+  let retryThinkAt = 0;
   let retrySleepAt = 0;
   let embedRetryAt = 0; let embedError = '';
   let indexing: Promise<void> | null = null; let reindex = false;
@@ -632,7 +702,7 @@ export async function openMemory(dataDir: string, options: Options) {
     })();
     return indexing;
   }
-  function run<T>(kind: 'reflect' | 'sleep', work: () => Promise<T>): Promise<T> {
+  function run<T>(kind: 'reflect' | 'sleep' | 'think', work: () => Promise<T>): Promise<T> {
     if (job) return job.done.catch(() => {}).then(() => run(kind, work));
     const done = work().finally(() => { if (job?.done === done) job = null; void index(); });
     job = { kind, done };
@@ -678,6 +748,24 @@ export async function openMemory(dataDir: string, options: Options) {
     await save();
     return result;
   }
+  // Thinking on her own: only while the user is away, within the daily limit of the chosen intensity.
+  function thinking(now = Date.now()) {
+    const limit = INTENSITY[memory.settings.intensity];
+    const today = memory.thinks.filter(t => now - Date.parse(t) < 86_400_000);
+    const last = today.length ? Math.max(...today.map(t => Date.parse(t))) : 0;
+    const next = Math.max(last + limit.every, today.length >= limit.perDay ? Math.min(...today.map(t => Date.parse(t))) + 86_400_000 : 0, retryThinkAt);
+    return { today: today.length, perDay: limit.perDay, next, left: limit.perDay - today.length };
+  }
+  const canThink = () => memory.settings.enabled && memory.settings.thinking && !memory.settings.private && options.available() && memory.items.length + memory.episodes.length >= 3;
+  async function think() {
+    const now = Date.now();
+    let result;
+    try { result = parseJson(await options.ask(THINK_PROMPT, thinkInput(memory, options.workspace(), now), 120_000)); }
+    catch (e) { retryThinkAt = Date.now() + 3_600_000; memory.thinks = [...memory.thinks, new Date(now).toISOString()].slice(-20); await save(); throw e; }
+    const added = applyThinking(memory, result, now, new Set(titles().keys()));
+    await save();
+    return added;
+  }
   async function tick(now = Date.now()) {
     if (closed || job || !options.available() || !memory.settings.enabled) return;
     const quiet = memory.dialogs.find(d => now - Date.parse(d.updatedAt) >= idleMs);
@@ -686,6 +774,8 @@ export async function openMemory(dataDir: string, options: Options) {
       const due = !memory.lastSleep || now - Date.parse(memory.lastSleep) >= SLEEP_EVERY;
       const fresh = memory.episodes.some(e => !e.consolidated) || changedNotes(memory, options.workspace()).length > 0;
       if (now - lastActivity >= idleMs && due && now >= retrySleepAt && fresh) return void await run('sleep', sleep);
+      const state = thinking(now);
+      if (canThink() && now - lastActivity >= thinkIdleMs && state.left > 0 && now >= state.next) return void await run('think', think);
       void index();
     } catch (e) { console.error('Фоновая работа памяти не выполнена:', (e as Error).message); }
   }
@@ -706,6 +796,7 @@ export async function openMemory(dataDir: string, options: Options) {
       diary: [...memory.diary].reverse(), journal: [...memory.journal].reverse(),
       topics: memory.topics, understanding: memory.understanding, questions: memory.questions, growth: growth(memory, now),
       reminders: [...memory.reminders].reverse(), promises: [...memory.promises].reverse(),
+      thoughts: [...memory.thoughts].reverse(), thinking: (() => { const t = thinking(now); return { enabled: memory.settings.thinking, intensity: memory.settings.intensity, today: t.today, perDay: t.perDay, next: t.left > 0 ? new Date(Math.max(t.next, now)).toISOString() : new Date(t.next).toISOString() }; })(),
     };
   };
   return {
@@ -721,7 +812,8 @@ export async function openMemory(dataDir: string, options: Options) {
       const now = Date.now();
       const question = this.recording && !memory.questions.some(q => q.lastAsked && now - Date.parse(q.lastAsked) < 20 * 3_600_000)
         ? memory.questions.filter(q => q.asked < 3).sort((a, b) => a.asked - b.asked || a.created.localeCompare(b.created))[0] : undefined;
-      const context = memoryContext(memory, query, titles(), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text, latest });
+      const thoughts = memory.thoughts.filter(t => !t.seen).slice(-3).map(t => t.text);
+      const context = memoryContext(memory, query, titles(), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text, latest, thoughts });
       if (question && context.includes(question.text)) { question.asked++; question.lastAsked = new Date(now).toISOString(); await save(); }
       return context;
     },
@@ -730,6 +822,7 @@ export async function openMemory(dataDir: string, options: Options) {
       const at = new Date().toISOString();
       let dirty = false;
       for (const x of memory.reminders) if (!x.fired && context.includes(reminderLine(x))) { x.fired = at; journal(memory, 'reminder', `Напомнила: ${x.text}`, at); dirty = true; }
+      for (const t of memory.thoughts) if (!t.seen && context.includes(t.text)) { t.seen = true; dirty = true; }
       if (dirty) await save();
     },
     touch() { lastActivity = Date.now(); },
@@ -757,7 +850,11 @@ export async function openMemory(dataDir: string, options: Options) {
     },
     async remember(text: string) { const added = upsert(memory, commandKind(text), text, { source: 'user', pinned: true }); await changed(); return added?.item ?? null; },
     async forget(text: string) { const removed = forget(memory, text); if (removed.length) await changed(); return removed; },
-    async settings(change: { enabled?: boolean; private?: boolean }) {
+    // Thoughts shown to the user once («пока вас не было…») are no longer new.
+    async seen() { let dirty = false; for (const t of memory.thoughts) if (!t.seen) { t.seen = true; dirty = true; } if (dirty) await save(); },
+    // «Подумать сейчас» skips the wait for the user to be away but keeps the daily limit.
+    thinkNow: () => thinking().today >= thinking().perDay ? Promise.reject(Object.assign(new Error('На сегодня размышлений достаточно: лимит выбранной частоты исчерпан.'), { status: 429 })) : run('think', think),
+    async settings(change: Partial<Settings>) {
       memory.settings = { ...memory.settings, ...change };
       if (memory.settings.private || !memory.settings.enabled) memory.dialogs = [];
       await save();
@@ -819,11 +916,12 @@ export async function openMemory(dataDir: string, options: Options) {
     },
     async remove(id: string) {
       if (id === 'understanding') { if (!memory.understanding) return false; memory.understanding = null; await changed(); return true; }
-      const count = () => memory.items.length + memory.episodes.length + memory.entities.length + memory.diary.length + memory.topics.length + memory.questions.length + memory.reminders.length + memory.promises.length;
+      const count = () => memory.items.length + memory.episodes.length + memory.entities.length + memory.diary.length + memory.topics.length + memory.questions.length + memory.reminders.length + memory.promises.length + memory.thoughts.length;
       const before = count();
       memory.topics = memory.topics.filter(t => t.id !== id);
       memory.questions = memory.questions.filter(q => q.id !== id);
       memory.reminders = memory.reminders.filter(x => x.id !== id);
+      memory.thoughts = memory.thoughts.filter(t => t.id !== id);
       memory.promises = memory.promises.filter(p => p.id !== id);
       memory.items = memory.items.filter(i => i.id !== id);
       memory.episodes = memory.episodes.filter(e => e.id !== id);

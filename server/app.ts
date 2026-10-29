@@ -49,7 +49,7 @@ export function workspaceContext(data: Workspace, now = new Date(), budget = 30_
   return lines.join('\n');
 }
 
-export async function createApp(root: string, instance: string, preview = false, options: { launchId?: string; onShutdown?: () => void; cloudUrl?: string; memoryIdleMs?: number; memoryTickMs?: number } = {}) {
+export async function createApp(root: string, instance: string, preview = false, options: { launchId?: string; onShutdown?: () => void; cloudUrl?: string; memoryIdleMs?: number; memoryTickMs?: number; memoryThinkIdleMs?: number } = {}) {
   const dataDir = join(root, 'data');
   const dataFile = join(dataDir, 'workspace.json');
   // The cloud.ru key lives apart from workspace.json so it never reaches the browser or a backup.
@@ -142,7 +142,7 @@ export async function createApp(root: string, instance: string, preview = false,
       return vectors as number[][];
     } finally { call.release(); }
   }
-  const memory = await openMemory(dataDir, { ask, embed, embedModel: () => assistant.embedModel, available: () => !!assistant.apiKey, workspace: () => assistant.context ? state.data : null, idleMs: options.memoryIdleMs, tickMs: options.memoryTickMs });
+  const memory = await openMemory(dataDir, { ask, embed, embedModel: () => assistant.embedModel, available: () => !!assistant.apiKey, workspace: () => assistant.context ? state.data : null, idleMs: options.memoryIdleMs, tickMs: options.memoryTickMs, thinkIdleMs: options.memoryThinkIdleMs });
   let stopping = false;
   const active = new Set<Promise<void>>();
   const server = createServer((req, res) => {
@@ -338,8 +338,9 @@ export async function createApp(root: string, instance: string, preview = false,
         if (route === '' && req.method === 'PUT') {
           const input = await readJson(req, send, 10_000);
           if (input === undefined) return;
-          if (!input || typeof input !== 'object' || (input.enabled !== undefined && typeof input.enabled !== 'boolean') || (input.private !== undefined && typeof input.private !== 'boolean')) return send(400, { error: 'Неверный формат настроек памяти.' });
-          await memory.settings({ ...(input.enabled !== undefined && { enabled: input.enabled }), ...(input.private !== undefined && { private: input.private }) });
+          const flag = (v: unknown) => v === undefined || typeof v === 'boolean';
+          if (!input || typeof input !== 'object' || !flag(input.enabled) || !flag(input.private) || !flag(input.thinking) || (input.intensity !== undefined && !['low', 'normal', 'high'].includes(input.intensity))) return send(400, { error: 'Неверный формат настроек памяти.' });
+          await memory.settings({ ...(input.enabled !== undefined && { enabled: input.enabled }), ...(input.private !== undefined && { private: input.private }), ...(input.thinking !== undefined && { thinking: input.thinking }), ...(input.intensity !== undefined && { intensity: input.intensity }) });
           return ok();
         }
         if (route === '' && req.method === 'DELETE') { await memory.reset(); return ok(); }
@@ -389,6 +390,11 @@ export async function createApp(root: string, instance: string, preview = false,
           await memory.signal(input.dialog, signals[input.kind](String(input.text || '').slice(0, 120)));
           return send(200, { ok: true });
         }
+        if (route === '/think' && req.method === 'POST') {
+          if (!assistant.apiKey) return send(409, { error: 'Чтобы размышлять, Миюнэе нужен ключ cloud.ru.' });
+          try { await memory.thinkNow(); return ok(); } catch (e) { return background(e); }
+        }
+        if (route === '/thoughts/seen' && req.method === 'POST') { await memory.seen(); return ok(); }
         if (route === '/sleep' && req.method === 'POST') {
           if (!assistant.apiKey) return send(409, { error: 'Для сна памяти нужен ключ cloud.ru.' });
           try { await memory.sleepNow(); return ok(); } catch (e) { return background(e); }
@@ -408,6 +414,8 @@ export async function createApp(root: string, instance: string, preview = false,
         const input = await readJson(req, send, 2_000_000);
         if (input === undefined) return;
         if (!Number.isSafeInteger(input?.revision) || !validateWorkspace(input?.data)) return send(400, { error: 'Неверный формат данных' });
+        // Editing notes and tasks counts as being at work, so Miyuneya does not start thinking meanwhile.
+        memory.touch();
         const update = queue.then(async () => {
           if (input.revision !== state.revision) return send(409, { error: 'Данные изменены в другой вкладке. Экспортируйте свою копию и обновите страницу.' });
           const next = { revision: state.revision + 1, data: input.data };
