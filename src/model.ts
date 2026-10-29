@@ -21,3 +21,13 @@ export function searchNotes(notes: Note[], query: string): Note[] {
   const q = query.trim().toLocaleLowerCase('ru');
   return notes.filter(n => `${n.title} ${n.body}`.toLocaleLowerCase('ru').includes(q)).sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
 }
+export type EntryFilter = 'all' | 'notes' | 'active' | 'done';
+export type Entry = { kind: 'note'; item: Note; date: string } | { kind: 'task'; item: Task; date: string };
+// Notes and tasks share one list: newest first, open tasks above finished ones.
+export function combineEntries(data: Pick<Workspace, 'notes' | 'tasks'>, query: string, filter: EntryFilter = 'all'): Entry[] {
+  const q = query.trim().toLocaleLowerCase('ru');
+  const notes: Entry[] = filter === 'all' || filter === 'notes' ? searchNotes(data.notes, q).map(item => ({ kind: 'note', item, date: item.updatedAt })) : [];
+  const tasks: Entry[] = filter === 'notes' ? [] : data.tasks.filter(t => t.title.toLocaleLowerCase('ru').includes(q) && (filter === 'all' || t.done === (filter === 'done'))).map(item => ({ kind: 'task', item, date: item.createdAt }));
+  const finished = (e: Entry) => e.kind === 'task' && e.item.done ? 1 : 0;
+  return [...notes, ...tasks].sort((a, b) => finished(a) - finished(b) || b.date.localeCompare(a.date));
+}

@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { request } from 'node:http';
 import { removeTemp, fixture, nodeLaunch, waitReady, stop } from './helpers/lifecycle.mjs';
 import { createApp } from '../server/app.ts';
-import { emptyWorkspace, validateWorkspace, searchNotes } from '../src/model.ts';
+import { emptyWorkspace, validateWorkspace, searchNotes, combineEntries } from '../src/model.ts';
 
 test('Validation and Russian full-text search', () => {
   const data=emptyWorkspace(); assert.ok(validateWorkspace(data));
@@ -19,6 +19,17 @@ test('Validation and Russian full-text search', () => {
   assert.equal(validateWorkspace({...data,notes:[...data.notes,...data.notes]}),false);
   assert.equal(validateWorkspace({...data,settings:{theme:'bad',name:'X'}}),false);
   assert.equal(validateWorkspace({...data,tasks:[{id:'t',title:'X',done:'yes',createdAt:'bad'}]}),false);
+});
+
+test('Notes and tasks share one list', () => {
+  const data=emptyWorkspace();
+  data.notes.push({id:'n1',title:'Идея',body:'Купить лампу',updatedAt:'2026-10-02T10:00:00Z'});
+  data.tasks.push({id:'t1',title:'Позвонить',done:false,createdAt:'2026-10-03T10:00:00Z'},{id:'t2',title:'Лампа',done:true,createdAt:'2026-10-05T10:00:00Z'});
+  assert.deepEqual(combineEntries(data,'').map(e=>e.item.id),['t1','n1','t2']);
+  assert.deepEqual(combineEntries(data,'ЛАМП').map(e=>e.item.id),['n1','t2']);
+  assert.deepEqual(combineEntries(data,'','notes').map(e=>e.item.id),['n1']);
+  assert.deepEqual(combineEntries(data,'','active').map(e=>e.item.id),['t1']);
+  assert.deepEqual(combineEntries(data,'','done').map(e=>e.item.id),['t2']);
 });
 
 test('HTTP storage, revision conflicts, restart, allowlist and origin checks', async t => {
