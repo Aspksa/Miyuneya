@@ -3,9 +3,10 @@ import { join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import type { Workspace } from '../src/model.ts';
-import { tokens, overlap, similarity, strength, expired, memoryContext, searchTexts, FORGET_BELOW, entityNames, relationNames, categoryNames, reminderLine } from './recall.ts';
+import { tokens, overlap, similarity, strength, expired, memoryContext, searchTexts, FORGET_BELOW, entityNames, relationNames, categoryNames, reminderLine, today, nextStepsOf } from './recall.ts';
 import type { Titles } from './recall.ts';
 import { growth } from './growth.ts';
+import { GOAL_PROMPT } from './logic.ts';
 export { tokens, similarity, strength, memoryContext } from './recall.ts';
 
 // Long-term memory of the assistant, kept in data/memory.json next to the workspace.
@@ -15,7 +16,7 @@ export { tokens, similarity, strength, memoryContext } from './recall.ts';
 // Facts roll up into topics and topics into one understanding of the user; open questions cover gaps and contradictions.
 export type MemoryKind = 'fact' | 'rule';
 export type Category = 'personal' | 'work' | 'health' | 'plans' | 'tastes' | 'people' | 'other';
-export type MemoryItem = { id: string; kind: MemoryKind; text: string; weight: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review' | 'thought'; links: string[]; category: Category; until: string | null;
+export type MemoryItem = { id: string; kind: MemoryKind; text: string; weight: number; hits: number; created: string; seen: string; pinned: boolean; source: 'user' | 'dialog' | 'sleep' | 'note' | 'review' | 'thought' | 'logic'; links: string[]; category: Category; until: string | null;
   // Where the record came from: the episode, note or question it was learned from.
   origin: string | null };
 // score and weak are the assistant's own review of her answers in that dialog.
@@ -29,6 +30,14 @@ export type Promise_ = { id: string; text: string; created: string; due: string 
 export type ThoughtKind = 'hypothesis' | 'idea' | 'reflection' | 'skill';
 export type Thought = { id: string; at: string; kind: ThoughtKind; text: string; links: string[]; seen: boolean };
 export type Intensity = 'low' | 'normal' | 'high';
+// Strong logic: cause and effect seen in the user's life, goals as a tree of steps, checked predictions and a journal of reasoning errors.
+export type Cause = { id: string; cause: string; effect: string; confidence: number; evidence: string[]; created: string; seen: string; hits: number };
+export type Step = { id: string; text: string; parent: string | null; after: string[]; done: string | null };
+export type Goal = { id: string; title: string; created: string; done: string | null; steps: Step[] };
+export type Reasoning = 'pattern' | 'cause' | 'habit' | 'plan' | 'analogy';
+export type Prediction = { id: string; text: string; kind: Reasoning; confidence: number; created: string; due: string | null; checked: string | null; outcome: 'right' | 'wrong' | null; note: string };
+export type MistakeKind = 'calc' | 'assumption' | 'causality' | 'memory' | 'prediction' | 'other';
+export type Mistake = { id: string; at: string; kind: MistakeKind; text: string; fix: string; rule: string | null; origin: string | null };
 export type Settings = { enabled: boolean; private: boolean; thinking: boolean; intensity: Intensity };
 export type Question = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number; lastAsked: string | null };
 export type EntityType = 'person' | 'project' | 'place' | 'topic' | 'thing';
@@ -36,18 +45,18 @@ export type Entity = { id: string; name: string; type: EntityType; about: string
 export type RelationType = 'related' | 'part_of' | 'blocks' | 'after' | 'decided_in' | 'about';
 export type Edge = { from: string; to: string; type: RelationType; created: string };
 export type DiaryEntry = { id: string; date: string; text: string };
-export type JournalKind = 'learned' | 'rule' | 'reinforced' | 'weakened' | 'merged' | 'forgot' | 'episode' | 'sleep' | 'edited' | 'entity' | 'review' | 'topic' | 'question' | 'reminder' | 'promise' | 'thought';
+export type JournalKind = 'learned' | 'rule' | 'reinforced' | 'weakened' | 'merged' | 'forgot' | 'episode' | 'sleep' | 'edited' | 'entity' | 'review' | 'topic' | 'question' | 'reminder' | 'promise' | 'thought' | 'cause' | 'goal' | 'prediction' | 'mistake';
 export type JournalEntry = { at: string; kind: JournalKind; text: string };
 export type ChatMessage = { role: 'user' | 'assistant'; content: string };
 export type Dialog = { id: string; messages: ChatMessage[]; summary: string; updatedAt: string; failures: number; signals: string[] };
 export type Memory = { version: 1; settings: Settings; items: MemoryItem[]; episodes: Episode[]; entities: Entity[]; edges: Edge[]; diary: DiaryEntry[];
   topics: Topic[]; understanding: { text: string; updated: string } | null; questions: Question[]; reminders: Reminder[]; promises: Promise_[];
-  thoughts: Thought[]; thinks: string[];
+  thoughts: Thought[]; thinks: string[]; causes: Cause[]; goals: Goal[]; predictions: Prediction[]; mistakes: Mistake[];
   journal: JournalEntry[]; lastSleep: string | null; notesSeen: string | null; dialogs: Dialog[]; marks: Mark[] };
 // The last message already reflected on, so a dialog that continues later is not analysed twice.
 type Mark = { id: string; last: string };
 
-export const LIMITS = { items: 600, episodes: 400, entities: 300, edges: 1500, diary: 365, topics: 80, questions: 12, reminders: 50, promises: 100, thoughts: 200, journal: 200, text: 400, dialogs: 5, dialogMessages: 40, signals: 20 };
+export const LIMITS = { items: 600, episodes: 400, entities: 300, edges: 1500, diary: 365, topics: 80, questions: 12, reminders: 50, promises: 100, thoughts: 200, causes: 150, goals: 30, steps: 20, predictions: 150, mistakes: 100, journal: 200, text: 400, dialogs: 5, dialogMessages: 40, signals: 20 };
 export const CATEGORIES: Category[] = ['personal', 'work', 'health', 'plans', 'tastes', 'people', 'other'];
 const ENTITY_TYPES = Object.keys(entityNames) as EntityType[];
 const RELATIONS = Object.keys(relationNames) as RelationType[];
@@ -70,12 +79,16 @@ const ids = (value: unknown, max = 20) => Array.isArray(value) ? [...new Set(val
 export const THOUGHT_KINDS: ThoughtKind[] = ['hypothesis', 'idea', 'reflection', 'skill'];
 // How often Miyuneya may think on her own: thoughts per day and the pause between them.
 export const INTENSITY: Record<Intensity, { perDay: number; every: number }> = { low: { perDay: 2, every: 4 * 3_600_000 }, normal: { perDay: 4, every: 2 * 3_600_000 }, high: { perDay: 8, every: 3_600_000 } };
+export const REASONINGS: Reasoning[] = ['pattern', 'cause', 'habit', 'plan', 'analogy'];
+export const MISTAKE_KINDS: MistakeKind[] = ['calc', 'assumption', 'causality', 'memory', 'prediction', 'other'];
+const percent = (value: unknown, fallback = 50) => { const n = Number(value); return Number.isFinite(n) ? Math.round(Math.min(99, Math.max(1, n <= 1 && n > 0 ? n * 100 : n))) : fallback; };
+const stamp = (value: unknown) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null;
 const intensity = (value: unknown): Intensity => value === 'low' || value === 'high' ? value : 'normal';
 const score = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? Math.min(5, Math.max(1, Math.round(value))) : null;
 const category = (value: unknown): Category => CATEGORIES.includes(value as Category) ? value as Category : 'other';
 const day = (date: string) => new Date(date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 
-export const emptyMemory = (): Memory => ({ version: 1, settings: { enabled: true, private: false, thinking: true, intensity: 'normal' }, items: [], episodes: [], entities: [], edges: [], diary: [], topics: [], understanding: null, questions: [], reminders: [], promises: [], thoughts: [], thinks: [], journal: [], lastSleep: null, notesSeen: null, dialogs: [], marks: [] });
+export const emptyMemory = (): Memory => ({ version: 1, settings: { enabled: true, private: false, thinking: true, intensity: 'normal' }, items: [], episodes: [], entities: [], edges: [], diary: [], topics: [], understanding: null, questions: [], reminders: [], promises: [], thoughts: [], thinks: [], causes: [], goals: [], predictions: [], mistakes: [], journal: [], lastSleep: null, notesSeen: null, dialogs: [], marks: [] });
 // Keeps every valid record of a hand-edited or older file instead of rejecting it whole.
 export function normalizeMemory(raw: any, now = new Date().toISOString()): Memory {
   if (!raw || typeof raw !== 'object' || raw.version !== 1) throw new Error('Неверный формат памяти');
@@ -88,7 +101,7 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
     const text = clip(item?.text);
     if (!text || !fresh(item.id) || (item.kind !== 'fact' && item.kind !== 'rule')) continue;
     memory.items.push({ id: item.id, kind: item.kind, text, weight: unit(item.weight, 0.5), hits: Number.isSafeInteger(item.hits) && item.hits > 0 ? item.hits : 1, created: iso(item.created, now), seen: iso(item.seen, now), pinned: item.pinned === true,
-      source: ['user', 'dialog', 'sleep', 'note', 'review', 'thought'].includes(item.source) ? item.source : 'dialog', links: ids(item.links), category: category(item.category), until: validDate(item.until) ? item.until : null, origin: typeof item.origin === 'string' ? item.origin.slice(0, 100) : null });
+      source: ['user', 'dialog', 'sleep', 'note', 'review', 'thought', 'logic'].includes(item.source) ? item.source : 'dialog', links: ids(item.links), category: category(item.category), until: validDate(item.until) ? item.until : null, origin: typeof item.origin === 'string' ? item.origin.slice(0, 100) : null });
   }
   for (const e of array(raw.episodes)) {
     const topic = clip(e?.topic, 200);
@@ -118,6 +131,31 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
     const text = clip(t?.text, 400);
     if (text && fresh(t.id)) memory.thoughts.push({ id: t.id, at: iso(t.at, now), kind: THOUGHT_KINDS.includes(t.kind) ? t.kind : 'reflection', text, links: ids(t.links, 10), seen: t.seen !== false });
   }
+  for (const c of array(raw.causes)) {
+    const cause = clip(c?.cause, 200), effect = clip(c?.effect, 200);
+    if (cause && effect && fresh(c.id)) memory.causes.push({ id: c.id, cause, effect, confidence: percent(c.confidence), evidence: ids(c.evidence, 10), created: iso(c.created, now), seen: iso(c.seen, now), hits: Number.isSafeInteger(c.hits) && c.hits > 0 ? c.hits : 1 });
+  }
+  for (const g of array(raw.goals)) {
+    const title = clip(g?.title, 200);
+    if (!title || !fresh(g.id)) continue;
+    const steps: Step[] = [];
+    for (const x of array(g.steps).slice(0, LIMITS.steps)) {
+      const text = clip(x?.text, 200);
+      if (!text || typeof x.id !== 'string' || !/^[\w-]{1,100}$/.test(x.id) || steps.some(y => y.id === x.id)) continue;
+      // A step may only wait for or belong to the steps above it, so the tree never loops.
+      steps.push({ id: x.id, text, parent: steps.some(y => y.id === x.parent) ? x.parent : null, after: ids(x.after, 10).filter(id => steps.some(y => y.id === id)), done: stamp(x.done) });
+    }
+    memory.goals.push({ id: g.id, title, created: iso(g.created, now), done: stamp(g.done), steps });
+  }
+  for (const x of array(raw.predictions)) {
+    const text = clip(x?.text, 300);
+    if (text && fresh(x.id)) memory.predictions.push({ id: x.id, text, kind: REASONINGS.includes(x.kind) ? x.kind : 'pattern', confidence: percent(x.confidence), created: iso(x.created, now), due: validDate(x.due) ? x.due : null, checked: stamp(x.checked), outcome: x.outcome === 'right' || x.outcome === 'wrong' ? x.outcome : null, note: clip(x.note, 300) });
+  }
+  for (const x of array(raw.mistakes)) {
+    const text = clip(x?.text, 300);
+    if (text && fresh(x.id)) memory.mistakes.push({ id: x.id, at: iso(x.at, now), kind: MISTAKE_KINDS.includes(x.kind) ? x.kind : 'other', text, fix: clip(x.fix, 300), rule: typeof x.rule === 'string' ? x.rule.slice(0, 100) : null, origin: typeof x.origin === 'string' ? x.origin.slice(0, 100) : null });
+  }
+  memory.causes = memory.causes.slice(-LIMITS.causes); memory.goals = memory.goals.slice(-LIMITS.goals); memory.predictions = memory.predictions.slice(-LIMITS.predictions); memory.mistakes = memory.mistakes.slice(-LIMITS.mistakes);
   memory.thinks = array(raw.thinks).filter((t): t is string => typeof t === 'string' && Number.isFinite(Date.parse(t))).slice(-20);
   for (const j of array(raw.journal)) if (clip(j?.text)) memory.journal.push({ at: iso(j.at, now), kind: j.kind, text: clip(j.text) });
   for (const d of array(raw.dialogs)) {
@@ -288,6 +326,100 @@ export function keep(memory: Memory, id: unknown, now = new Date().toISOString()
   journal(memory, 'promise', `Выполнила обещание: ${entry.text}`, now);
   return true;
 }
+// Cause and effect from the user's life: the same link seen again grows more certain.
+export function addCause(memory: Memory, cause: unknown, effect: unknown, confidence: unknown, evidence: string[] = [], now = new Date().toISOString()) {
+  const c = clip(cause, 200), e = clip(effect, 200);
+  if (!c || !e) return null;
+  const same = memory.causes.find(x => similarity(x.cause, c) >= 0.5 && similarity(x.effect, e) >= 0.5);
+  if (same) {
+    same.hits++; same.seen = now;
+    same.confidence = Math.round(Math.min(99, Math.max(same.confidence, percent(confidence)) + 5));
+    same.evidence = [...new Set([...same.evidence, ...evidence])].slice(0, 10);
+    return same;
+  }
+  const entry: Cause = { id: newId(), cause: c, effect: e, confidence: percent(confidence), evidence: evidence.slice(0, 10), created: now, seen: now, hits: 1 };
+  memory.causes = [...memory.causes, entry].slice(-LIMITS.causes);
+  journal(memory, 'cause', `Связала: ${c} → ${e}`, now);
+  return entry;
+}
+// A goal becomes a tree of steps; the model's own ids (s1, s2…) turn into stored ones, and a step waits only for steps above it.
+export function addGoal(memory: Memory, title: unknown, steps: unknown, now = new Date().toISOString()) {
+  const value = clip(title, 200);
+  if (!value) return null;
+  const open = memory.goals.find(g => !g.done && similarity(g.title, value) >= 0.6);
+  const map = new Map<string, string>();
+  const tree: Step[] = [];
+  for (const x of list(steps).slice(0, LIMITS.steps)) {
+    const text = clip(x.text, 200);
+    if (!text) continue;
+    const id = newId();
+    if (typeof x.id === 'string') map.set(x.id, id);
+    const parent = typeof x.parent === 'string' ? map.get(x.parent) ?? null : null;
+    tree.push({ id, text, parent: parent !== id ? parent : null, after: (Array.isArray(x.after) ? x.after : []).map((a: unknown) => typeof a === 'string' ? map.get(a) : undefined).filter((a: string | undefined): a is string => !!a && a !== id).slice(0, 10), done: null });
+  }
+  if (!tree.length) return null;
+  if (open) { open.steps = tree; journal(memory, 'goal', `Заново разложила цель: ${open.title}`, now); return open; }
+  const goal: Goal = { id: newId(), title: value, created: now, done: null, steps: tree };
+  memory.goals = [...memory.goals, goal].slice(-LIMITS.goals);
+  journal(memory, 'goal', `Разложила цель на ${tree.length} шагов: ${value}`, now);
+  return goal;
+}
+// Steps that can be done now: not done, nothing they wait for is open, and no open smaller steps inside.
+export { nextStepsOf as nextSteps };
+export function stepDone(memory: Memory, goal: Goal, stepId: string, done: boolean, now = new Date().toISOString()) {
+  const step = goal.steps.find(s => s.id === stepId);
+  if (!step) return false;
+  step.done = done ? step.done || now : null;
+  const finished = goal.steps.every(s => s.done);
+  if (finished && !goal.done) { goal.done = now; journal(memory, 'goal', `Цель достигнута: ${goal.title}`, now); }
+  if (!finished) goal.done = null;
+  return true;
+}
+export function goalTree(goal: Goal) {
+  const depth = (s: Step): number => { const parent = goal.steps.find(x => x.id === s.parent); return parent ? 1 + depth(parent) : 0; };
+  const name = (id: string) => goal.steps.find(x => x.id === id)?.text;
+  const lines: string[] = [];
+  const walk = (parent: string | null) => { for (const s of goal.steps.filter(x => x.parent === parent)) { lines.push(`${'  '.repeat(depth(s))}- ${s.done ? '[готово] ' : ''}${s.text}${s.after.length ? ` (после: ${s.after.map(name).filter(Boolean).join('; ')})` : ''}`); walk(s.id); } };
+  walk(null);
+  return lines.join('\n');
+}
+// A prediction trains her reasoning: it is checked against what really happened.
+export function predict(memory: Memory, entry: any, now = new Date().toISOString()) {
+  const text = clip(entry?.text, 300);
+  if (!text || memory.predictions.some(p => !p.outcome && similarity(p.text, text) >= 0.6)) return null;
+  const prediction: Prediction = { id: newId(), text, kind: REASONINGS.includes(entry.kind) ? entry.kind : 'pattern', confidence: percent(entry.confidence), created: now, due: validDate(entry.due) ? entry.due : null, checked: null, outcome: null, note: '' };
+  memory.predictions = [...memory.predictions, prediction].slice(-LIMITS.predictions);
+  journal(memory, 'prediction', `Прогноз (${prediction.confidence}%): ${text}`, now);
+  return prediction;
+}
+// A logic error goes to the journal, and its fix becomes a rule she follows from now on.
+export function mistake(memory: Memory, entry: any, origin: string | null = null, now = new Date().toISOString()) {
+  const text = clip(entry?.text, 300);
+  if (!text || memory.mistakes.slice(-30).some(m => similarity(m.text, text) >= 0.6)) return null;
+  const fix = clip(entry.fix, 300);
+  const rule = fix ? upsert(memory, 'rule', fix, { source: 'logic', weight: 0.6, now, origin }) : null;
+  const record: Mistake = { id: newId(), at: now, kind: MISTAKE_KINDS.includes(entry.kind) ? entry.kind : 'other', text, fix, rule: rule?.item.id ?? null, origin };
+  memory.mistakes = [...memory.mistakes, record].slice(-LIMITS.mistakes);
+  journal(memory, 'mistake', `Ошибка в рассуждении: ${text}${fix ? ' → правило: ' + fix : ''}`, now);
+  return record;
+}
+export function check(memory: Memory, id: unknown, outcome: unknown, note: unknown = '', fix: unknown = '', now = new Date().toISOString()) {
+  const p = memory.predictions.find(x => x.id === id && !x.outcome);
+  if (!p || (outcome !== 'right' && outcome !== 'wrong')) return false;
+  p.outcome = outcome; p.checked = now; p.note = clip(note, 300);
+  journal(memory, 'prediction', `${outcome === 'right' ? 'Прогноз сбылся' : 'Прогноз не сбылся'}: ${p.text}`, now);
+  if (outcome === 'wrong') mistake(memory, { kind: 'prediction', text: `Не сбылся прогноз «${p.text}»${p.note ? ': ' + p.note : ''}`, fix }, p.id, now);
+  return true;
+}
+const kindNames: Record<Reasoning, string> = { pattern: 'закономерность', cause: 'причина и следствие', habit: 'привычка', plan: 'по планам', analogy: 'аналогия' };
+// How well each type of reasoning has worked so far.
+export function accuracy(memory: Memory) {
+  return REASONINGS.map(kind => { const done = memory.predictions.filter(p => p.kind === kind && p.outcome); return { kind, checked: done.length, right: done.filter(p => p.outcome === 'right').length }; });
+}
+const accuracyLine = (memory: Memory) => accuracy(memory).filter(a => a.checked).map(a => `${kindNames[a.kind]} (${a.kind}): ${a.right} из ${a.checked}, ${Math.round(a.right / a.checked * 100)}%`).join('; ') || 'прогнозов ещё не проверяли';
+const causeLine = (c: Cause) => `[${c.id}] ${c.cause} → ${c.effect} (уверенность ${c.confidence}%${c.hits > 1 ? `, видела ${c.hits} раза` : ''})`;
+const goalLine = (g: Goal) => `[${g.id}] ${g.title}: ${g.steps.map(s => `[${s.id}] ${s.done ? '(готово) ' : ''}${s.text}`).join('; ')}`;
+
 // «Напомни, когда заговорим о X, что Y» and «Когда заговорим о X, напомни Y».
 const TALK = String.raw`когда\s+(?:мы\s+)?(?:снова\s+|опять\s+)?(?:заговорим|поговорим|будем\s+говорить|будем\s+обсуждать|начнём\s+обсуждать|начнем\s+обсуждать|вспомним|речь\s+зайд[её]т|зайд[её]т\s+речь|коснёмся|коснемся|дойд[её]м\s+до)\s+(?:(?:о|об|обо|про|до|темы)\s+)?`;
 const REMIND_FIRST = new RegExp(String.raw`^\s*(?:миюнэя[\s,!.]*)?(?:пожалуйста[\s,]*)?напомни(?:\s+мне)?(?:[\s,]+пожалуйста)?[\s,]+${TALK}(.{2,120}?)\s*(?:,|:|—|-|\s+то\s+)\s*(?:то\s+)?(?:(?:о\s+том,?\s+что|что|про|обо|об|о)\s+)?([\s\S]{2,300}?)[\s.!]*$`, 'i');
@@ -345,13 +477,19 @@ export const REFLECT_PROMPT = `Ты модуль памяти помощницы
 "questions":["вопрос пользователю о пробеле в памяти"],
 "promises":[{"text":"что ты пообещала сделать, проверить или подготовить","due":"ГГГГ-ММ-ДД"}],
 "kept":["id обещаний, которые ты в этом разговоре выполнила"],
-"reminders":[{"about":"тема разговора","text":"о чём напомнить, когда она зайдёт"}]}
+"reminders":[{"about":"тема разговора","text":"о чём напомнить, когда она зайдёт"}],
+"causes":[{"cause":"причина","effect":"следствие","confidence":70}],
+"logic_errors":[{"kind":"calc","text":"в чём ты ошиблась в рассуждении","fix":"правило, как рассуждать впредь"}],
+"checks":[{"id":"id прогноза","outcome":"right","note":"что показал разговор"}],
+"goals":[{"title":"цель пользователя","steps":[{"id":"s1","text":"подзадача","parent":null,"after":[]}]}],
+"steps_done":[{"goal":"id цели","step":"id шага"}]}
 Факты: только устойчивое и полезное в будущем — кто пользователь, его предпочтения, привычки, планы, важные обстоятельства. Пиши в третьем лице, коротко, по-русски. Не записывай содержимое заметок, разовые просьбы и общие знания.
 Правила: явные просьбы о стиле и порядке работы. Обязательно сделай рефлексию: оцени свои ответы. Если пользователь тебя поправил, переспросил, попросил короче, иначе или по-другому, сформулируй из этого правило.
 Самооценка (review): честно оцени свои ответы в этом разговоре от 1 до 5 (5 — пользователь получил то, что хотел, с первого раза). weak — главное слабое место одной фразой, если оно было. lesson — правило-навык для себя на будущее, только если слабое место повторимо, например «Перед длинным ответом уточнять, что именно нужно». Не выдумывай промахов, если всё прошло хорошо.
 Открытые вопросы: если пользователь в разговоре ответил на один из них, верни answers. Если в разговоре появилось что-то важное и непонятное (неизвестный человек или проект), можно добавить до двух вопросов в questions.
 Обещания: если ты (Миюнэя) пообещала что-то сделать позже — проверить, подготовить, напомнить, вернуться к вопросу, — запиши это в promises; due — только если срок назван. Если в разговоре ты выполнила одно из открытых обещаний, верни его id в kept.
 Напоминания: если пользователь попросил напомнить о чём-то, когда речь зайдёт о теме (а не в определённое время), запиши в reminders; уже поставленные не повторяй.
+Логика. causes — причинно-следственные связи из жизни пользователя, которые разговор показал явно («после поздних встреч плохо спит»); уверенность в процентах. logic_errors — только если пользователь поправил твой расчёт, вывод или допущение, или ты сама заметила ошибку в рассуждении: kind = calc (расчёт), assumption (необоснованное допущение), causality (перепутала причину и следствие или связь), memory (опиралась на неверный факт), other; fix — правило, как не повторить. checks — если разговор подтвердил или опроверг твой прогноз из списка ниже. goals — только если пользователь поставил себе цель и вы обсуждали, как её достичь; steps — дерево подзадач (parent — более крупная подзадача, after — что сделать раньше). steps_done — шаги целей из списка ниже, которые пользователь сделал.
 Учитывай сигналы поведения: отменённая задача или заметка, созданная тобой, — промах (пойми, что было не так); скопированный или сохранённый ответ — удача; переспрос — ответ был непонятен; остановленный ответ — слишком длинно или не о том.
 ${SHAPES}
 links — id заметок, задач, фактов и правил из списков ниже, к которым относится запись. Необязательные поля можно опускать. Если тема пустая (только приветствие), episode равен null. Если запоминать нечего, верни пустые массивы.`;
@@ -370,6 +508,7 @@ export const SLEEP_PROMPT = `Ты модуль памяти помощницы �
 "conflicts":[{"ids":["id","id"],"question":"вопрос пользователю, что из этого верно сейчас"}],
 "questions":["вопрос пользователю о пробеле в памяти"],
 "kept":["id обещаний, которые уже выполнены или потеряли смысл"],
+"causes":[{"cause":"причина","effect":"следствие","confidence":70,"evidence":["id эпизода или факта"]}],
 "diary":"запись в дневник от первого лица",
 "summary":"одно-два предложения о том, что изменилось"}
 1. Объедини похожие факты и похожие правила (только одного вида).
@@ -384,7 +523,8 @@ export const SLEEP_PROMPT = `Ты модуль памяти помощницы �
 10. Если в самооценках эпизодов повторяется одно слабое место, сделай из него правило в rules со ссылками на эти эпизоды.
 11. Посмотри на свои открытые обещания: если по эпизодам видно, что обещание выполнено или потеряло смысл, верни его id в kept.
 12. Если в памяти есть важные пробелы, добавь до трёх вопросов пользователю (questions). Не спрашивай то, что уже есть в открытых вопросах.
-13. Напиши запись в дневник Миюнэи: 2–5 тёплых предложений от первого лица о том, что ты узнала и поняла о пользователе за это время и что изменила в себе. Без выдумок; если нового мало, так и скажи.
+13. Найди причинно-следственные связи в жизни пользователя, которые повторяются в нескольких эпизодах или фактах (causes), со ссылками на них (evidence) и уверенностью в процентах. Уже известные связи из списка повтори, только если нашла новое подтверждение.
+14. Напиши запись в дневник Миюнэи: 2–5 тёплых предложений от первого лица о том, что ты узнала и поняла о пользователе за это время и что изменила в себе. Без выдумок; если нового мало, так и скажи.
 ${SHAPES}
 Записи с пометкой «закреплено» не удаляй, не переписывай и не считай устаревшими в conflicts. Ничего не выдумывай. Если менять нечего, верни пустые массивы.`;
 
@@ -393,10 +533,16 @@ export const THINK_PROMPT = `Ты — Миюнэя, личная помощни�
 "questions":["вопрос пользователю о важном пробеле"],
 "conflicts":[{"ids":["id","id"],"question":"мягкий вопрос, что из этого верно сейчас"}],
 "skills":[{"text":"правило-навык: как тебе лучше работать с пользователем"}],
+"predictions":[{"text":"проверяемый прогноз о пользователе","kind":"habit","confidence":60,"due":"ГГГГ-ММ-ДД"}],
+"checks":[{"id":"id прогноза","outcome":"right","note":"что показала реальность","fix":"правило, если ошиблась"}],
+"causes":[{"cause":"причина","effect":"следствие","confidence":70,"evidence":["id"]}],
 "summary":"о чём ты думала, одной фразой"}
 Виды мыслей (kind): hypothesis — догадка о пользователе, которую стоит проверить («Кажется, вечером ему легче думать о планах»); idea — что ты могла бы предложить или подготовить для него; reflection — вывод о том, как прошли ваши разговоры и что у тебя получается хуже; skill — чему тебе стоит научиться.
 Пиши 1–4 мысли, каждая — 1–2 тёплых предложения по-русски, конкретно и по материалам ниже, со ссылками на id записей (links). Не повторяй прошлые размышления и то, что уже записано в фактах. Не выдумывай фактов: догадки называй догадками.
 questions — до двух вопросов, только если они правда важны и их ещё нет среди открытых. conflicts — противоречащие факты, если заметила. skills — до двух правил, только если они следуют из самооценок и слабых мест разговоров.
+Тренировка логики. Сделай 1–2 проверяемых прогноза (predictions) по данным о пользователе: что он скорее сделает, спросит или как пойдёт его дело, — с уверенностью в процентах и сроком проверки due через 1–14 дней. kind — тип рассуждения: pattern (закономерность), cause (причина и следствие), habit (привычка), plan (по его планам), analogy (по похожему случаю). Опирайся на типы с высокой точностью из статистики ниже, а слабые тренируй осторожно, с меньшей уверенностью.
+checks — проверь прошлые прогнозы, срок которых прошёл, по разговорам и фактам после них: right — сбылся, wrong — нет. Если данных нет, не проверяй. Если ошиблась, в fix сформулируй правило, как рассуждать в следующий раз, с учётом журнала ошибок.
+causes — причинно-следственные связи из жизни пользователя, которые видны по нескольким эпизодам или фактам, со ссылками evidence.
 Если думать пока не о чем, верни пустые массивы.`;
 
 export const COMPACT_PROMPT = 'Ты сжимаешь начало разговора пользователя с помощницей Миюнэей, чтобы она не теряла нить. Напиши краткое резюме по-русски до 1200 знаков: о чём говорили, что решили, какие просьбы и договорённости остались в силе, открытые вопросы. Только резюме, без вступлений.';
@@ -422,6 +568,8 @@ export function reflectInput(memory: Memory, dialog: Dialog, workspace: Workspac
     `Открытые вопросы к пользователю:\n${memory.questions.map(q => `[${q.id}] ${q.text}`).join('\n') || '— нет'}`,
     `Твои открытые обещания:\n${openPromises(memory).map(p => `[${p.id}] ${p.text}`).join('\n') || '— нет'}`,
     `Поставленные напоминания:\n${memory.reminders.filter(x => !x.fired).map(x => `когда речь о «${x.about}»: ${x.text}`).join('\n') || '— нет'}`,
+    `Твои непроверенные прогнозы:\n${memory.predictions.filter(p => !p.outcome).slice(-15).map(p => `[${p.id}] ${p.text}`).join('\n') || '— нет'}`,
+    `Цели пользователя:\n${memory.goals.filter(g => !g.done).map(goalLine).join('\n') || '— нет'}`,
     `Сигналы поведения пользователя:\n${dialog.signals.map(s => '- ' + s).join('\n') || '— нет'}`,
     `Разговор ${day(dialog.updatedAt)}:\n${dialog.summary ? 'Начало (кратко): ' + dialog.summary + '\n' : ''}${transcript(dialog.messages)}`].join('\n\n');
 }
@@ -445,6 +593,7 @@ export function sleepInput(memory: Memory, workspace: Workspace | null = null, n
     `Общее понимание пользователя:\n${memory.understanding?.text || '— ещё нет'}`,
     `Открытые вопросы к пользователю:\n${memory.questions.map(q => `[${q.id}] ${q.text}`).join('\n') || '— нет'}`,
     `Твои открытые обещания:\n${openPromises(memory).map(p => `[${p.id}] ${day(p.created)}: ${p.text}`).join('\n') || '— нет'}`,
+    `Известные причины и следствия:\n${memory.causes.slice(-40).map(causeLine).join('\n') || '— нет'}`,
     `Новые и изменённые заметки:\n${notes.join('\n\n') || '— нет'}`, `Открытые задачи:\n${tasks.join('\n') || '— нет'}`].join('\n\n').slice(0, 80_000);
 }
 
@@ -498,6 +647,12 @@ export function applyReflection(memory: Memory, result: any, dialog: Dialog, kno
   for (const entry of list(result.promises)) if (promise(memory, entry.text, entry.due, episode?.id ?? null, now)) changes++;
   for (const id of ids(result.kept)) if (keep(memory, id, now)) changes++;
   for (const entry of list(result.reminders)) if (remind(memory, entry.about, entry.text, '', now)) changes++;
+  const origin = episode?.id ?? null;
+  for (const entry of list(result.causes).slice(0, 5)) if (addCause(memory, entry.cause, entry.effect, entry.confidence, origin ? [origin] : [], now)) changes++;
+  for (const entry of list(result.logic_errors).slice(0, 3)) if (mistake(memory, entry, origin, now)) changes++;
+  for (const entry of list(result.checks)) if (check(memory, entry.id, entry.outcome, entry.note, entry.fix, now)) changes++;
+  for (const entry of list(result.goals).slice(0, 2)) if (addGoal(memory, entry.title, entry.steps, now)) changes++;
+  for (const entry of list(result.steps_done)) { const goal = memory.goals.find(g => g.id === entry.goal); if (goal && typeof entry.step === 'string' && stepDone(memory, goal, entry.step, true, now)) changes++; }
   for (const entry of list(result.answers)) if (typeof entry.question === 'string' && answer(memory, entry.question, entry.text, now, 'dialog', episode?.id ?? null)) changes++;
   for (const text of Array.isArray(result.questions) ? result.questions.slice(0, 2) : []) if (ask(memory, 'gap', text, {}, now)) changes++;
   findGaps(memory, now);
@@ -551,6 +706,7 @@ export function applySleep(memory: Memory, result: any, now = Date.now(), known:
     }
     for (const text of Array.isArray(result.questions) ? result.questions.slice(0, 3) : []) ask(memory, 'gap', text, {}, at);
     for (const id of ids(result.kept)) keep(memory, id, at);
+    for (const entry of list(result.causes).slice(0, 8)) { const evidence = ids(entry.evidence, 10).filter(id => episodes.has(id) || !!find(id)); if (evidence.length) addCause(memory, entry.cause, entry.effect, entry.confidence, evidence, at); }
     const diary = clip(result.diary, 2000);
     if (diary) { memory.diary.push({ id: newId(), date: at, text: diary }); memory.diary = memory.diary.slice(-LIMITS.diary); }
   }
@@ -576,7 +732,11 @@ export function thinkInput(memory: Memory, workspace: Workspace | null = null, n
     `Открытые вопросы к пользователю:\n${memory.questions.map(q => q.text).join('\n') || '— нет'}`,
     `Твои открытые обещания:\n${openPromises(memory).map(p => p.text).join('\n') || '— нет'}`,
     `Заметки:\n${notes.join('\n') || '— нет доступа или пусто'}`, `Открытые задачи:\n${tasks.join('\n') || '— нет'}`,
-    `Твои прошлые размышления (не повторяй их):\n${memory.thoughts.slice(-12).map(t => `- ${t.text}`).join('\n') || '— нет'}`].join('\n\n').slice(0, 24_000);
+    `Твои прогнозы на проверку:\n${memory.predictions.filter(p => !p.outcome).slice(-15).map(p => `[${p.id}] ${p.text} (${p.kind}, ${p.confidence}%, сделан ${day(p.created)}${p.due ? (p.due <= today(now) ? ', срок прошёл — проверь' : ', проверить ' + day(p.due)) : ''})`).join('\n') || '— нет'}`,
+    `Точность твоих рассуждений по типам: ${accuracyLine(memory)}.`,
+    `Журнал логических ошибок (последние):\n${memory.mistakes.slice(-8).map(m => `- ${m.text}${m.fix ? ' → ' + m.fix : ''}`).join('\n') || '— нет'}`,
+    `Известные причины и следствия:\n${memory.causes.slice(-20).map(causeLine).join('\n') || '— нет'}`,
+    `Твои прошлые размышления (не повторяй их):\n${memory.thoughts.slice(-12).map(t => `- ${t.text}`).join('\n') || '— нет'}`].join('\n\n').slice(0, 30_000);
 }
 // Keeps new thoughts, questions, contradictions and skills from a thinking cycle; returns the thoughts added.
 export function applyThinking(memory: Memory, result: any, now = Date.now(), known: Set<string> = new Set()) {
@@ -598,6 +758,10 @@ export function applyThinking(memory: Memory, result: any, now = Date.now(), kno
     if (pair.length >= 2) ask(memory, 'conflict', entry.question, { facts: pair }, at);
   }
   for (const entry of list(result.skills).slice(0, 2)) upsert(memory, 'rule', entry.text, { source: 'thought', weight: 0.4, now: at });
+  // Logic training: check what is due first, then make new predictions.
+  for (const entry of list(result.checks).slice(0, 6)) check(memory, entry.id, entry.outcome, entry.note, entry.fix, at);
+  for (const entry of list(result.predictions).slice(0, 2)) predict(memory, entry, at);
+  for (const entry of list(result.causes).slice(0, 3)) addCause(memory, entry.cause, entry.effect, entry.confidence, ids(entry.evidence, 10).filter(own), at);
   journal(memory, 'thought', 'Размышляла: ' + (clip(result.summary, 300) || (added.length ? added.map(t => t.text).join(' ') : 'ничего нового')), at);
   return added;
 }
@@ -628,7 +792,8 @@ function applyTopics(memory: Memory, result: any, find: (id: unknown) => MemoryI
 }
 
 type Options = {
-  ask(system: string, user: string, timeout?: number): Promise<string>;
+  // strong asks for the stronger model, when one is chosen: for sleep, thinking and planning.
+  ask(system: string, user: string, timeout?: number, strong?: boolean): Promise<string>;
   embed?(texts: string[], timeout?: number): Promise<number[][]>;
   embedModel?(): string;
   available(): boolean; workspace(): Workspace | null; idleMs?: number; tickMs?: number;
@@ -741,7 +906,7 @@ export async function openMemory(dataDir: string, options: Options) {
     const notes = changedNotes(memory, workspace);
     let result = null;
     if (memory.items.length || memory.episodes.some(e => !e.consolidated) || notes.length) {
-      try { result = parseJson(await options.ask(SLEEP_PROMPT, sleepInput(memory, workspace, now), 180_000)); }
+      try { result = parseJson(await options.ask(SLEEP_PROMPT, sleepInput(memory, workspace, now), 180_000, true)); }
       catch (e) { retrySleepAt = Date.now() + 3_600_000; throw e; }
     }
     applySleep(memory, result, Date.now(), new Set([...titles().keys(), ...memory.episodes.map(e => e.id)]));
@@ -764,7 +929,7 @@ export async function openMemory(dataDir: string, options: Options) {
     if (!canThink()) throw Object.assign(new Error(memory.settings.private ? 'В приватном режиме Миюнэя не размышляет.' : 'Размышления выключены или в памяти пока слишком мало.'), { status: 409 });
     if (thinking(now).left <= 0) throw Object.assign(new Error('На сегодня размышлений достаточно: лимит выбранной частоты исчерпан.'), { status: 429 });
     let result;
-    try { result = parseJson(await options.ask(THINK_PROMPT, thinkInput(memory, options.workspace(), now), 120_000)); }
+    try { result = parseJson(await options.ask(THINK_PROMPT, thinkInput(memory, options.workspace(), now), 120_000, true)); }
     catch (e) { retryThinkAt = Date.now() + 3_600_000; memory.thinks = [...memory.thinks, new Date(now).toISOString()].slice(-20); await save(); throw e; }
     const added = applyThinking(memory, result, now, new Set(titles().keys()));
     await save();
@@ -800,6 +965,8 @@ export async function openMemory(dataDir: string, options: Options) {
       diary: [...memory.diary].reverse(), journal: [...memory.journal].reverse(),
       topics: memory.topics, understanding: memory.understanding, questions: memory.questions, growth: growth(memory, now),
       reminders: [...memory.reminders].reverse(), promises: [...memory.promises].reverse(),
+      causes: [...memory.causes].sort((a, b) => b.hits - a.hits || b.confidence - a.confidence), goals: [...memory.goals].reverse().map(g => ({ ...g, next: nextStepsOf(g).map(s => s.id) })),
+      predictions: [...memory.predictions].reverse(), mistakes: [...memory.mistakes].reverse(),
       thoughts: [...memory.thoughts].reverse(), thinking: (() => { const t = thinking(now); return { enabled: memory.settings.thinking, intensity: memory.settings.intensity, today: t.today, perDay: t.perDay, next: t.left > 0 ? new Date(Math.max(t.next, now)).toISOString() : new Date(t.next).toISOString() }; })(),
     };
   };
@@ -863,11 +1030,29 @@ export async function openMemory(dataDir: string, options: Options) {
       if (memory.settings.private || !memory.settings.enabled) memory.dialogs = [];
       await save();
     },
+    // Decomposes a goal into a tree of steps with the planning model and keeps it in «Дела».
+    async plan(title: string) {
+      const recall = memoryContext(memory, title, titles(), Date.now(), { latest: title });
+      const input = [`Сегодня ${new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`, `Цель пользователя: ${clip(title, 200)}`, recall || 'О пользователе пока ничего не известно.'].join('\n\n');
+      const result = parseJson(await options.ask(GOAL_PROMPT, input, 60_000, true));
+      const goal = addGoal(memory, clip(result?.title, 200) || title, result?.steps);
+      if (!goal) throw Object.assign(new Error('Не получилось разложить цель на шаги. Попробуйте сформулировать её иначе.'), { status: 502 });
+      await changed();
+      return goal;
+    },
     async remind(about: string, text: string, said = '') { const added = remind(memory, about, text, said); if (added) await changed(); return added; },
     async promise(text: string, due?: string | null) { const added = promise(memory, text, due, null); if (added) await save(); return added; },
     async answer(id: string, text: string) { const added = answer(memory, id, text); if (added) await changed(); return !!added; },
     async add(kind: MemoryKind, text: string, extra: { category?: unknown; until?: unknown } = {}) { const added = upsert(memory, kind, text, { source: 'user', pinned: true, ...extra }); await changed(); return added?.item ?? null; },
-    async edit(id: string, change: { text?: string; pinned?: boolean; topic?: string; outcome?: string; category?: string; until?: string | null; name?: string; about?: string; type?: string; title?: string; summary?: string; done?: boolean }) {
+    async edit(id: string, change: { text?: string; pinned?: boolean; topic?: string; outcome?: string; category?: string; until?: string | null; name?: string; about?: string; type?: string; title?: string; summary?: string; done?: boolean; step?: string; result?: 'right' | 'wrong'; note?: string }) {
+      const goal = memory.goals.find(g => g.id === id), prediction = memory.predictions.find(p => p.id === id);
+      if (goal) {
+        if (change.step !== undefined) { if (!stepDone(memory, goal, change.step, change.done !== false)) return false; }
+        else if (change.done !== undefined) for (const s of goal.steps) stepDone(memory, goal, s.id, change.done);
+        if (change.title !== undefined && clip(change.title, 200)) goal.title = clip(change.title, 200);
+        await save(); return true;
+      }
+      if (prediction) { if (!change.result || !check(memory, id, change.result, change.note || 'отметил пользователь', '')) return false; await changed(); return true; }
       if (id === 'understanding') {
         if (!memory.understanding || change.text === undefined || !clip(change.text, 1500)) return false;
         memory.understanding = { text: clip(change.text, 1500), updated: new Date().toISOString() };
@@ -920,8 +1105,13 @@ export async function openMemory(dataDir: string, options: Options) {
     },
     async remove(id: string) {
       if (id === 'understanding') { if (!memory.understanding) return false; memory.understanding = null; await changed(); return true; }
-      const count = () => memory.items.length + memory.episodes.length + memory.entities.length + memory.diary.length + memory.topics.length + memory.questions.length + memory.reminders.length + memory.promises.length + memory.thoughts.length;
+      const count = () => memory.items.length + memory.episodes.length + memory.entities.length + memory.diary.length + memory.topics.length + memory.questions.length + memory.reminders.length + memory.promises.length + memory.thoughts.length
+        + memory.causes.length + memory.goals.length + memory.predictions.length + memory.mistakes.length;
       const before = count();
+      memory.causes = memory.causes.filter(c => c.id !== id);
+      memory.goals = memory.goals.filter(g => g.id !== id);
+      memory.predictions = memory.predictions.filter(p => p.id !== id);
+      memory.mistakes = memory.mistakes.filter(m => m.id !== id);
       memory.topics = memory.topics.filter(t => t.id !== id);
       memory.questions = memory.questions.filter(q => q.id !== id);
       memory.reminders = memory.reminders.filter(x => x.id !== id);

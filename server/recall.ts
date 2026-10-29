@@ -1,4 +1,4 @@
-import type { Memory, MemoryItem, Episode, Entity, RelationType, Topic, Category, Reminder } from './memory.ts';
+import type { Memory, MemoryItem, Episode, Entity, RelationType, Topic, Category, Reminder, Cause, Goal } from './memory.ts';
 
 // Recall: what the assistant remembers before an answer. Records are scored by meaning (embedding vectors from
 // cloud.ru), by shared words, by strength and freshness; then the knowledge graph adds what the chosen records lead to.
@@ -44,7 +44,9 @@ export const itemText = (i: MemoryItem) => i.text;
 export const episodeText = (e: Episode) => e.topic + (e.outcome ? ' — ' + e.outcome : '');
 export const entityText = (e: Entity) => [e.name, ...e.aliases].join(', ') + (e.about ? ': ' + e.about : '');
 export const topicText = (t: Topic) => t.title + (t.summary ? ': ' + t.summary : '');
-export const searchTexts = (memory: Memory) => [...memory.items.map(itemText), ...memory.episodes.map(episodeText), ...memory.entities.map(entityText), ...memory.topics.map(topicText), ...memory.reminders.filter(x => !x.fired).map(x => x.about)];
+export const causeText = (c: Cause) => `${c.cause} → ${c.effect}`;
+export const searchTexts = (memory: Memory) => [...memory.items.map(itemText), ...memory.episodes.map(episodeText), ...memory.entities.map(entityText), ...memory.topics.map(topicText), ...memory.reminders.filter(x => !x.fired).map(x => x.about),
+  ...memory.causes.map(causeText), ...memory.goals.filter(g => !g.done).map(g => g.title)];
 
 // Time words in a question («вчера», «на прошлой неделе», «в прошлый вторник», «три дня назад») become a date range.
 const NUMBERS: Record<string, number> = { один: 1, одну: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5, шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10 };
@@ -119,6 +121,7 @@ export function neighbours(memory: Memory, id: string) {
   return out;
 }
 
+export const nextStepsOf = (goal: Goal) => goal.steps.filter(s => !s.done && s.after.every(id => goal.steps.find(x => x.id === id)?.done) && !goal.steps.some(x => x.parent === s.id && !x.done));
 export function memoryContext(memory: Memory, query: string, titles: Titles = new Map(), now = Date.now(), recall: Recall = {}) {
   if (!memory.settings.enabled) return '';
   const q = tokens(query);
@@ -193,6 +196,14 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   if (entities.length) { add('\nЛюди, проекты и темы из разговора:'); for (const { e } of entities) add(`- ${e.name} (${entityNames[e.type]})${e.about ? ': ' + e.about : ''}`); }
   if (episodes.length) { add('\nПрошлые разговоры по теме:'); for (const { e } of episodes) add(`- ${day(e.date)}: ${episodeText(e)}${linked(e.links)}`); }
   if (chain.length) { add('\nСвязи по теме (учитывай всю историю вопроса):'); for (const line of chain) add('- ' + line); }
+  // Cause and effect from the user's own life support conclusions about him.
+  const causes = memory.causes.map(c => ({ c, score: match(causeText(c)) })).filter(x => x.score > 0.3).sort((a, b) => b.score - a.score || b.c.confidence - a.c.confidence).slice(0, 5);
+  if (causes.length) { add('\nПричины и следствия из жизни пользователя (опирайся на них в выводах, называй уверенность, если она невысока):'); for (const { c } of causes) add(`- ${causeText(c)} (уверенность ${c.confidence}%)`); }
+  const goals = memory.goals.filter(g => !g.done).map(g => ({ g, score: match(g.title + ' ' + g.steps.map(s => s.text).join(' ')) })).sort((a, b) => b.score - a.score).slice(0, 3);
+  if (goals.length) {
+    add('\nЦели пользователя и что по ним можно делать сейчас (подсказывай следующий шаг, когда разговор об этом):');
+    for (const { g } of goals) { const ready = nextStepsOf(g); add(`- ${g.title}: сделано ${g.steps.filter(s => s.done).length} из ${g.steps.length}${ready.length ? '; можно сейчас: ' + ready.slice(0, 3).map(s => s.text).join('; ') : ''}`); }
+  }
   const promises = memory.promises.filter(p => !p.done).slice(-8);
   if (promises.length) { add('\nТвои открытые обещания пользователю (выполни, когда будет к месту, и не обещай то же снова):'); for (const p of promises) add(`- ${p.text} (обещала ${day(p.created)}${p.due ? (p.due < today(now) ? '; срок прошёл ' : '; срок до ') + day(p.due) : ''})`); }
   if (recall.thoughts?.length) { add('\nПока пользователя не было, ты размышляла. Если к месту, можешь коротко поделиться одной мыслью («пока вас не было, я думала о…»), но не навязывай:'); for (const t of recall.thoughts) add('- ' + t); }
