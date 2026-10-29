@@ -7,8 +7,8 @@ import { removeTree, readJSON, localRequest } from '../../scripts/runtime.mjs';
 export { removeTree as removeTemp };
 const resources=new Map();
 export function own(root,cleanup){resources.get(root)?.push(cleanup);}
-export async function fixture(t, name='Рабочий стол ! & ^ (проект) % #') {
-  const parent=await mkdtemp(join(tmpdir(),'Miyuneya-test-'));
+export async function fixture(t, name='Рабочий стол ! & ^ (проект) % #', base=tmpdir()) {
+  const parent=await mkdtemp(join(base,'Miyuneya-test-'));
   const root=join(parent,name);await mkdir(root);
   for(const path of ['scripts','server','src','web','dist','package.json','Miyuneya.bat']) await cp(new URL('../../'+path,import.meta.url),join(root,path),{recursive:true});
   resources.set(root,[]);

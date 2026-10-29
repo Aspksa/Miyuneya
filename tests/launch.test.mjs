@@ -97,3 +97,11 @@ test('Update rejects attempts to write user data and commits only after real hea
   assert.equal(await readFile(join(root,'web','style.css'),'utf8'),css);await stop(root,child);
   assert.ok((await readdir(join(root,'.runtime','updates'))).some(n=>n.startsWith('installed-')));
 });
+
+test('Diagnostics never persist keys, environment values or note bodies',async t=>{
+  const root=await fixture(t);const secret='TEST_ONLY_SECRET_NOT_A_REAL_KEY';
+  const stored={revision:1,data:emptyWorkspace()};stored.data.notes.push({id:'private',title:'Приватно',body:secret,updatedAt:'2026-10-29T00:00:00.000Z'});
+  await atomicWrite(join(root,'data','workspace.json'),JSON.stringify(stored));
+  const child=nodeLaunch(root,{CLOUD_RU_API_KEY:secret,OPENAI_API_KEY:secret});await waitReady(root,child);await stop(root,child);
+  const log=await readFile(join(root,'.runtime','logs','startup.log'),'utf8');assert.equal(log.includes(secret),false);assert.equal(log.includes('CLOUD_RU_API_KEY'),false);
+});

@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, writeFile, mkdir, cp } from 'node:fs/promises';
+import { join, parse, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { tmpdir, homedir } from 'node:os';
+import { emptyWorkspace } from '../src/model.ts';
 import { fixture, batLaunch, waitReady, stop, launch, deadline } from './helpers/lifecycle.mjs';
 const windows=process.platform==='win32';
 if(windows) {
@@ -37,4 +40,21 @@ if(windows) {
     assert.equal((await deadline(child.closed)).code,20);assert.match(child.errors,/MIYUNEYA_NODE/);
     const log=await readFile(join(root,'.runtime','logs','bootstrap.log'),'utf8');assert.doesNotMatch(log,/node-download/);
   });
+  test('Windows relocation between distinct local drive letters retains saved notes',async t=>{
+    const checkout=fileURLToPath(new URL('..',import.meta.url));
+    const source=await fixture(t,'Исходный диск & !',dirname(checkout));
+    const alternate=parse(tmpdir()).root.toLowerCase()!==parse(source).root.toLowerCase()?tmpdir():homedir();
+    if(parse(alternate).root.toLowerCase()===parse(source).root.toLowerCase()){t.skip('A second local drive is unavailable on this Windows host');return;}
+    const destination=await fixture(t,'После переноса & !',alternate);
+    const first=batLaunch(source,{MIYUNEYA_OFFLINE:'1'});const pointer=await waitReady(source,first,30000);
+    const data=emptyWorkspace();data.notes.push({id:'moved',title:'После переноса',body:'Сохранённая запись',updatedAt:'2026-10-29T00:00:00.000Z'});
+    const response=await fetch(`http://127.0.0.1:${pointer.port}/api/workspace`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:0,data})});assert.equal(response.status,200);await response.arrayBuffer();
+    await stop(source,first);
+    await cp(source,destination,{recursive:true});
+    const next=batLaunch(destination,{MIYUNEYA_OFFLINE:'1'});const ready=await waitReady(destination,next,30000);
+    const restored=await (await fetch(`http://127.0.0.1:${ready.port}/api/workspace`)).json();assert.equal(restored.data.notes[0].body,'Сохранённая запись');
+    await stop(destination,next);
+    console.log('Drive relocation verified: '+parse(source).root+' -> '+parse(destination).root);
+  });
+
 }

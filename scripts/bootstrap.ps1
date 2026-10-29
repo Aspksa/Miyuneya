@@ -62,7 +62,6 @@ try {
     if (-not $node) {
         $stage = 'node-download'
         if ($env:MIYUNEYA_OFFLINE -eq '1') { throw 'Supported Node.js is missing and offline mode is enabled. Supply .runtime\node\node.exe or MIYUNEYA_NODE.' }
-        if (-not (Get-Command Get-FileHash -ErrorAction SilentlyContinue)) { throw 'PowerShell Get-FileHash is unavailable. Repair Windows PowerShell or provide a working Node.js.' }
         [IO.Directory]::CreateDirectory($runtime) | Out-Null
         $stageDir = Join-Path $runtime ('node-download-' + [Guid]::NewGuid().ToString('N'))
         [IO.Directory]::CreateDirectory($stageDir) | Out-Null
@@ -78,7 +77,11 @@ try {
                 $task.GetAwaiter().GetResult()
             } finally { $client.Dispose() }
             $stage = 'node-sha256'
-            $actual = (Get-FileHash -LiteralPath $candidateFile -Algorithm SHA256).Hash.ToLowerInvariant()
+            # Use .NET directly: Get-FileHash may be hidden by the PSModulePath inherited from PowerShell 7 through Node.
+            $sha = [Security.Cryptography.SHA256]::Create()
+            $stream = [IO.File]::OpenRead($candidateFile)
+            try { $actual = ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace('-', '').ToLowerInvariant() }
+            finally { $stream.Dispose(); $sha.Dispose() }
             if ($actual -ne $sources.windows.$arch) { throw 'SHA-256 mismatch. The downloaded binary will not be used.' }
             $stage = 'node-probe-download'
             $verified = Test-Node $candidateFile
@@ -117,11 +120,12 @@ try {
     if ($exitCode -ne 0) { Write-BootLog 'launcher-failed' $exitCode }
     exit $exitCode
 } catch {
-    Write-BootLog 'failed' $exitCode
+    $typeName = $_.Exception.GetBaseException().GetType().Name
+    Write-BootLog ('failed-' + $typeName) $exitCode
     [Console]::Error.WriteLine(('Miyuneya failed at stage: ' + $stage + ' (exit ' + $exitCode + ').'))
     # Controlled messages only: do not print arbitrary exceptions containing environment or secrets.
     $message = $_.Exception.Message
     if ($message -match '^(UNC paths|A 64-bit|MIYUNEYA_NODE|Supported Node|PowerShell Get-FileHash|Official Node|SHA-256|The verified|Another portable|Portable Node)') { [Console]::Error.WriteLine($message) }
-    else { [Console]::Error.WriteLine('Check the project path, write permission and access to https://nodejs.org/. See .runtime/logs/bootstrap.log.') }
+    else { [Console]::Error.WriteLine(('Failure type: ' + $typeName + '. Check the project path, write permission and access to https://nodejs.org/. See .runtime/logs/bootstrap.log.')) }
     exit $exitCode
 }
