@@ -1,13 +1,18 @@
 {
   "schema": 1,
-  "fingerprint": "4467fa3c1bb40fd5a8cac43fd1c9b63823ceb746615c26a99c8fcdf7c6e5eeff",
+  "fingerprint": "31d0396a59b067bba6df2603373bc057978b423ac104defda196b7033daa3137",
   "outputs": {
-    "main.js": "5dcc54edc121ff1b9773598b6f1c2ab4a453f9b7fdebd6b8bbf9bc65033e3dfe",
-    "model.js": "cb244f8c0176dc63e70f7266b054afdd5ef73b23ea6d1647cbbcc1acae62241f",
+    "main.js": "0cbac9a6d1fc736a75801a10b60f666d9b83249b4b776517ed62b75996cb9f5c",
+    "model.js": "251799bab97c84347debb98b8810173952107170906f029ae96355377d1cfb73",
     "calendar.js": "7d6dedde04a2a4fbbd90f785e0070231a39a533e949ecd1e935f2d377ccba6ee",
+    "assistant.js": "511ba566865577c4ccfe83500cae640e2bb6c501529268656578ff87140b3735",
     "index.html": "4c902078b29931eb7a9743bc63101ca0ceadea37ed4ab4311c78663f747117fe",
-    "style.css": "acf1e3a0b24b10a614725521c1d5b1c47ba429c679170e0a5227b3ee94611914",
+    "style.css": "67399d7d8c4896f27d9b57be8ee779b11871fac74be442f367de540859c25afc",
     "fox.svg": "bef18372e8192a53b6ded46ca31f9c07e4d6735b10c6142d223c64612924e50b",
-    "favicon.svg": "8a4ab40e731f2a9b9404ca0a703c2bd65df73e692c258d51158cdec9517634e9"
+    "favicon.svg": "8a4ab40e731f2a9b9404ca0a703c2bd65df73e692c258d51158cdec9517634e9",
+    "avatars/avatar1.png": "bcc0f540c1f2628f418713d5ae6582a23a1a3d95bac36a4f2b02e34479d77af8",
+    "avatars/avatar2.png": "7d3113263f834ed76aa818d73edd59a81ed7e557dd8ebce14add1e6700bc23a0",
+    "avatars/avatar3.png": "9eb46d2f5a6f54545690cacffbdb1a6256dcd40a8aee07461e8649a566dbc010",
+    "avatars/avatar4.png": "f1767d080142d982f3267859ba11d857b4f355219395af520bcafa06c62df3d4"
   }
 }
