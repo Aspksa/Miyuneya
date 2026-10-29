@@ -22,3 +22,13 @@ export function searchNotes(notes        , query        )         {
   const q = query.trim().toLocaleLowerCase('ru');
   return notes.filter(n => `${n.title} ${n.body}`.toLocaleLowerCase('ru').includes(q)).sort((a,b) => b.updatedAt.localeCompare(a.updatedAt));
 }
+                                                              
+                                                                                                            
+// Notes and tasks share one list: newest first, open tasks above finished ones.
+export function combineEntries(data                                    , query        , filter              = 'all')          {
+  const q = query.trim().toLocaleLowerCase('ru');
+  const notes          = filter === 'all' || filter === 'notes' ? searchNotes(data.notes, q).map(item => ({ kind: 'note', item, date: item.updatedAt })) : [];
+  const tasks          = filter === 'notes' ? [] : data.tasks.filter(t => t.title.toLocaleLowerCase('ru').includes(q) && (filter === 'all' || t.done === (filter === 'done'))).map(item => ({ kind: 'task', item, date: item.createdAt }));
+  const finished = (e       ) => e.kind === 'task' && e.item.done ? 1 : 0;
+  return [...notes, ...tasks].sort((a, b) => finished(a) - finished(b) || b.date.localeCompare(a.date));
+}
