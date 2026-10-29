@@ -2,24 +2,53 @@ import type { AssistantLook } from './model.js';
 
 // Floating avatar with a chat window. Appearance is saved in the workspace by the host;
 // screen position, chat geometry and history are per-browser conveniences in localStorage.
-export type AssistantStatus = { configured: boolean; keyHint: string; model: string };
+export type AssistantStatus = { configured: boolean; keyHint: string; model: string; context: boolean; customAvatar: number | null };
+export type EntryKind = 'task' | 'note';
 export type AssistantHost = {
-  look(): AssistantLook;
+  look(): Required<AssistantLook>;
   update(change: Partial<AssistantLook>): void;
   status(): AssistantStatus;
+  setStatus(status: AssistantStatus): void;
   toast(message: string): void;
+  addTask(title: string): string | null;
+  addNote(title: string, body: string): string | null;
+  remove(kind: EntryKind, id: string): boolean;
 };
-type Message = { role: 'user' | 'assistant'; content: string };
-type Point = { x: number; y: number };
+type Action = { kind: EntryKind; id: string; title: string; undone?: boolean };
+type Message = { role: 'user' | 'assistant'; content: string; actions?: Action[]; stopped?: boolean };
+type Position = { x: number; y: number; right?: boolean; bottom?: boolean };
 type Rect = { x: number; y: number; w: number; h: number };
 
 const sizes: Record<AssistantLook['size'], number> = { s: 120, m: 170, l: 240 };
 const sizeNames: [AssistantLook['size'], string][] = [['s', 'Маленький'], ['m', 'Средний'], ['l', 'Большой']];
 const MARGIN = 12;
+const SNAP = 48;
 const MIN_W = 340;
 const MIN_H = 380;
 const HISTORY_LIMIT = 60;
+const UPLOAD_LIMIT = 15_000_000;
 export const avatarUrl = (n: number) => `/avatars/avatar${n}.png`;
+export function avatarSrc(look: AssistantLook, status: AssistantStatus) {
+  if (look.avatar === 5 && status.customAvatar) return `/api/assistant/avatar?v=${status.customAvatar}`;
+  return avatarUrl(look.avatar === 5 ? 1 : look.avatar);
+}
+
+// The model marks requested entries with <task> and <note> tags; the user sees confirmations instead.
+export function visibleText(raw: string) {
+  let text = raw.replace(/<task>[\s\S]*?<\/task>/g, '').replace(/<note\b[^>]*>[\s\S]*?<\/note>/g, '');
+  const open = text.search(/<(task|note)\b/);
+  if (open >= 0) text = text.slice(0, open);
+  // Hide a tag that is still arriving, such as a trailing "<no".
+  text = text.replace(/<(t(a(s(k)?)?)?|n(o(t(e)?)?)?)?$/, '');
+  return text.replace(/\n{3,}/g, '\n\n').trim();
+}
+export function parseActions(raw: string) {
+  const tasks = [...raw.matchAll(/<task>([\s\S]*?)<\/task>/g)].map(m => m[1].trim()).filter(Boolean);
+  const notes = [...raw.matchAll(/<note\b(?:\s+title\s*=\s*"([^"]*)")?[^>]*>([\s\S]*?)<\/note>/g)]
+    .map(m => ({ title: (m[1] || '').trim(), body: m[2].trim() })).filter(n => n.title || n.body);
+  return { tasks, notes };
+}
+export const noteTitle = (text: string) => (text.split('\n').find(line => line.trim()) || 'Заметка из чата').replace(/^[#*\s-]+/, '').slice(0, 80).trim() || 'Заметка из чата';
 
 function stored<T>(key: string, fallback: T): T {
   try { const value = localStorage.getItem('miyuneya.' + key); return value ? JSON.parse(value) as T : fallback; } catch { return fallback; }
@@ -35,18 +64,26 @@ const finite = (...values: unknown[]) => values.every(v => typeof v === 'number'
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = '') {
   const el = document.createElement(tag); if (className) el.className = className; if (text) el.textContent = text; return el;
 }
+function button(label: string, className: string, onClick: () => void) {
+  const el = element('button', className, label); el.type = 'button'; el.addEventListener('click', onClick); return el;
+}
 
 export function mountAssistant(host: AssistantHost) {
   const avatar = element('button', 'assistant-avatar');
   avatar.type = 'button';
   avatar.setAttribute('aria-label', 'Помощница Миюнэя. Нажмите, чтобы открыть чат; правая кнопка мыши открывает меню');
   avatar.setAttribute('aria-haspopup', 'menu');
+  const float = element('span', 'avatar-float');
   const figure = element('img');
   figure.alt = ''; figure.draggable = false; figure.decoding = 'async';
-  avatar.append(figure);
+  float.append(figure); avatar.append(float);
+  figure.addEventListener('animationend', () => avatar.classList.remove('poke'));
 
   const menu = element('div', 'assistant-menu');
   menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Настройки аватара'); menu.hidden = true;
+
+  const upload = element('input');
+  upload.type = 'file'; upload.accept = 'image/png,image/jpeg,image/webp,image/gif'; upload.hidden = true;
 
   const chat = element('section', 'assistant-chat');
   chat.setAttribute('role', 'dialog'); chat.setAttribute('aria-label', 'Чат с Миюнэей'); chat.hidden = true;
@@ -57,12 +94,12 @@ export function mountAssistant(host: AssistantHost) {
   const input = chat.querySelector<HTMLTextAreaElement>('textarea')!;
   const sendButton = form.querySelector<HTMLButtonElement>('button')!;
   const head = chat.querySelector<HTMLElement>('.chat-head')!;
-  document.body.append(avatar, chat, menu);
+  document.body.append(avatar, chat, menu, upload);
 
   let history: Message[] = (stored<Message[]>('chat', []) || []).filter(m => (m?.role === 'user' || m?.role === 'assistant') && typeof m.content === 'string').slice(-HISTORY_LIMIT);
-  let position = stored<Point | null>('avatar-position', null);
+  let position = stored<Position | null>('avatar-position', null);
   let frame = stored<Rect | null>('chat-frame', null);
-  let pending = false;
+  let streaming: { message: Message; text?: HTMLParagraphElement; abort: AbortController } | null = null;
   let error = '';
   let shownSrc = '';
 
@@ -70,13 +107,25 @@ export function mountAssistant(host: AssistantHost) {
   function place() {
     const look = host.look(); const px = size();
     if (!position || !finite(position.x, position.y)) position = { x: innerWidth - px - 28, y: innerHeight - px - 20 };
-    position = { x: clamp(position.x, 0, innerWidth - px), y: clamp(position.y, 0, innerHeight - px) };
+    const x = position.right ? innerWidth - px : position.x, y = position.bottom ? innerHeight - px : position.y;
+    position = { ...position, x: clamp(x, 0, innerWidth - px), y: clamp(y, 0, innerHeight - px) };
     avatar.style.left = position.x + 'px'; avatar.style.top = position.y + 'px';
     avatar.style.width = avatar.style.height = px + 'px';
+    avatar.style.setProperty('--rest-opacity', String(look.opacity));
     avatar.hidden = look.hidden;
     avatar.classList.toggle('mirror', look.mirror);
-    const src = avatarUrl(look.avatar);
+    avatar.classList.toggle('still', !look.animate);
+    const src = avatarSrc(look, host.status());
     if (shownSrc !== src) { figure.src = src; head.querySelector('img')!.src = src; shownSrc = src; }
+  }
+  // Stick to a nearby screen edge and stay there when the window is resized.
+  function snap() {
+    if (!host.look().snap || !position) return;
+    const px = size(); const next: Position = { x: position.x, y: position.y };
+    if (position.x < SNAP) next.x = 0; else if (innerWidth - px - position.x < SNAP) next.right = true;
+    if (position.y < SNAP) next.y = 0; else if (innerHeight - px - position.y < SNAP) next.bottom = true;
+    avatar.classList.add('snapping'); setTimeout(() => avatar.classList.remove('snapping'), 260);
+    position = next; place();
   }
   function defaultFrame(): Rect {
     const w = Math.min(500, innerWidth - MARGIN * 2), h = Math.min(660, innerHeight - MARGIN * 2), px = size();
@@ -95,10 +144,32 @@ export function mountAssistant(host: AssistantHost) {
     return rect;
   }
 
-  function bubble(role: string, text: string) {
-    const item = element('div', 'chat-message ' + role);
-    item.append(element('p', '', text));
-    return item;
+  const saveHistory = () => { history = history.slice(-HISTORY_LIMIT); remember('chat', history.map(({ role, content, actions, stopped }) => ({ role, content, actions, stopped }))); };
+  function actionChip(action: Action) {
+    const chip = element('div', 'chat-action' + (action.undone ? ' undone' : ''));
+    chip.append(element('span', '', `${action.undone ? 'Отменено' : '✓'} ${action.kind === 'task' ? 'Задача' : 'Заметка'}: ${action.title}`));
+    if (!action.undone) chip.append(button('Отменить', 'chat-link', () => {
+      host.remove(action.kind, action.id); action.undone = true; saveHistory(); renderChat();
+    }));
+    return chip;
+  }
+  function bubble(message: Message) {
+    const item = element('div', 'chat-message ' + message.role);
+    const text = element('p', '', message.role === 'assistant' ? visibleText(message.content) : message.content);
+    item.append(text);
+    if (message.role === 'assistant' && message !== streaming?.message) {
+      if (message.stopped) item.append(element('small', 'chat-stopped', 'Ответ остановлен'));
+      for (const action of message.actions || []) item.append(actionChip(action));
+      const shown = visibleText(message.content);
+      if (shown) {
+        const tools = element('div', 'chat-tools');
+        tools.append(button('Копировать', 'chat-link', async () => {
+          try { await navigator.clipboard.writeText(shown); host.toast('Ответ скопирован'); } catch { host.toast('Не удалось скопировать'); }
+        }), button('В заметку', 'chat-link', () => { if (host.addNote(noteTitle(shown), shown)) host.toast('Ответ сохранён в заметки'); }));
+        item.append(tools);
+      }
+    }
+    return { item, text };
   }
   function renderChat() {
     const status = host.status();
@@ -109,12 +180,29 @@ export function mountAssistant(host: AssistantHost) {
       note.append(element('p', '', 'Чтобы я могла отвечать, подключите cloud.ru: сохраните API-ключ и выберите модель.'));
       const link = element('a', 'button', 'Открыть настройки пространства'); link.href = '#settings';
       note.append(link); log.append(note);
-    } else if (!history.length) log.append(element('div', 'chat-note', 'Здравствуйте! Я Миюнэя. Спросите о чём угодно — помогу разобраться с мыслями, заметками и делами.'));
-    for (const m of history) log.append(bubble(m.role, m.content));
-    if (pending) log.append(bubble('assistant typing', 'Миюнэя печатает…'));
-    if (error) log.append(bubble('error', error));
-    sendButton.disabled = pending;
+    } else if (!history.length) log.append(element('div', 'chat-note', status.context
+      ? 'Здравствуйте! Я Миюнэя. Вижу ваши заметки и задачи: спросите, что запланировано, найдите запись или попросите добавить задачу.'
+      : 'Здравствуйте! Я Миюнэя. Спросите о чём угодно. Доступ к заметкам и задачам можно включить в настройках пространства.'));
+    for (const message of history) {
+      const { item, text } = bubble(message);
+      if (message === streaming?.message) {
+        streaming.text = text;
+        if (!visibleText(message.content)) { item.classList.add('typing'); text.textContent = 'Миюнэя печатает…'; }
+      }
+      log.append(item);
+    }
+    if (error) log.append(element('div', 'chat-message error', error));
+    sendButton.textContent = streaming ? 'Стоп' : 'Отправить';
+    sendButton.classList.toggle('stop', !!streaming);
     log.scrollTop = log.scrollHeight;
+  }
+  function showDelta() {
+    if (!streaming?.text) return;
+    const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    const shown = visibleText(streaming.message.content);
+    streaming.text.parentElement!.classList.toggle('typing', !shown);
+    streaming.text.textContent = shown || 'Миюнэя печатает…';
+    if (nearBottom) log.scrollTop = log.scrollHeight;
   }
   function openChat() {
     closeMenu();
@@ -123,29 +211,61 @@ export function mountAssistant(host: AssistantHost) {
   function closeChat() { chat.hidden = true; avatar.focus(); }
   const toggleChat = () => chat.hidden ? openChat() : closeChat();
 
+  function applyActions(message: Message) {
+    const { tasks, notes } = parseActions(message.content);
+    const actions: Action[] = [];
+    for (const title of tasks) { const id = host.addTask(title); if (id) actions.push({ kind: 'task', id, title: title.slice(0, 200) }); }
+    for (const note of notes) {
+      const title = note.title || noteTitle(note.body);
+      const id = host.addNote(title, note.body); if (id) actions.push({ kind: 'note', id, title: title.slice(0, 200) });
+    }
+    if (actions.length) { message.actions = actions; host.toast(actions.length === 1 ? (actions[0].kind === 'task' ? 'Задача добавлена' : 'Заметка сохранена') : `Добавлено записей: ${actions.length}`); }
+  }
   async function send() {
     const text = input.value.trim();
-    if (!text || pending) return;
+    if (!text || streaming) return;
     if (!host.status().configured) { error = ''; renderChat(); host.toast('Сначала подключите cloud.ru в настройках'); return; }
-    history.push({ role: 'user', content: text }); input.value = ''; pending = true; error = '';
-    history = history.slice(-HISTORY_LIMIT); remember('chat', history); renderChat();
+    history.push({ role: 'user', content: text }); input.value = ''; error = '';
+    const outgoing = history.slice(-40).map(({ role, content }) => ({ role, content }));
+    const message: Message = { role: 'assistant', content: '' };
+    const current = streaming = { message, abort: new AbortController() };
+    history.push(message); saveHistory(); avatar.classList.add('talking'); renderChat();
     try {
-      const response = await fetch('/api/assistant/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: history.slice(-40) }) });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || 'Не удалось получить ответ.');
-      history.push({ role: 'assistant', content: result.reply });
-      history = history.slice(-HISTORY_LIMIT); remember('chat', history);
+      const response = await fetch('/api/assistant/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: outgoing }), signal: current.abort.signal });
+      if (!response.ok || !response.body) throw new Error((await response.json().catch(() => ({}))).error || 'Не удалось получить ответ.');
+      const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = '', finished = false;
+      while (!finished) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += value;
+        for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
+          const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+          if (!line.trim()) continue;
+          const event = JSON.parse(line);
+          if (event.error) throw new Error(event.error);
+          if (typeof event.delta === 'string') { message.content += event.delta; showDelta(); }
+          if (event.done) finished = true;
+        }
+      }
+      if (!finished) throw new Error('Ответ оборвался. Попробуйте ещё раз.');
+      applyActions(message);
     } catch (e) {
-      error = e instanceof TypeError ? 'Локальный сервер недоступен. Проверьте окно Miyuneya.bat.' : (e as Error).message;
-    } finally { pending = false; if (!chat.hidden) renderChat(); }
+      if (current.abort.signal.aborted) message.stopped = true;
+      else error = e instanceof TypeError ? 'Локальный сервер недоступен. Проверьте окно Miyuneya.bat.' : (e as Error).message;
+      if (!visibleText(message.content) && !message.stopped) history = history.filter(m => m !== message);
+    } finally {
+      streaming = null; avatar.classList.remove('talking');
+      saveHistory(); if (!chat.hidden) renderChat();
+    }
   }
-  form.addEventListener('submit', event => { event.preventDefault(); void send(); });
+  form.addEventListener('submit', event => { event.preventDefault(); if (streaming) streaming.abort.abort(); else void send(); });
   input.addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void send(); } });
   chat.addEventListener('click', event => {
     const target = (event.target as HTMLElement).closest<HTMLElement>('button,a');
     if (!target) return;
     if (target.hasAttribute('data-chat-close')) closeChat();
-    if (target.hasAttribute('data-chat-clear')) { history = []; error = ''; forget('chat'); renderChat(); input.focus(); }
+    if (target.hasAttribute('data-chat-clear')) { streaming?.abort.abort(); history = []; error = ''; forget('chat'); renderChat(); input.focus(); }
   });
   chat.addEventListener('keydown', event => { if (event.key === 'Escape') { event.stopPropagation(); closeChat(); } });
 
@@ -170,15 +290,18 @@ export function mountAssistant(host: AssistantHost) {
   avatar.addEventListener('pointerdown', event => {
     if (event.button !== 0) return;
     closeMenu();
-    const start = { ...position! };
-    avatar.classList.add('dragging');
-    track(event, avatar, (dx, dy) => { position = { x: start.x + dx, y: start.y + dy }; place(); }, moved => {
+    const start = { x: position!.x, y: position!.y };
+    track(event, avatar, (dx, dy) => { avatar.classList.add('dragging'); position = { x: start.x + dx, y: start.y + dy }; place(); }, moved => {
       avatar.classList.remove('dragging');
       suppressClick = moved;
-      if (moved) remember('avatar-position', position);
+      if (moved) { snap(); remember('avatar-position', position); }
     });
   });
-  avatar.addEventListener('click', () => { if (suppressClick) { suppressClick = false; return; } toggleChat(); });
+  avatar.addEventListener('click', () => {
+    if (suppressClick) { suppressClick = false; return; }
+    avatar.classList.remove('poke'); void avatar.offsetWidth; avatar.classList.add('poke');
+    toggleChat();
+  });
   avatar.addEventListener('keydown', event => {
     const step = event.shiftKey ? 40 : 10;
     const moves: Record<string, [number, number]> = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] };
@@ -215,16 +338,45 @@ export function mountAssistant(host: AssistantHost) {
     }, moved => { if (moved) remember('chat-frame', frame); });
   });
 
+  async function uploadAvatar(file: File) {
+    if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) return host.toast('Выберите изображение PNG, JPEG, WebP или GIF');
+    if (file.size > UPLOAD_LIMIT) return host.toast('Изображение больше 15 МБ');
+    try {
+      const response = await fetch('/api/assistant/avatar', { method: 'PUT', headers: { 'Content-Type': file.type }, body: file });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Не удалось загрузить изображение.');
+      host.setStatus(result); host.update({ avatar: 5 }); host.toast('Свой образ загружен');
+    } catch (e) { host.toast(e instanceof TypeError ? 'Сервер недоступен.' : (e as Error).message); }
+  }
+  async function removeAvatar() {
+    try {
+      const response = await fetch('/api/assistant/avatar', { method: 'DELETE' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || 'Не удалось удалить изображение.');
+      host.setStatus(result);
+      if (host.look().avatar === 5) host.update({ avatar: 1 }); else place();
+      host.toast('Свой образ удалён');
+    } catch (e) { host.toast(e instanceof TypeError ? 'Сервер недоступен.' : (e as Error).message); }
+  }
+  upload.addEventListener('change', () => { const file = upload.files?.[0]; upload.value = ''; if (file) void uploadAvatar(file); });
+
   function renderMenu() {
-    const look = host.look();
+    const look = host.look(); const status = host.status();
     const item = (attrs: string, label: string, role = 'menuitem', checked?: boolean) => `<button type="button" role="${role}" ${checked === undefined ? '' : `aria-checked="${checked}"`} ${attrs}>${label}</button>`;
+    const tile = (n: number, src: string) => `<button type="button" role="menuitemradio" aria-checked="${look.avatar === n}" aria-label="${n === 5 ? 'Свой образ' : 'Аватар ' + n}" data-menu-avatar="${n}"><img src="${src}" alt="" draggable="false" decoding="async"></button>`;
     menu.innerHTML = item('data-menu-chat', chat.hidden ? 'Открыть чат' : 'Закрыть чат')
       + '<p class="menu-label">Аватар</p><div class="menu-avatars" role="group" aria-label="Выбор аватара">'
-      + [1, 2, 3, 4].map(n => `<button type="button" role="menuitemradio" aria-checked="${look.avatar === n}" aria-label="Аватар ${n}" data-menu-avatar="${n}"><img src="${avatarUrl(n)}" alt="" draggable="false" decoding="async"></button>`).join('')
+      + [1, 2, 3, 4].map(n => tile(n, avatarUrl(n))).join('')
+      + (status.customAvatar ? tile(5, avatarSrc({ ...look, avatar: 5 }, status)) : '<button type="button" role="menuitem" class="add" aria-label="Загрузить свой образ" data-menu-upload>+</button>')
       + '</div><p class="menu-label">Размер</p><div class="menu-sizes" role="group" aria-label="Размер аватара">'
       + sizeNames.map(([key, label]) => item(`data-menu-size="${key}"`, label, 'menuitemradio', look.size === key)).join('')
-      + '</div><hr>' + item('data-menu-mirror', 'Отразить по горизонтали', 'menuitemcheckbox', look.mirror)
+      + `</div><label class="menu-range"><span>Прозрачность в покое</span><input type="range" min="20" max="100" step="5" value="${Math.round(look.opacity * 100)}" aria-label="Непрозрачность аватара в процентах" data-menu-opacity></label>`
+      + '<hr>' + item('data-menu-animate', 'Анимация', 'menuitemcheckbox', look.animate)
+      + item('data-menu-snap', 'Прилипать к краям экрана', 'menuitemcheckbox', look.snap)
+      + item('data-menu-mirror', 'Отразить по горизонтали', 'menuitemcheckbox', look.mirror)
       + item('data-menu-reset', 'Вернуть в угол экрана')
+      + '<hr>' + item('data-menu-upload', status.customAvatar ? 'Заменить свой образ…' : 'Загрузить свой образ…')
+      + (status.customAvatar ? item('data-menu-remove', 'Удалить свой образ') : '')
       + item('data-menu-settings', 'Подключение cloud.ru…')
       + '<hr>' + item('data-menu-hide', 'Скрыть аватар');
   }
@@ -240,9 +392,13 @@ export function mountAssistant(host: AssistantHost) {
     const target = (event.target as HTMLElement).closest<HTMLElement>('button');
     if (!target) return;
     if (target.hasAttribute('data-menu-chat')) { closeMenu(); toggleChat(); return; }
+    if (target.hasAttribute('data-menu-upload')) { closeMenu(); upload.click(); return; }
+    if (target.hasAttribute('data-menu-remove')) { closeMenu(); void removeAvatar(); return; }
     if (target.dataset.menuAvatar) host.update({ avatar: Number(target.dataset.menuAvatar) as AssistantLook['avatar'] });
     if (target.dataset.menuSize) host.update({ size: target.dataset.menuSize as AssistantLook['size'] });
     if (target.hasAttribute('data-menu-mirror')) host.update({ mirror: !host.look().mirror });
+    if (target.hasAttribute('data-menu-animate')) host.update({ animate: !host.look().animate });
+    if (target.hasAttribute('data-menu-snap')) { host.update({ snap: !host.look().snap }); if (host.look().snap) { snap(); remember('avatar-position', position); } }
     if (target.hasAttribute('data-menu-reset')) { position = null; forget('avatar-position'); frame = null; forget('chat-frame'); place(); if (!chat.hidden) placeChat(); closeMenu(); return; }
     if (target.hasAttribute('data-menu-settings')) { closeMenu(); location.hash = 'settings'; return; }
     if (target.hasAttribute('data-menu-hide')) { closeMenu(); chat.hidden = true; host.update({ hidden: true }); host.toast('Аватар скрыт. Вернуть его можно в настройках пространства.'); return; }
@@ -251,11 +407,20 @@ export function mountAssistant(host: AssistantHost) {
     renderMenu();
     menu.querySelector<HTMLElement>(same)?.focus();
   });
+  menu.addEventListener('input', event => {
+    const range = event.target as HTMLInputElement;
+    if (range.hasAttribute('data-menu-opacity')) avatar.style.setProperty('--rest-opacity', String(Number(range.value) / 100));
+  });
+  menu.addEventListener('change', event => {
+    const range = event.target as HTMLInputElement;
+    if (range.hasAttribute('data-menu-opacity')) host.update({ opacity: clamp(Number(range.value) / 100, 0.2, 1) });
+  });
   menu.addEventListener('keydown', event => {
     if (event.key === 'Escape') { closeMenu(); avatar.focus(); return; }
+    if ((event.target as HTMLElement).matches('input') && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) return;
     if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
     event.preventDefault();
-    const items = [...menu.querySelectorAll<HTMLElement>('button')];
+    const items = [...menu.querySelectorAll<HTMLElement>('button,input')];
     const step = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : -1;
     items[(items.indexOf(document.activeElement as HTMLElement) + step + items.length) % items.length]?.focus();
   });
@@ -266,6 +431,6 @@ export function mountAssistant(host: AssistantHost) {
   place();
   return {
     // Called by the host after appearance or the cloud.ru connection changes.
-    refresh() { place(); if (!chat.hidden) { if (host.look().hidden) chat.hidden = true; else renderChat(); } },
+    refresh() { place(); if (!chat.hidden) { if (host.look().hidden) chat.hidden = true; else if (!streaming) renderChat(); } },
   };
 }

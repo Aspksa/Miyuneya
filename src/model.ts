@@ -1,9 +1,10 @@
 export type Note = { id: string; title: string; body: string; updatedAt: string };
 export type Task = { id: string; title: string; done: boolean; createdAt: string };
 // Avatar appearance travels with the workspace; its screen position stays in the browser.
-export type AssistantLook = { avatar: 1 | 2 | 3 | 4; size: 's' | 'm' | 'l'; mirror: boolean; hidden: boolean };
+// avatar 5 is the user's own uploaded image; animate, snap and opacity arrived later and stay optional.
+export type AssistantLook = { avatar: 1 | 2 | 3 | 4 | 5; size: 's' | 'm' | 'l'; mirror: boolean; hidden: boolean; animate?: boolean; snap?: boolean; opacity?: number };
 export type Workspace = { version: 1; notes: Note[]; tasks: Task[]; settings: { theme: 'light' | 'dark' | 'auto'; name: string; assistant?: AssistantLook } };
-export const defaultLook = (): AssistantLook => ({ avatar: 1, size: 'm', mirror: false, hidden: false });
+export const defaultLook = (): Required<AssistantLook> => ({ avatar: 1, size: 'm', mirror: false, hidden: false, animate: true, snap: true, opacity: 1 });
 export function emptyWorkspace(): Workspace {
   return { version: 1, notes: [], tasks: [], settings: { theme: 'light', name: 'Хозяин' } };
 }
@@ -11,7 +12,9 @@ function record(value: unknown): value is Record<string, unknown> { return !!val
 function text(value: unknown, max: number): value is string { return typeof value === 'string' && value.length <= max; }
 function date(value: unknown): value is string { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
 export function validLook(value: unknown): value is AssistantLook {
-  return record(value) && [1, 2, 3, 4].includes(value.avatar as number) && ['s', 'm', 'l'].includes(value.size as string) && typeof value.mirror === 'boolean' && typeof value.hidden === 'boolean';
+  return record(value) && [1, 2, 3, 4, 5].includes(value.avatar as number) && ['s', 'm', 'l'].includes(value.size as string) && typeof value.mirror === 'boolean' && typeof value.hidden === 'boolean'
+    && (value.animate === undefined || typeof value.animate === 'boolean') && (value.snap === undefined || typeof value.snap === 'boolean')
+    && (value.opacity === undefined || (typeof value.opacity === 'number' && value.opacity >= 0.2 && value.opacity <= 1));
 }
 export function validateWorkspace(value: unknown): value is Workspace {
   if (!record(value) || value.version !== 1 || !Array.isArray(value.notes) || !Array.isArray(value.tasks) || !record(value.settings)) return false;

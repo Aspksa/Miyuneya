@@ -2,9 +2,10 @@
                                                                                   
                                                                                    
 // Avatar appearance travels with the workspace; its screen position stays in the browser.
-                                                                                                               
+// avatar 5 is the user's own uploaded image; animate, snap and opacity arrived later and stay optional.
+                                                                                                                                                                        
                                                                                                                                                               
-export const defaultLook = ()                => ({ avatar: 1, size: 'm', mirror: false, hidden: false });
+export const defaultLook = ()                          => ({ avatar: 1, size: 'm', mirror: false, hidden: false, animate: true, snap: true, opacity: 1 });
 export function emptyWorkspace()            {
   return { version: 1, notes: [], tasks: [], settings: { theme: 'light', name: 'Хозяин' } };
 }
@@ -12,7 +13,9 @@ function record(value         )                                   { return !!val
 function text(value         , max        )                  { return typeof value === 'string' && value.length <= max; }
 function date(value         )                  { return typeof value === 'string' && Number.isFinite(Date.parse(value)); }
 export function validLook(value         )                         {
-  return record(value) && [1, 2, 3, 4].includes(value.avatar          ) && ['s', 'm', 'l'].includes(value.size          ) && typeof value.mirror === 'boolean' && typeof value.hidden === 'boolean';
+  return record(value) && [1, 2, 3, 4, 5].includes(value.avatar          ) && ['s', 'm', 'l'].includes(value.size          ) && typeof value.mirror === 'boolean' && typeof value.hidden === 'boolean'
+    && (value.animate === undefined || typeof value.animate === 'boolean') && (value.snap === undefined || typeof value.snap === 'boolean')
+    && (value.opacity === undefined || (typeof value.opacity === 'number' && value.opacity >= 0.2 && value.opacity <= 1));
 }
 export function validateWorkspace(value         )                     {
   if (!record(value) || value.version !== 1 || !Array.isArray(value.notes) || !Array.isArray(value.tasks) || !record(value.settings)) return false;
