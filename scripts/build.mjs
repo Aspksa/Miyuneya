@@ -10,6 +10,15 @@ const assets=['index.html','style.css','fox.svg','favicon.svg',...[1,2,3,4].map(
 export async function ensureBuild(root, check = false) {
   const pkg = await readJSON(join(root,'package.json'));
   if (Object.keys(pkg.dependencies || {}).length || Object.keys(pkg.devDependencies || {}).length || pkg.workspaces) throw new Error('Изменился набор зависимостей. Эта версия запуска поддерживает проект без внешних пакетов; установка не выполнена.');
+  // The intentionally empty homepage is served directly from web/ without extra build tooling.
+  // It still must exist before the launcher reports the build as ready.
+  let homepage;
+  try { homepage=await readFile(join(root,'web','blank.html'),'utf8'); }
+  catch(e) {
+    if(e.code==='ENOENT') throw new Error('Не найден web/blank.html. Восстановите пустую главную страницу из репозитория.');
+    throw e;
+  }
+  if(!homepage.trim()) throw new Error('web/blank.html пуст как файл. Восстановите HTML-основу пустой страницы.');
   const modules=(await readdir(join(root,'src'))).filter(name=>/^[a-zA-Z0-9_-]+\.ts$/.test(name)).map(name=>name.slice(0,-3)).sort();
   if(!modules.includes('main')||modules.length>100)throw new Error('Не найден основной модуль или превышен предел модулей сборки.');
   const inputs={}; const outputs={};

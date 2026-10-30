@@ -87,7 +87,7 @@ export async function createApp(root: string, instance: string, preview = false,
   }
   let queue = Promise.resolve();
   const files: Record<string, [string, string]> = {
-    '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'],
+    '/workspace': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'],
     '/workbench.js':['workbench.js','text/javascript'], '/productivity.js':['productivity.js','text/javascript'], '/disk.js': ['disk.js', 'text/javascript'], '/calendar.js': ['calendar.js', 'text/javascript'], '/main.js': ['main.js', 'text/javascript'], '/model.js': ['model.js', 'text/javascript'],
     '/assistant.js': ['assistant.js', 'text/javascript'], '/appearance.js': ['appearance.js', 'text/javascript'], '/memory.js': ['memory.js', 'text/javascript'],
     '/style.css': ['style.css', 'text/css'], '/fox.svg': ['fox.svg', 'image/svg+xml'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
@@ -201,6 +201,14 @@ export async function createApp(root: string, instance: string, preview = false,
         return;
       }
       if (stopping) return send(503, { error: 'Сервер завершает работу' });
+      // The homepage is intentionally blank: no title, modules, scripts or navigation.
+      // Keep the existing workspace at /workspace without touching its data or APIs.
+      if ((req.method === 'GET' || req.method === 'HEAD') && path === '/') {
+        const html = await readFile(join(root, 'web', 'blank.html'));
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(req.method === 'HEAD' ? undefined : html);
+        return;
+      }
       if(path==='/api/disk' || path.startsWith('/api/disk/')) {memory.touch();if(diskError)return send(503,{error:'Индекс диска повреждён. Документы сохранены; восстановите data/disk/index.json из копии.'});return await disk.handle(req,res,new URL(req.url,origin));}
       if(path==='/api/workflows'){
         if(!workflows)return send(503,{error:workflowError || 'Автоматизации недоступны.'});

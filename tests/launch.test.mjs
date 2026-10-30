@@ -13,6 +13,38 @@ import { emptyWorkspace } from '../src/model.ts';
 import { prepareUpdate } from '../scripts/update.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 
+test('Default homepage is empty and untitled; original workspace and APIs are preserved',async t=>{
+  const root=await fixture(t);
+  const child=nodeLaunch(root,{MIYUNEYA_OFFLINE:'1'});
+  const pointer=await waitReady(root,child);
+  const base=`http://127.0.0.1:${pointer.port}`;
+  const home=await fetch(base+'/');
+  assert.equal(home.status,200);
+  assert.match(home.headers.get('content-type'),/^text\/html/);
+  const html=await home.text();
+  assert.equal(html,await readFile(join(root,'web','blank.html'),'utf8'));
+  assert.match(html,/<title><\/title>/);
+  assert.match(html,/<body><\/body>/);
+  assert.doesNotMatch(html,/<(?:script|link|nav|main|section|header|footer)\b/i);
+  assert.doesNotMatch(html,/Miyuneya|Миюнэя/i);
+  const head=await fetch(base+'/',{method:'HEAD'});
+  assert.equal(head.status,200);
+  assert.equal(await head.text(),'');
+  const original=await fetch(base+'/workspace');
+  assert.equal(original.status,200);
+  assert.match(await original.text(),/<title>Miyuneya/);
+  assert.equal((await fetch(base+'/index.html')).status,200);
+  const workspace=await fetch(base+'/api/workspace');
+  assert.equal(workspace.status,200);
+  assert.equal((await workspace.json()).revision,0);
+});
+
+test('A missing blank homepage fails the preflight check with a specific cause',async t=>{
+  const root=await fixture(t);
+  await rm(join(root,'web','blank.html'));
+  await assert.rejects(ensureBuild(root),/web\/blank\.html/);
+});
+
 test('BAT is ASCII without BOM, CRLF, delayed expansion off and has one entry point', async()=>{
   const bytes=await readFile(new URL('../Miyuneya.bat',import.meta.url));
   assert.ok([...bytes].every(b=>b<128));assert.equal(bytes.toString().replaceAll('\r\n','').includes('\n'),false);
