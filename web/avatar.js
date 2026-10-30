@@ -128,7 +128,7 @@
   // Reuse message elements while streaming: no full chat flicker on each token.
   function formatMessage(body,value) {
     body.replaceChildren();
-    const blocks=String(value).split(/(```[a-zA-Z0-9+#.-]*\\n[\\s\\S]*?```)/g);
+    const blocks=String(value).split(/(```[a-zA-Z0-9+#.-]*\n[\s\S]*?```)/g);
     const lexer=/\/\/[^\n]*|#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:const|let|var|function|async|await|export|import|return|type|interface|class|if|else|for|while|def|lambda|print|from|try|except|None|True|False|new|throw|public|private|fn|match|impl|struct)\b|\b\d+(?:\.\d+)?\b/g;
     for(const block of blocks){
       if(!block.startsWith('```') || !block.endsWith('```')) {
