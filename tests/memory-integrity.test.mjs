@@ -206,3 +206,31 @@ test('Memory schema accepts evidence-backed and legacy confirmations but rejects
   assert.ok(memoryResult({confirm:[{id:'fact-1',evidence:[]}]},'reflect'));
   for(const entry of [null,{},[],{id:1}])assert.throws(()=>memoryResult({confirm:[entry]},'reflect'),/схема/);
 });
+
+test('Review feedback keywords do not activate an unrelated or unspecified lesson',()=>{
+  for(const quote of ['Сегодня нужно купить молоко.','Нужно отвечать.']){
+    const m=emptyMemory(),dialog={id:'dialog-'+m.items.length+'-'+quote.length,messages:[{role:'user',content:quote}],updatedAt:at,signals:[],summary:'',failures:0};
+    applyReflection(m,{review:{score:3,weak:'Слишком подробные ответы',lesson:'Отвечать коротко',evidence:[{source:dialog.id+'-0',quote}]}},dialog,new Set(),at);
+    const rule=m.items.find(i=>i.kind==='rule');assert.equal(rule.status,'inferred');assert.equal(rule.evidence.length,0);
+    assert.doesNotMatch(memoryContext(m,'Как отвечать?'),/Подтверждённые пожелания пользователя/);
+  }
+});
+
+test('A confirmation fragment cannot discard surrounding negation',()=>{
+  const m=emptyMemory(),fact=upsert(m,'fact','Любит чай',{source:'dialog',now:at}).item;
+  const dialog={id:'dialog-negated-confirm',messages:[{role:'user',content:'Не любит чай.'}],updatedAt:at,signals:[],summary:'',failures:0};
+  applyReflection(m,{confirm:[{id:fact.id,evidence:[{source:'dialog-negated-confirm-0',quote:'любит чай'}]}]},dialog,new Set(),at);
+  assert.equal(fact.hits,1);assert.equal(fact.weight,0.5);assert.equal(fact.status,'inferred');assert.equal(fact.evidence.length,0);
+});
+
+test('Repeated confirmation entries reinforce a record only once per reflection',()=>{
+  const m=emptyMemory(),fact=upsert(m,'fact','Любит кофе',{source:'dialog',now:at}).item;
+  const dialog={id:'dialog-duplicate-confirm',messages:[{role:'user',content:'Да, любит кофе.'}],updatedAt:at,signals:[],summary:'',failures:0};
+  const entry={id:fact.id,evidence:[{source:'dialog-duplicate-confirm-0',quote:'любит кофе'}]};
+  applyReflection(m,{confirm:Array(30).fill(entry)},dialog,new Set(),at);
+  assert.equal(fact.hits,2);assert.equal(fact.evidence.length,1);
+
+  const legacy=upsert(m,'fact','Пользователь любит какао',{source:'dialog',now:at}).item;
+  const exact={...dialog,id:'dialog-duplicate-legacy',messages:[{role:'user',content:'Пользователь любит какао'}]};
+  applyReflection(m,{confirm:Array(30).fill(legacy.id)},exact,new Set(),at);assert.equal(legacy.hits,2);
+});
