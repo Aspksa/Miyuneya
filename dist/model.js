@@ -7,6 +7,32 @@ import { validTaskGraph } from './productivity.js';
 // avatar 5 is the user's own uploaded image; animate, snap and opacity arrived later and stay optional.
 
 
+export const defaultAppearance = () => ({
+  accent: '#7775d7', railWidth: 'regular', iconSize: 'regular',
+  railOpacity: 100, font: 'system', fontSize: 'regular',
+  radius: 'regular', density: 'comfortable', motion: true,
+  background: 'default', scale: 100, contrast: false
+});
+const colorValue = (v) => typeof v === 'string' && /^#[a-fA-F0-9]{6}$/.test(v);
+const oneOf = (v, allowed) => typeof v === 'string' && allowed.includes(v);
+export function validAppearance(v) {
+  if (!record(v)) return false;
+  const keys = ['theme', ...Object.keys(defaultAppearance())];
+  return Object.keys(v).length === keys.length && Object.keys(v).every(k => keys.includes(k))
+    && oneOf(v.theme, ['light', 'dark', 'auto'])
+    && colorValue(v.accent)
+    && oneOf(v.railWidth, ['narrow', 'regular', 'wide'])
+    && oneOf(v.iconSize, ['small', 'regular', 'large'])
+    && Number.isInteger(v.railOpacity) && Number(v.railOpacity) >= 75 && Number(v.railOpacity) <= 100
+    && oneOf(v.font, ['system', 'segoe', 'arial', 'georgia'])
+    && oneOf(v.fontSize, ['small', 'regular', 'large'])
+    && oneOf(v.radius, ['small', 'regular', 'large'])
+    && oneOf(v.density, ['compact', 'comfortable'])
+    && typeof v.motion === 'boolean'
+    && (v.background === 'default' || colorValue(v.background))
+    && [90, 100, 110, 120].includes(v.scale)
+    && typeof v.contrast === 'boolean';
+}
 export const defaultLook = ()                          => ({ avatar: 1, size: 'm', mirror: false, hidden: false, animate: true, snap: true, opacity: 1 });
 export function emptyWorkspace()            {
   return { version: 1, notes: [], tasks: [], settings: { theme: 'light', name: 'Хозяин' } };
@@ -24,6 +50,7 @@ export function validateWorkspace(value         )                     {
   if (!record(value) || value.version !== 1 || !Array.isArray(value.notes) || !Array.isArray(value.tasks) || !record(value.settings)) return false;
   if (value.notes.length > 5000 || value.tasks.length > 5000 || !['light', 'dark', 'auto'].includes(String(value.settings.theme)) || !text(value.settings.name, 80)) return false;
   if (value.settings.assistant !== undefined && !validLook(value.settings.assistant)) return false;
+  if (value.settings.appearance !== undefined && !validAppearance({ theme: value.settings.theme, ...value.settings.appearance })) return false;
   const ids = new Set        ();
   for (const item of [...value.notes, ...value.tasks]) {
     if (!record(item) || !text(item.id, 100) || !item.id || ids.has(item.id) || !text(item.title, 200) || !item.title.trim()) return false;
