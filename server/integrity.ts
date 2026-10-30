@@ -29,9 +29,11 @@ export function memoryResult(value: any, kind: 'reflect' | 'sleep' | 'think') {
   const valid = Object.entries(value).some(([k,v]) => keys.includes(k) && (Array.isArray(v) || (['summary','understanding','diary'].includes(k) && typeof v === 'string') || (['episode','review'].includes(k) && (v === null || typeof v === 'object'))));
   const arrays = ['facts','rules','entities','confirm','weaken','goals','checks','promises','answers','questions','merge','remove','update','insights','note_facts','topics','thoughts','skills','predictions','causes','relations','kept','reminders','logic_errors','steps_done','conflicts'];
   if (!valid || arrays.some(k => value[k] !== undefined && !Array.isArray(value[k]))) throw new Error('Неверная схема ответа памяти; обработка не подтверждена.');
-  const strings=new Set(['confirm','weaken','questions','kept']);
-  const required:Record<string,string[]>={facts:['text'],rules:['text'],entities:['name'],goals:['title'],checks:['id','outcome'],promises:['text'],answers:['question','text'],merge:['text'],remove:['id'],update:['id','text'],insights:['text'],note_facts:['note','text'],topics:['title'],thoughts:['text'],skills:['text'],predictions:['text'],causes:['cause','effect'],relations:['from','to'],reminders:['about','text'],logic_errors:['text'],steps_done:['goal','step'],conflicts:['question']};
+  const strings=new Set(['weaken','questions','kept']);
+  const required:Record<string,string[]>={facts:['text'],rules:['text'],entities:['name'],goals:['title'],checks:['id','outcome'],confirm:['id'],promises:['text'],answers:['question','text'],merge:['text'],remove:['id'],update:['id','text'],insights:['text'],note_facts:['note','text'],topics:['title'],thoughts:['text'],skills:['text'],predictions:['text'],causes:['cause','effect'],relations:['from','to'],reminders:['about','text'],logic_errors:['text'],steps_done:['goal','step'],conflicts:['question']};
   for(const key of arrays)for(const entry of value[key] || []) {
+    // Older models returned confirm as a plain id; the evidence-bearing object form is preferred.
+    if(key==='confirm'&&typeof entry==='string')continue;
     if(strings.has(key) ? typeof entry!=='string' : !entry || typeof entry!=='object' || Array.isArray(entry) || (required[key] || []).some(k=>typeof entry[k]!=='string'))throw new Error('Неверная схема элементов '+key+'; обработка не подтверждена.');
   }
   if(value.episode!==undefined && value.episode!==null && (Array.isArray(value.episode)||typeof value.episode.topic!=='string'))throw new Error('Неверная схема эпизода.');

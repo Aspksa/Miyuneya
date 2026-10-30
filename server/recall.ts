@@ -51,7 +51,7 @@ export const searchTexts = (memory: Memory) => [...memory.items.filter(i=>i.stat
 
 // Time words in a question («вчера», «на прошлой неделе», «в прошлый вторник», «три дня назад») become a date range.
 const NUMBERS: Record<string, number> = { один: 1, одну: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5, шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10 };
-const WEEKDAYS = ['воскресень', 'понедельник', 'вторник', 'сред', 'четверг', 'пятниц', 'суббот'];
+const WEEKDAYS = ['воскресень', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 export function timeRange(text: string, now = Date.now()) {
   const t = text.toLocaleLowerCase('ru').replaceAll('ё', 'е');
   const today = new Date(now); today.setHours(0, 0, 0, 0);
@@ -191,7 +191,8 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   }
   if (memory.understanding) { add('Твоё общее понимание пользователя:'); add('[Сводка модели, может быть устаревшей] '+memory.understanding.text); }
   if (topics.length) { add('\nТемы его жизни, к которым относится разговор:'); for (const { t } of topics) add(`- ${t.title} (${categoryNames[t.area].toLocaleLowerCase('ru')})${t.summary ? ': [сводка модели] ' + t.summary : ''}`); }
-  if (rules.length) { add((lines.length ? '\n' : '') + 'Подтверждённые пожелания пользователя (учитывай с текущим запросом):'); for (const { item } of rules.filter(x=>x.item.source==='user'||x.item.evidence?.length).slice(0, 25)) if (!add('- ' + item.text)) break; }
+  const confirmedRules=rules.filter(x=>x.item.source==='user'||x.item.evidence?.length).slice(0,25);
+  if (confirmedRules.length) { add((lines.length ? '\n' : '') + 'Подтверждённые пожелания пользователя (учитывай с текущим запросом):'); for (const { item } of confirmedRules) if (!add('- ' + item.text)) break; }
   const known = [...chosen.map(c => c.item), ...pulled];
   if (known.length) { add('\nЧто ты знаешь о пользователе (используй к месту, не перечисляй без просьбы):'); for (const item of known) if (!add('- ' + (item.status==='inferred'?'[непроверенное предположение] ':item.status==='contested'?'[противоречие: уточнить] ':'') + item.text + until(item) + linked(item.links))) break; }
   if (entities.length) { add('\nЛюди, проекты и темы из разговора:'); for (const { e } of entities) add(`- ${e.name} (${entityNames[e.type]})${e.about ? ': ' + e.about : ''}`); }
