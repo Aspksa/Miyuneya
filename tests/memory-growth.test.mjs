@@ -22,9 +22,9 @@ test('Self-review scores the dialog and turns a weak spot into a skill rule', ()
   const lesson=memory.items.find(i=>i.kind==='rule');
   assert.equal(lesson.source,'review');assert.deepEqual(lesson.links,[episode.id]);
   assert.match(memory.journal.map(j=>j.text).join('\n'),/Самооценка 3\/5 · слабое место: слишком длинный ответ/);
-  // The same weak spot again confirms the skill instead of adding a copy.
+  // Repeated self-review keeps one candidate without manufacturing external confirmation.
   applyReflection(memory,{episode:{topic:'Ещё план'},review:{score:9,lesson:'Сначала давать короткий ответ, детали по просьбе'}},dialog(),new Set(),now);
-  assert.equal(memory.items.filter(i=>i.kind==='rule').length,1);assert.equal(memory.items[0].hits,2);assert.equal(memory.episodes[1].score,5);
+  assert.equal(memory.items.filter(i=>i.kind==='rule').length,1);assert.equal(memory.items[0].hits,1);assert.equal(memory.items[0].skill.status,'candidate');assert.equal(memory.episodes[1].score,5);
   // The sleep sees the reviews and an episode without one stays unscored.
   assert.match(sleepInput(memory),/самооценка 3\/5, слабое место: слишком длинный ответ/);
   applyReflection(memory,{episode:{topic:'Без оценки'},review:{weak:'что-то'}},dialog(),new Set(),now);

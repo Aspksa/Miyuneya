@@ -18,10 +18,10 @@ const KINDS: Reasoning[] = ['pattern', 'cause', 'habit', 'plan', 'analogy'];
 // The logic level: how often her predictions come true, how many of her conclusions held, and how many errors she turned into rules.
 export function logic(memory: Memory, now = Date.now()) {
   const recent = (date: string | null) => !!date && Date.parse(date) >= now - 7 * DAY;
-  const checked = memory.predictions.filter(p => p.outcome && (p.verification==='user'||p.verification==='evidence')), right = checked.filter(p => p.outcome === 'right');
+  const checked = memory.predictions.filter(p => p.outcome && !p.stale && (p.verification==='user'||p.verification==='evidence')), right = checked.filter(p => p.outcome === 'right');
   // A conclusion is a checked prediction or a cause-and-effect link that came up again.
   const confirmed = 0; // Repeated cause assertions are hypotheses, never checked conclusions.
-  const fixed = memory.mistakes.filter(m => m.rule).length;
+  const fixed = memory.mistakes.filter(m => m.rule&&memory.items.some(i=>i.id===m.rule&&(!i.skill||i.skill.status==='passed'))).length;
   const points = right.length * 20; // Practice and volume are reported separately from correctness.
   const level = levelOf(points, 60);
   return {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 export type Evidence = { source: string; version: string; quote: string; at: string; role: 'user' | 'note' | 'assistant' };
-export type Source = Evidence & { text: string };
+export type Source = Evidence & { text: string; scope?:string|null };
 export const canonical = (text: string) => text.toLocaleLowerCase('ru').replaceAll('ё', 'е').replace(/[^\p{L}\p{N}%.,]+/gu, ' ').trim();
 export const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 const atoms = (text: string) => ({ negative: [...canonical(text).matchAll(/(?:^|\s)(не|нет|никогда|без|нельзя)\s+(\p{L}+)/gu)].map(m=>m[1]+' '+m[2].slice(0,5)).sort().join('|'), numbers: (text.match(/\d+(?:[.,]\d+)?/g) || []).join('|') });

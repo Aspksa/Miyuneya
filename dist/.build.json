@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "fingerprint": "a0002af7126f08bd417b8d95524be8a3c1674bc9bf48b1a78751d8cc0d1ba859",
+  "fingerprint": "584238ce474a946582ca0d707fdd21da9c8f972d0b9e4fd2e3687e6c3de7ce60",
   "outputs": {
     "appearance.js": "be3c7d9aa4c3a5303c1a3a03578fc7c02c75a47efa3964dfbadb717b0207dd1a",
     "assistant.js": "bb573bd724ba4354a6687742829c56ddc00a3c38abd0d571455136b84add31fc",
     "calendar.js": "9315ec6fc1833fd2c09d280e57f15a36dd62cd5bb76e36c8005eeae23545b9f4",
     "disk.js": "363f6199441b3f68b3a71b47e5cb35f569c18bf3d680db81f1ed86373c65dba6",
-    "main.js": "b12087049a442beccb675586ecf176e9621a93fdce0bfc621c0d20a32b8580c8",
+    "main.js": "c9309ce21685a3383974fe9c228cc5654e95b939bb247d561975c12b22ecefe3",
     "memory.js": "aad67d81b46a80e399ea5fb32807578b02d278d8e3edda3ace5d273665415579",
     "model.js": "997568ba085a24162401be40410ae01afb4219c99fe5a1d7f3d144cd0d368afd",
     "productivity.js": "b93316f1e70082ed09fefe041d4abbf9783e56dd93e713919bea5682e59c5c8a",

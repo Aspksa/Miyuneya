@@ -1,3 +1,6 @@
+import { alternatives as readAlternatives } from './cognition.ts';
+import type { Alternative, Requirement } from './cognition.ts';
+import type { Source } from './integrity.ts';
 import { strictDate } from './integrity.ts';
 // Strong logic: which questions deserve a reasoning plan and the stronger model, and exact numbers counted by code,
 // so sums, percents, dates and deadlines in an answer are never guessed by the model.
@@ -193,17 +196,17 @@ export const PLAN_PROMPT = `Ты — внутренний планировщик
 steps — 2–6 коротких шагов: что выяснить, что учесть из памяти о пользователе, какие причины и следствия связать, к какому выводу прийти.
 hypotheses — только если у вопроса правда несколько возможных объяснений, причин или исходов: 2–3 гипотезы с уверенностью в процентах, в сумме около 100. Иначе пустой массив.
 calc — всё, что нужно точно посчитать: суммы, проценты, даты, сроки. Не считай сам — опиши расчёт, его выполнит код. op: math (expr — арифметика: + - * / ^ %, скобки), days (from, to — ГГГГ-ММ-ДД: сколько дней), workdays (from, to: рабочие дни), add (date — ГГГГ-ММ-ДД, days — число: какая дата будет), weekday (date).
-check — что легко упустить или перепутать в этом вопросе, одной фразой.`;
-export type Plan = { steps: string[]; hypotheses: { text: string; confidence: number }[]; lines: string[]; check: string };
+Дополнительные поля: requirements:[{quote:"дословное условие из последнего запроса",kind:"constraint|goal|acceptance"}], alternatives:[{name:"вариант",criteria:[{name:"критерий",value:"значение из источника",evidence:[{source:"id",version:"версия",quote:"дословная цитата со значением"}]}],risk:"ограничение варианта"}]. Сравнивай по одинаковым критериям; без сведений пиши «нет данных». Не придумывай оценки или победителя.\ncheck — что легко упустить или перепутать в этом вопросе, одной фразой.`;
+export type Plan = { steps: string[]; hypotheses: { text: string; confidence: number;kind?:'pattern'|'cause'|'habit'|'plan'|'analogy' }[]; lines: string[]; check: string;requirements?:Requirement[];alternatives?:Alternative[] };
 const clip = (value: unknown, max: number) => typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '';
-export function readPlan(result: any, now = Date.now()): Plan | null {
+export function readPlan(result: any, now = Date.now(),sources:Source[]=[]): Plan | null {
   if (!result || typeof result !== 'object') return null;
   const array = (value: unknown) => Array.isArray(value) ? value : [];
   const steps = array(result.steps).map(s => clip(s, 200)).filter(Boolean).slice(0, 6);
-  const hypotheses = array(result.hypotheses).map(h => ({ text: clip(h?.text, 200), confidence: (n => Math.round(Math.min(100, Math.max(0, n > 0 && n <= 1 ? n * 100 : n))))(Number(h?.confidence) || 0) })).filter(h => h.text).slice(0, 3);
+  const hypotheses = array(result.hypotheses).map(h => ({ kind:['pattern','cause','habit','plan','analogy'].includes(h?.kind)?h.kind:'pattern',text: clip(h?.text, 200), confidence: (n => Math.round(Math.min(100, Math.max(0, n > 0 && n <= 1 ? n * 100 : n))))(Number(h?.confidence) || 0) })).filter(h => h.text).slice(0, 3);
   const lines = array(result.calc).filter(c => c && typeof c === 'object').slice(0, 8).map(c => runCalc(c, now)).filter((l): l is string => !!l);
   const check = clip(result.check, 200);
-  return steps.length || hypotheses.length || lines.length || check ? { steps, hypotheses, lines, check } : null;
+  return steps.length || hypotheses.length || lines.length || check || readAlternatives(result.alternatives,sources).length || array(result.requirements).length ? { steps, hypotheses, lines, check,requirements:Array.isArray(result.requirements)?result.requirements.slice(0,12):[],alternatives:readAlternatives(result.alternatives,sources) } : null;
 }
 // What the answering model is told: think step by step, weigh hypotheses, and take numbers from the code.
 export const exactLines = (plan: Plan | null, calcs: string[]) => [...new Set([...calcs, ...(plan?.lines || [])])];
@@ -214,6 +217,7 @@ export function reasoningBlock(complex: boolean, plan: Plan | null, calcs: strin
       'Если у вопроса несколько возможных объяснений или исходов, назови 2–3 гипотезы с уверенностью в процентах только при достаточных данных (это оценка модели, не измеренная вероятность) и скажи, что помогло бы различить их. Опирайся на причины и следствия из памяти о пользователе.');
     if (plan?.steps.length) lines.push('Твой скрытый план рассуждения (не пересказывай его как план):', ...plan.steps.map((s, i) => `${i + 1}. ${s}`));
     if (plan?.hypotheses.length) lines.push('Гипотезы, которые стоит взвесить:', ...plan.hypotheses.map(h => `- ${h.text} — ${h.confidence}%`));
+    if(plan?.alternatives?.length)lines.push('Сравнение вариантов: значения принимаются только с проверенной цитатой. При пробелах не объявляй победителя.',JSON.stringify(plan.alternatives));
     if (plan?.check) lines.push('Проверь перед ответом: ' + plan.check);
   }
   const exact = exactLines(plan, calcs);

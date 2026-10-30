@@ -64,7 +64,7 @@ test('Reflection builds entities, categories, deadlines and typed relations', ()
   assert.ok(!addEdge(memory,work.id,katya.id,'about'));
 });
 
-test('Sleep learns from notes, writes the diary and lets dated facts expire', () => {
+test('Sleep learns from notes, writes the diary and archives dated facts for historical recall', () => {
   const memory=emptyMemory();const now=Date.parse('2026-10-29T03:00:00Z');
   upsert(memory,'fact','Летит в Сочи',{until:'2026-10-20',now:'2026-10-01T00:00:00Z'});
   const workspace=emptyWorkspace();
@@ -75,12 +75,13 @@ test('Sleep learns from notes, writes the diary and lets dated facts expire', ()
   applySleep(memory,{note_facts:[{text:'Учит японский язык',note:'n1',category:'plans'},{text:'Выдумка',note:'nope'}],entities:[{name:'Японский язык',type:'topic'}],relations:[{from:'Японский язык',to:'n1',type:'about'}],diary:'Сегодня я узнала, что вы учите японский.'},now,new Set(['n1']));
   const fact=memory.items.find(i=>i.text==='Учит японский язык');
   assert.equal(fact.source,'note');assert.deepEqual(fact.links,['n1']);assert.equal(fact.category,'plans');
-  assert.ok(!memory.items.some(i=>i.text==='Выдумка'));assert.ok(!memory.items.some(i=>i.text==='Летит в Сочи'));
-  assert.ok(memory.journal.some(j=>j.text==='Устарело: Летит в Сочи'));
+  assert.ok(!memory.items.some(i=>i.text==='Выдумка'));assert.ok(memory.items.some(i=>i.text==='Летит в Сочи'),'retain the source for historical questions');
+  assert.doesNotMatch(memoryContext(memory,'Сочи',new Map(),now),/Летит в Сочи/);
+  assert.match(memoryContext(memory,'Сочи по состоянию на 2026-10-10',new Map(),now),/Летит в Сочи/);
   assert.equal(memory.diary[0].text,'Сегодня я узнала, что вы учите японский.');
   assert.ok(memory.edges.some(e=>e.to==='n1'&&e.type==='about'));
   const restored=normalizeMemory(JSON.parse(JSON.stringify(memory)));
-  assert.deepEqual([restored.entities.length,restored.edges.length,restored.diary.length,restored.items[0].category],[1,1,1,'plans']);
+  assert.deepEqual([restored.entities.length,restored.edges.length,restored.diary.length,restored.items.find(i=>i.text==='Учит японский язык').category],[1,1,1,'plans']);
   decay(memory,now);assert.equal(memory.entities.length,1);
 });
 
