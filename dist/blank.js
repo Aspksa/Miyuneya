@@ -8,6 +8,7 @@
   const backdrop = document.getElementById('settings-backdrop');
   const closeButton = document.getElementById('settings-close');
   const themeColor = document.querySelector('meta[name="theme-color"]');
+  const status = document.getElementById('theme-status');
   const options = Array.from(document.querySelectorAll('input[name="appearance"]'));
 
   function applyTheme(theme) {
@@ -25,6 +26,21 @@
     // Storage may be disabled in private browsing; theme still works this session.
   }
   applyTheme(saved);
+
+  // The server is authoritative: the local port may differ at each BAT launch.
+  let changedByUser = false;
+  let pendingSave = Promise.resolve();
+  async function loadServerTheme() {
+    try {
+      const response = await fetch('/api/site/theme', { cache: 'no-store' });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!changedByUser) applyTheme(data.theme);
+    } catch {
+      // Local storage is a temporary fallback if the settings API is unavailable.
+    }
+  }
+  void loadServerTheme();
 
   function setOpen(open) {
     dialog.hidden = !open;
@@ -60,12 +76,35 @@
   for (const option of options) {
     option.addEventListener('change', () => {
       if (!option.checked) return;
-      applyTheme(option.value);
+      changedByUser = true;
+      const selected = option.value;
+      applyTheme(selected);
       try {
-        window.localStorage.setItem(storageKey, option.value);
+        window.localStorage.setItem(storageKey, selected);
       } catch {
-        // The selected theme remains active for the current page.
+        // Browser storage is optional; the server stores the project preference.
       }
+      status.hidden = false;
+      status.dataset.error = 'false';
+      status.textContent = 'Сохранение оформления…';
+      // Serialize saves to prevent an older request overwriting a newer choice.
+      pendingSave = pendingSave.catch(() => {}).then(async () => {
+        try {
+          const response = await fetch('/api/site/theme', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ theme: selected })
+          });
+          if (!response.ok) throw new Error('Save failed');
+          if (page.dataset.theme === selected) status.hidden = true;
+        } catch {
+          if (page.dataset.theme === selected) {
+            status.hidden = false;
+            status.dataset.error = 'true';
+            status.textContent = 'Тему не удалось сохранить. Проверьте доступ к папке проекта.';
+          }
+        }
+      });
     });
   }
 })();
