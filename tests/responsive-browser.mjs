@@ -100,6 +100,10 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.equal(await evalJS('document.getElementById("settings-panel").hidden'),false);
 
   let checks=0;
+  for (const mode of ['regular','wide']) {
+    for (const [field,value] of [['railWidth',mode],['iconSize',mode==='wide'?'large':'regular'],['fontSize',mode==='wide'?'large':'regular']]) {
+      await evalJS(`(()=>{const c=document.querySelector('[data-setting="${field}"]');c.value="${value}";c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+    }
   for (const scale of [90,100,120]) {
     await evalJS(`(()=>{const input=document.querySelector('[data-setting="scale"]');input.value="${scale}";input.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
     for(const [width,height] of viewports) {
@@ -112,7 +116,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
         return {viewport:[innerWidth,innerHeight],scrollWidth:document.documentElement.scrollWidth,
           panel:bounds(panel),rail:bounds(rail),close:bounds(close),hasScroll:panel.scrollHeight>panel.clientHeight};
       })()`);
-      const label=`${width}Ã—${height} at ${scale}%`;
+      const label=`${width}Ã—${height} at ${scale}% (${mode})`;
       assert.deepEqual(result.viewport,[width,height],label);
       assert.ok(result.scrollWidth<=width+1,'Horizontal page overflow: '+label+' '+JSON.stringify(result));
       assert.ok(result.panel.left>=-1 && result.panel.right<=width+1,'Settings clipped horizontally: '+label+' '+JSON.stringify(result));
@@ -125,6 +129,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
         'Reset button cannot be reached by scrolling: '+label+' '+JSON.stringify(footer));
       checks++;
     }
+  }
   }
   await evalJS('document.getElementById("settings-close").click()');
   assert.equal(await evalJS('document.getElementById("settings-panel").hidden'),true);
