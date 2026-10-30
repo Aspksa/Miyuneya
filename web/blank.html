@@ -1,9 +1,70 @@
 <!doctype html>
-<html lang="ru">
+<html lang="ru" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8f9fc">
   <title></title>
+  <link rel="stylesheet" href="/blank.css">
+  <script type="module" src="/blank.js"></script>
 </head>
-<body></body>
+<body>
+  <main class="work-area" aria-label="Пустая рабочая область"></main>
+  <nav class="right-rail" aria-label="Меню проекта">
+    <button class="settings-toggle" id="settings-toggle" type="button"
+      aria-label="Настройки проекта" title="Настройки проекта"
+      aria-expanded="false" aria-haspopup="dialog" aria-controls="settings-panel">
+      <svg viewBox="0 0 24 24" width="25" height="25" fill="none" stroke="currentColor"
+        stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true" focusable="false">
+        <path d="M10.35 2.5h3.3l.52 2.23c.67.22 1.29.58 1.84 1.04l2.2-.69 1.65 2.86-1.69 1.55c.15.71.15 1.41 0 2.11l1.69 1.55-1.65 2.86-2.2-.69a7.1 7.1 0 0 1-1.84 1.04l-.52 2.23h-3.3l-.52-2.23a7.1 7.1 0 0 1-1.84-1.04l-2.2.69-1.65-2.86 1.69-1.55a6.4 6.4 0 0 1 0-2.11L4.14 7.94l1.65-2.86 2.2.69c.55-.46 1.17-.82 1.84-1.04l.52-2.23Z" transform="translate(0 1.45)"/>
+        <circle cx="12" cy="12" r="3.05"/>
+      </svg>
+    </button>
+  </nav>
+  <button type="button" class="settings-backdrop" id="settings-backdrop"
+    aria-label="Закрыть настройки" hidden></button>
+  <section class="settings-panel" id="settings-panel" role="dialog"
+    aria-modal="true" aria-labelledby="settings-heading" hidden>
+    <header class="settings-header">
+      <div>
+        <span class="settings-eyebrow">ПАРАМЕТРЫ</span>
+        <h1 id="settings-heading">Настройки проекта</h1>
+      </div>
+      <button type="button" id="settings-close" class="settings-close" aria-label="Закрыть">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor"
+          stroke-width="1.9" stroke-linecap="round" aria-hidden="true" focusable="false">
+          <path d="M5 5 19 19M19 5 5 19"/>
+        </svg>
+      </button>
+    </header>
+    <fieldset class="appearance">
+      <legend>Оформление</legend>
+      <p>Выберите цветовую тему сайта.</p>
+      <div class="appearance-options">
+        <label class="appearance-option">
+          <input type="radio" name="appearance" value="light" checked>
+          <span class="appearance-preview light-preview" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"/>
+              <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/>
+            </svg>
+          </span>
+          <span class="appearance-label">Светлая</span>
+        </label>
+        <label class="appearance-option">
+          <input type="radio" name="appearance" value="dark">
+          <span class="appearance-preview dark-preview" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
+              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M20.2 15.1A8.5 8.5 0 0 1 8.9 3.8a8.5 8.5 0 1 0 11.3 11.3Z"/>
+            </svg>
+          </span>
+          <span class="appearance-label">Тёмная</span>
+        </label>
+      </div>
+    </fieldset>
+  </section>
+</body>
 </html>
