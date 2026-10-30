@@ -1,3 +1,4 @@
+import { projectMemory, historicalDate } from './cognition.ts';
 import { localDateKey } from '../src/calendar.ts';
 import type { Memory, MemoryItem, Episode, Entity, RelationType, Topic, Category, Reminder, Cause, Goal } from './memory.ts';
 
@@ -125,6 +126,7 @@ export function neighbours(memory: Memory, id: string) {
 export const nextStepsOf = (goal: Goal) => goal.steps.filter(s => !s.done && s.after.every(id => goal.steps.find(x => x.id === id)?.done) && !goal.steps.some(x => x.parent === s.id && !x.done));
 export function memoryContext(memory: Memory, query: string, titles: Titles = new Map(), now = Date.now(), recall: Recall = {}) {
   if (!memory.settings.enabled) return '';
+  const asOf=historicalDate(recall.latest??query,today(now));if(asOf!==today(now)){const [y,m,d]=asOf.split('-').map(Number);now=new Date(y,m-1,d,12).getTime();}memory=projectMemory(memory,query,asOf,recall.latest??query);
   const q = tokens(query);
   const lexical = (text: string) => { const t = tokens(text); return t.size ? Math.min(1, overlap(q, t) / Math.sqrt(t.size)) : 0; };
   const semantic = (text: string) => {

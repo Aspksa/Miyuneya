@@ -91,7 +91,8 @@ test('Causes, goals, predictions and the errors journal live in memory', () => {
   assert.ok(check(memory,predict(memory,{text:'Он выберет горы',kind:'cause',confidence:80},at).id,'right','',''));
   assert.equal(mistake(memory,{kind:'calc',text:'Сложила суммы неверно',fix:'Суммы считать кодом'},null,at).kind,'calc');
   const l=growth(memory,now).logic;
-  assert.deepEqual([l.predictions.checked,l.predictions.right,l.predictions.accuracy,l.conclusions.right,l.conclusions.total,l.conclusions.share,l.corrections,l.fixed],[2,1,50,1,2,50,2,2]);
+  assert.deepEqual([l.predictions.checked,l.predictions.right,l.predictions.accuracy,l.conclusions.right,l.conclusions.total,l.conclusions.share,l.corrections,l.fixed],[2,1,50,1,2,50,2,0]);
+  assert.ok(memory.items.filter(i=>i.source==='logic').every(i=>i.skill.status==='candidate'),'a proposed correction is not a verified fix');
   assert.deepEqual(l.kinds,[{kind:'cause',checked:1,right:1},{kind:'habit',checked:1,right:0}]);
   // Everything survives a restart; a hand-made loop in a goal is cut.
   const raw=JSON.parse(JSON.stringify(memory));

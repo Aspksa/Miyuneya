@@ -1,3 +1,5 @@
+import { resources, limitedText } from './resources.ts';
+import { requirements, contractCheck, calibrated, requestScope, projectWorkspace, scopedMessages, scopeOf } from './cognition.ts';
 import { openWorkflows } from './workflows.ts';
 import { createHash } from 'node:crypto';
 import { reconcileTasks } from '../src/productivity.ts';
@@ -77,6 +79,7 @@ export async function createApp(root: string, instance: string, preview = false,
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.error('Настройки cloud.ru не прочитаны: data/assistant.json повреждён.');
   }
   const upstream = new Set<AbortController>();
+  const governor=resources();
   let state: { revision: number; data: Workspace } = { revision: 0, data: emptyWorkspace() };
   try {
     const saved = JSON.parse(await readFile(dataFile, 'utf8'));
@@ -96,24 +99,26 @@ export async function createApp(root: string, instance: string, preview = false,
   const publicConfig = () => ({ configured: !!assistant.apiKey, keyHint: keyHint(assistant.apiKey), model: assistant.model, smartModel: assistant.smartModel, embedModel: assistant.embedModel, context: assistant.context, customAvatar: assistant.avatar?.version ?? null });
   const avatarFile = (type: string) => join(dataDir, 'avatar-custom.' + imageTypes[type]);
   function saveAssistant(next: AssistantConfig) {
-    const update = queue.then(async () => { await atomicWrite(assistantFile, JSON.stringify(next, null, 2)); assistant = next; });
+    const update = queue.then(async () => { await atomicWrite(assistantFile, JSON.stringify(next, null, 2)); assistant = next;governor.clear(); });
     queue = update.catch(() => {});
     return update;
   }
   const fail = (message: string, status: number) => Object.assign(new Error(message), { status });
   // Opens a cloud.ru request; the caller reads the body. The controller stays registered until release().
   async function cloud(path: string, init: RequestInit = {}, timeout = 120_000) {
+    const lease=governor.reserve(Buffer.byteLength(typeof init.body==='string'?init.body:''));
     const controller = new AbortController();
+    timeout=Math.min(timeout,Math.max(1,lease.deadline-Date.now()));
     let timer = setTimeout(() => controller.abort(new Error('timeout')), timeout);
     upstream.add(controller);
-    const release = () => { clearTimeout(timer); upstream.delete(controller); };
-    const extend = () => { clearTimeout(timer); timer = setTimeout(() => controller.abort(new Error('timeout')), timeout); };
+    const release = (success=true) => { clearTimeout(timer); upstream.delete(controller);lease.finish(success&&!controller.signal.aborted); };
+    const extend = () => { clearTimeout(timer); timer = setTimeout(() => controller.abort(new Error('timeout')), Math.max(1,Math.min(timeout,lease.deadline-Date.now()))); };
     const explain = () => fail(controller.signal.aborted ? (stopping ? 'Сервер завершает работу.' : 'cloud.ru не ответил вовремя. Попробуйте ещё раз.') : 'Нет связи с cloud.ru. Проверьте интернет.', 504);
     try {
       const response = await fetch(cloudUrl + path, { ...init, signal: controller.signal, headers: { Authorization: 'Bearer ' + assistant.apiKey, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...init.headers } });
       if (!response.ok) {
         let body: any = null;
-        try { body = JSON.parse(await response.text()); } catch {}
+        try { body = JSON.parse(await limitedText(response)); } catch {}
         const detail = String(body?.error?.message || body?.message || body?.detail || '').replaceAll(assistant.apiKey, '…').slice(0, 300);
         const reason = response.status === 401 || response.status === 403 ? 'cloud.ru не принял ключ. Проверьте API-ключ в настройках пространства.'
           : response.status === 404 ? 'cloud.ru не нашёл модель или адрес. Выберите другую модель в настройках.'
@@ -123,7 +128,7 @@ export async function createApp(root: string, instance: string, preview = false,
       }
       return { response, controller, release, extend, explain };
     } catch (e) {
-      release();
+      release(false);
       if ((e as { status?: number }).status) throw e;
       throw explain();
     }
@@ -131,25 +136,30 @@ export async function createApp(root: string, instance: string, preview = false,
   async function cloudJson(path: string, timeout: number) {
     const call = await cloud(path, {}, timeout);
     try {
-      try { return JSON.parse(await call.response.text()); } catch (e) { if (call.controller.signal.aborted) throw call.explain(); throw fail('cloud.ru вернул ответ в неизвестном формате.', 502); }
+      try { return JSON.parse(await limitedText(call.response)); } catch (e) { if (call.controller.signal.aborted) throw call.explain(); throw fail('cloud.ru вернул ответ в неизвестном формате.', 502); }
     } finally { call.release(); }
   }
   // A one-shot, non-streaming request used by the memory: reflection, sleep and dialog compaction.
   const modelFor = (strong: boolean) => strong && assistant.smartModel ? assistant.smartModel : assistant.model;
   async function ask(system: string, user: string, timeout = 90_000, strong = false) {
-    const call = await cloud('/chat/completions', { method: 'POST', body: JSON.stringify({ model: modelFor(strong), stream: false, temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }) }, timeout);
+    const cacheable=system===PLAN_PROMPT&&!memory.data.settings.private;
+    return governor.cached(JSON.stringify([assistant.apiKey,modelFor(strong),memory.generation,digest(JSON.stringify(assistant.context?state.data:null)),system,user]),async()=>{const text=await askUncached(system,user,timeout,strong);if(cacheable&&!readPlan(parseJson(text)))throw fail('Модель вернула неверный план.',502);return text;},cacheable);
+  }
+  async function askUncached(system:string,user:string,timeout:number,strong:boolean){
+    const call = await cloud('/chat/completions', { method: 'POST', body: JSON.stringify({ model: modelFor(strong), stream: false, max_tokens:8192,temperature: 0.2, messages: [{ role: 'system', content: system }, { role: 'user', content: user }] }) }, timeout);
     try {
       let text;
-      try { text = JSON.parse(await call.response.text())?.choices?.[0]?.message?.content; } catch { if (call.controller.signal.aborted) throw call.explain(); throw fail('cloud.ru вернул ответ в неизвестном формате.', 502); }
+      try { text = JSON.parse(await limitedText(call.response))?.choices?.[0]?.message?.content; } catch { if (call.controller.signal.aborted) throw call.explain(); throw fail('cloud.ru вернул ответ в неизвестном формате.', 502); }
       if (typeof text !== 'string' || !text.trim()) throw fail('Модель вернула пустой ответ.', 502);
       return text;
     } finally { call.release(); }
   }
-  async function embed(input: string[], timeout = 30_000) {
+  async function embed(input:string[],timeout=30000){return governor.run(()=>embedUncached(input,timeout));}
+  async function embedUncached(input: string[], timeout = 30_000) {
     const call = await cloud('/embeddings', { method: 'POST', body: JSON.stringify({ model: assistant.embedModel, input }) }, timeout);
     try {
       let data;
-      try { data = JSON.parse(await call.response.text())?.data; } catch { if (call.controller.signal.aborted) throw call.explain(); throw fail('cloud.ru вернул эмбеддинги в неизвестном формате.', 502); }
+      try { data = JSON.parse(await limitedText(call.response))?.data; } catch { if (call.controller.signal.aborted) throw call.explain(); throw fail('cloud.ru вернул эмбеддинги в неизвестном формате.', 502); }
       if (!Array.isArray(data) || data.length !== input.length) throw fail('cloud.ru вернул не все эмбеддинги.', 502);
       const vectors = [...data].sort((a, b) => (a?.index ?? 0) - (b?.index ?? 0)).map(d => d?.embedding);
       if (!vectors.every(v => Array.isArray(v) && v.length > 0 && v.length <= 8192 && v.every(Number.isFinite))) throw fail('cloud.ru вернул эмбеддинги в неизвестном формате.', 502);
@@ -176,7 +186,7 @@ export async function createApp(root: string, instance: string, preview = false,
   let stopping = false;
   const active = new Set<Promise<void>>();
   const server = createServer((req, res) => {
-    const operation = handle(req, res);
+    const operation = governor.run(()=>handle(req, res));
     active.add(operation);
     operation.finally(() => active.delete(operation)).catch(() => {});
   });
@@ -274,7 +284,7 @@ export async function createApp(root: string, instance: string, preview = false,
           if (!assistant.apiKey) return send(409, { error: 'Подключите cloud.ru в настройках пространства: сохраните API-ключ и выберите модель.' });
           const input = await readJson(req, send, 400_000);
           if (input === undefined) return;
-          const messages = input?.messages;
+          let messages = input?.messages;
           const dialog = validDialogId(input?.dialog) ? input.dialog : null;
           const summary = typeof input?.summary === 'string' ? input.summary.slice(0, 6000).trim() : '';
           if (!Array.isArray(messages) || !messages.length || messages.length > 60 || !messages.every((m: ChatMessage) => (m?.role === 'user' || m?.role === 'assistant') && typeof m.content === 'string' && m.content.length > 0 && m.content.length <= 20_000) || messages.at(-1).role !== 'user')
@@ -282,22 +292,25 @@ export async function createApp(root: string, instance: string, preview = false,
           const recordingGeneration=memory.generation;
           memory.touch();
           const last = messages.at(-1).content;
+          const activeScope=requestScope(memory.data,messages.filter(m=>m.role==='user').slice(-3).map(m=>m.content).join('\n'),last);
+          messages=scopedMessages(memory.data,messages,activeScope);
+          const visibleWorkspace=projectWorkspace(memory.data,state.data,activeScope);
           // «Запомни …» and «забудь …» change the memory before the answer, so the model can confirm it.
           const notes: string[] = []; const events: string[] = [];
           const command = memory.data.settings.enabled ? parseCommand(last) : null;
           if (command?.kind === 'remember') {
-            const item = await memory.remember(command.text);
+            const item = await memory.remember(command.text,activeScope);
             if (item) { notes.push(`Ты только что сохранила в долговременную память: «${item.text}». Коротко подтверди.`); events.push('Запомнила: ' + item.text); }
           }
           // «Напомни, когда заговорим о …» is kept until the talk turns to that topic.
           const reminder = memory.data.settings.enabled ? parseReminder(last) : null;
           if (reminder) {
-            const added = await memory.remind(reminder.about, reminder.text, last);
+            const added = await memory.remind(reminder.about, reminder.text, last,activeScope);
             notes.push(added ? `Ты только что поставила напоминание: когда речь зайдёт о «${added.about}», напомнишь «${added.text}». Коротко подтверди.` : 'Такое напоминание уже стоит. Коротко скажи, что помнишь о нём.');
             if (added) events.push(`Напомню, когда речь зайдёт о «${added.about}»`);
           }
           if (command?.kind === 'forget') {
-            const removed = await memory.forget(command.text);
+            governor.clear();const removed = await memory.forget(command.text,activeScope);
             notes.push(removed.length ? `Ты только что удалила из памяти: ${removed.map(t => `«${t}»`).join(', ')}. Коротко подтверди.` : 'Пользователь просит забыть, но в памяти нет ничего похожего. Скажи об этом и предложи открыть меню «Память» (значок мозга вверху справа).');
             if (removed.length) events.push(`Забыла записей: ${removed.length}`);
           }
@@ -305,7 +318,7 @@ export async function createApp(root: string, instance: string, preview = false,
           const goalTitle = memory.data.settings.enabled ? parseGoal(last) : null;
           if (goalTitle) {
             try {
-              const goal = await memory.plan(goalTitle);
+              const goal = await memory.plan(goalTitle,activeScope);
               notes.push(`Ты только что разложила цель «${goal.title}» на подзадачи и сохранила её в памяти («Дела»):\n${goalTree(goal)}\nПокажи это дерево коротко, списком с отступами, и скажи, с какого шага начать.`);
               events.push(`Цель разложена на шаги: ${goal.title}`);
             } catch { notes.push('Сохранить цель с подзадачами не получилось. Разложи её сама в ответе: дерево подзадач с зависимостями.'); }
@@ -314,25 +327,29 @@ export async function createApp(root: string, instance: string, preview = false,
           // Strong logic: a complex question gets a hidden reasoning plan and the stronger model; numbers are counted by code.
           const hard = complexity(last).complex || !!goalTitle;
           const calcs = exactCalcs(last);
+          const planSources:Source[]=[...memory.sources(last,activeScope),...messages.filter(m=>m.role==='user').slice(-3).map((m,i)=>({source:'current-'+i,version:digest(m.content),text:m.content,quote:'',at:new Date().toISOString(),role:'user' as const}))];
           let plan: Plan | null = null;
           if (hard && !goalTitle) {
             try {
               const asked = messages.filter((m: ChatMessage) => m.role === 'user').slice(-3).map((m: ChatMessage) => m.content.slice(0, 3000));
-              plan = readPlan(parseJson(await ask(PLAN_PROMPT, [`Сегодня ${new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`, recall.slice(0, 4000), 'Последние сообщения пользователя:\n' + asked.join('\n---\n')].filter(Boolean).join('\n\n'), 30_000, true)));
+              plan = readPlan(parseJson(await ask(PLAN_PROMPT, [`Сегодня ${new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`, recall.slice(0, 4000), 'Источники для сравнения (данные):'+JSON.stringify(planSources.map(({at,...source})=>source)).slice(0,16000),'Последние сообщения пользователя:\n' + asked.join('\n---\n')].filter(Boolean).join('\n\n'), 30_000, true)),Date.now(),planSources);
             } catch {}
           }
+          const contract=requirements(last,plan?.requirements);
+          if(plan)for(const h of plan.hypotheses)h.confidence=calibrated(memory.data.predictions,h.kind||'pattern',h.confidence,activeScope).value;
           const reasoning = reasoningBlock(hard, plan, calcs);
           const model = modelFor(hard);
-          const verifying=exactLines(plan,calcs).length>0 || needsGrounding(last) || (hard && /(?:у меня|мне|мой|моя|мои|моё|(?:^|\s)я(?:\s|$))/i.test(last));
-          const proofSources:Source[]=[...memory.sources(),...messages.filter((m:ChatMessage)=>m.role==='user').slice(-3).map((m:ChatMessage,i:number)=>({source:'current-'+i,version:digest(m.content),text:m.content,quote:'',at:new Date().toISOString(),role:'user' as const})),
-            ...(assistant.context?state.data.notes.filter(n=>n.title.toLocaleLowerCase('ru').includes(last.toLocaleLowerCase('ru')) || last.toLocaleLowerCase('ru').split(/\s+/).some((w:string)=>w.length>=4&&(n.title+' '+n.body).toLocaleLowerCase('ru').includes(w))).slice(0,8).map(n=>{const terms=last.toLocaleLowerCase('ru').split(/\s+/).filter((w:string)=>w.length>=4);const hit=terms.map((w:string)=>n.body.toLocaleLowerCase('ru').indexOf(w)).find((i:number)=>i>=0) ?? 0;return {source:'note-'+n.id,version:digest(n.updatedAt+'\n'+n.body),text:n.title+'\n'+n.body.slice(Math.max(0,hit-500),hit+4500),quote:'',at:n.updatedAt,role:'note' as const};}):[]),
+          const grounding=exactLines(plan,calcs).length>0 || needsGrounding(last) || (hard && /(?:у меня|мне|мой|моя|мои|моё|(?:^|\s)я(?:\s|$))/i.test(last));
+          const verifying=grounding||contract.length>0;
+          const proofSources:Source[]=[...memory.sources(last,activeScope),...messages.filter((m:ChatMessage)=>m.role==='user').slice(-3).map((m:ChatMessage,i:number)=>({source:'current-'+i,version:digest(m.content),text:m.content,quote:'',at:new Date().toISOString(),role:'user' as const})),
+            ...(assistant.context?visibleWorkspace.notes.filter(n=>n.title.toLocaleLowerCase('ru').includes(last.toLocaleLowerCase('ru')) || last.toLocaleLowerCase('ru').split(/\s+/).some((w:string)=>w.length>=4&&(n.title+' '+n.body).toLocaleLowerCase('ru').includes(w))).slice(0,8).map(n=>{const terms=last.toLocaleLowerCase('ru').split(/\s+/).filter((w:string)=>w.length>=4);const hit=terms.map((w:string)=>n.body.toLocaleLowerCase('ru').indexOf(w)).find((i:number)=>i>=0) ?? 0;return {source:'note-'+n.id,version:digest(n.updatedAt+'\n'+n.body),text:n.title+'\n'+n.body.slice(Math.max(0,hit-500),hit+4500),quote:'',at:n.updatedAt,role:'note' as const};}):[]),
             ...exactLines(plan,calcs).map((text,i)=>({source:'calculation-'+i,version:digest(text),text,quote:'',at:new Date().toISOString(),role:'note' as const}))].slice(-120);
           let reviewed:Review|undefined;
-          const system = [PERSONA, ACTIONS, assistant.context ? workspaceContext(state.data,new Date(),30_000,last) : 'Доступ к заметкам и задачам пользователя выключен в настройках. Если спросят о них, мягко скажи об этом.',
-            recall, summary ? 'Краткое содержание более ранней части этого разговора:\n' + summary : '', reasoning, ...notes].filter(Boolean).join('\n\n');
+          const system = [PERSONA, ACTIONS, assistant.context ? workspaceContext(visibleWorkspace,new Date(),30_000,last) : 'Доступ к заметкам и задачам пользователя выключен в настройках. Если спросят о них, мягко скажи об этом.',
+            contract.length?'Условия текущего запроса, которые нужно соблюсти: '+JSON.stringify(contract):'',recall, summary && (!activeScope||scopeOf(summary,memory.data)===activeScope) ? 'Краткое содержание более ранней части этого разговора:\n' + summary : '', reasoning, ...notes].filter(Boolean).join('\n\n');
           let call;
           try {
-            call = await cloud('/chat/completions', { method: 'POST', body: JSON.stringify({ model, stream: true, temperature: 0.7, messages: [{ role: 'system', content: system }, ...messages.map((m: ChatMessage) => ({ role: m.role, content: m.content }))] }) });
+            call = await cloud('/chat/completions', { method: 'POST', body: JSON.stringify({ model, stream: true, max_tokens:8192,temperature: 0.7, messages: [{ role: 'system', content: system }, ...messages.map((m: ChatMessage) => ({ role: m.role, content: m.content }))] }) });
           } catch (e) { return send((e as { status: number }).status, { error: (e as Error).message }); }
           // Stream the answer to the browser as JSON lines: {delta}, then {done} or {error}.
           const onClose = () => { if (!res.writableEnded) call.controller.abort(new Error('client closed')); };
@@ -344,8 +361,9 @@ export async function createApp(root: string, instance: string, preview = false,
           try {
             if (!(call.response.headers.get('content-type') || '').includes('text/event-stream')) {
               // Some models ignore stream: true and answer with one JSON body.
-              const body = JSON.parse(await call.response.text());
+              const body = JSON.parse(await limitedText(call.response));
               const text = body?.choices?.[0]?.message?.content;
+              if(typeof text==='string'&&text.length>100000)throw fail('Модель превысила допустимый размер ответа.',502);
               if (typeof text === 'string' && text.trim()) { write({ delta: text }); answer = text; received = true; }
             } else {
               const decoder = new TextDecoder();
@@ -353,6 +371,7 @@ export async function createApp(root: string, instance: string, preview = false,
               read: for await (const chunk of call.response.body as unknown as AsyncIterable<Uint8Array>) {
                 call.extend();
                 buffer += decoder.decode(chunk, { stream: true });
+                if(buffer.length>200000||answer.length>100000)throw fail('Модель превысила допустимый размер ответа.',502);
                 for (let end = buffer.indexOf('\n'); end >= 0; end = buffer.indexOf('\n')) {
                   const line = buffer.slice(0, end).trim();
                   buffer = buffer.slice(end + 1);
@@ -363,15 +382,16 @@ export async function createApp(root: string, instance: string, preview = false,
                   try { event = JSON.parse(payload); } catch { continue; }
                   if (event?.error) throw fail(String(event.error.message || 'cloud.ru прервал ответ.').replaceAll(assistant.apiKey, '…').slice(0, 300), 502);
                   const text = event?.choices?.[0]?.delta?.content ?? event?.choices?.[0]?.message?.content;
+                  if(typeof text==='string'&&answer.length+text.length>100000)throw fail('Модель превысила допустимый размер ответа.',502);
                   if (typeof text === 'string' && text) { write({ delta: text }); answer += text; received = true; }
                 }
               }
             }
             if (!received) throw fail('Модель вернула пустой ответ. Попробуйте переформулировать или выбрать другую модель.', 502);
             if(verifying) {
-              try { reviewed=reviewAnswer(answer,parseJson(await ask(VERIFY_PROMPT,JSON.stringify({question:last,draft:answer,sources:proofSources}),30000,true)),proofSources,true); }
+              try { const checks=parseJson(await ask((grounding?VERIFY_PROMPT:'Проверь только выполнение условий запроса; не добавляй новых фактов.')+'\nВерни также requirements:[{quote:"точное условие",status:"met|unmet|unknown",answerQuote:"точный фрагмент ответа, показывающий соблюдение"}]. Проверь КАЖДОЕ условие. При сомнении unknown.',JSON.stringify({question:last,draft:answer,sources:proofSources,requirements:contract}),30000,true));reviewed=grounding?reviewAnswer(answer,checks,proofSources,true):{status:'supported',reasons:[],checked:0};if(!contractCheck(answer,contract,checks))reviewed={status:'blocked',reasons:['Не подтверждено соблюдение условий запроса.'],checked:contract.length}; }
               catch { reviewed={status:'uncertain',reasons:['Проверка источников сейчас недоступна.'],checked:0}; }
-              if(reviewed.status!=='supported')answer='Не могу подтвердить этот ответ по доступным источникам. Уточните сведения или укажите нужную заметку.'+(exactLines(plan,calcs).length?'\n\nРасчёты, выполненные кодом:\n'+exactLines(plan,calcs).join('\n'):'');
+              if(reviewed.status!=='supported')answer=(reviewed.reasons.includes('Не подтверждено соблюдение условий запроса.')?'Не удалось подтвердить соблюдение всех условий запроса. Уточните обязательные ограничения.':'Не могу подтвердить этот ответ по доступным источникам. Уточните сведения или укажите нужную заметку.')+(exactLines(plan,calcs).length?'\n\nРасчёты, выполненные кодом:\n'+exactLines(plan,calcs).join('\n'):'');
               if(!res.destroyed)res.write(JSON.stringify({delta:answer})+'\n');
             }
             const exact = exactLines(plan, calcs).length;
@@ -403,16 +423,18 @@ export async function createApp(root: string, instance: string, preview = false,
         return send(405, { error: 'Метод не поддерживается' });
       }
       if (path === '/api/memory' || path.startsWith('/api/memory/')) {
+        if(req.method!=='GET')governor.clear();
         const route = path.slice('/api/memory'.length);
         const ok = () => send(200, memory.view());
         const background = (e: unknown) => send((e as { status?: number }).status || 500, { error: (e as Error).message || 'Не удалось обработать память.' });
+        if(route==='/diagnostics'&&req.method==='GET')return send(200,{resources:governor.view(),cognition:{scoped:memory.data.items.filter(i=>i.scope).length,stale:memory.data.items.filter(i=>i.stale).length,candidates:memory.data.items.filter(i=>i.skill?.status==='candidate').length,passed:memory.data.items.filter(i=>i.skill?.status==='passed').length}});
         if (route === '' && req.method === 'GET') return ok();
         if (route === '' && req.method === 'PUT') {
           const input = await readJson(req, send, 10_000);
           if (input === undefined) return;
           const flag = (v: unknown) => v === undefined || typeof v === 'boolean';
           if (!input || typeof input !== 'object' || !flag(input.enabled) || !flag(input.private) || !flag(input.thinking) || (input.intensity !== undefined && !['low', 'normal', 'high'].includes(input.intensity))) return send(400, { error: 'Неверный формат настроек памяти.' });
-          await memory.settings({ ...(input.enabled !== undefined && { enabled: input.enabled }), ...(input.private !== undefined && { private: input.private }), ...(input.thinking !== undefined && { thinking: input.thinking }), ...(input.intensity !== undefined && { intensity: input.intensity }) });
+          governor.clear();await memory.settings({ ...(input.enabled !== undefined && { enabled: input.enabled }), ...(input.private !== undefined && { private: input.private }), ...(input.thinking !== undefined && { thinking: input.thinking }), ...(input.intensity !== undefined && { intensity: input.intensity }) });
           return ok();
         }
         if (route === '' && req.method === 'DELETE') { await memory.reset(); return ok(); }
@@ -542,7 +564,7 @@ export async function createApp(root: string, instance: string, preview = false,
         for (const controller of upstream) controller.abort(new Error('shutdown'));
         if (server.listening) await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()));
         await Promise.all([...active]);
-        await memory.shutdown();
+        governor.clear();await memory.shutdown();
         await workflows?.shutdown();
         await disk?.shutdown();
         await queue;
