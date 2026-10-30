@@ -292,7 +292,7 @@ export async function createApp(root: string, instance: string, preview = false,
           const recordingGeneration=memory.generation;
           memory.touch();
           const last = messages.at(-1).content;
-          const activeScope=requestScope(memory.data,messages.filter(m=>m.role==='user').map(m=>m.content).join('\n'),last);
+          const activeScope=memory.projectScope(dialog,messages.filter(m=>m.role==='user').map(m=>m.content).join('\n'),last);
           messages=scopedMessages(memory.data,messages,activeScope);
           const visibleWorkspace=projectWorkspace(memory.data,state.data,activeScope);
           // «Запомни …» and «забудь …» change the memory before the answer, so the model can confirm it.

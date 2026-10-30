@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { fixture,own } from './helpers/lifecycle.mjs';
-import { emptyMemory,upsert,upsertEntity,applyReflection,normalizeMemory,memoryContext,openMemory,predict,noteVersion,sleepBatch,addGoal,remind,promise,addCause,mistake } from '../server/memory.ts';
+import { emptyMemory,upsert,upsertEntity,applyReflection,normalizeMemory,memoryContext,openMemory,predict,noteVersion,sleepBatch,dialogSources,addGoal,remind,promise,addCause,mistake } from '../server/memory.ts';
 import { dependencies,invalidate,scopeOf,projectMemory,calibrated,requirements,contractCheck,alternatives,versionOf,novelty,requestScope,scopedMessages } from '../server/cognition.ts';
 import { digest } from '../server/integrity.ts';
 import { resources,limitedText } from '../server/resources.ts';
@@ -231,4 +231,46 @@ test('Prompt character truncation leaves omitted rows pending instead of acknowl
 test('Explicit confirmation of an existing candidate supersedes an older opposing user rule',async t=>{
   const {m}=await memoryStore(t);const old=upsert(m.data,'rule','Не называй меня Алекс',{source:'user',pinned:true}).item;const candidate=upsert(m.data,'rule','Называй меня Алекс',{source:'thought'}).item;
   const confirmed=await m.remember(candidate.text);assert.equal(confirmed.id,candidate.id);assert.equal(old.status,'superseded');assert.equal(confirmed.skill.status,'passed');const context=await m.context('Как ко мне обращаться');assert.match(context,/\n- Называй меня Алекс/);assert.doesNotMatch(context,/\n- Не называй меня Алекс/);
+});
+
+
+test('Reflection preserves globally sourced turns before a later project switch, including after persistence',async t=>{
+  const id='dialog-personal-scope',messages=[{role:'user',content:'Моя собака Рекс'},{role:'assistant',content:'Поняла'},{role:'user',content:'Проект «Альфа»: обсудим работу'}];
+  const {m,root}=await memoryStore(t,{ask:async()=>JSON.stringify({facts:[{text:'Моя собака Рекс',evidence:[{source:id+'-0',quote:'Моя собака Рекс'}]}],entities:[{name:'Рекс',type:'thing',about:'собака'}]})});
+  await m.record(id,messages,'');assert.deepEqual(m.data.dialogs[0].messages.map(t=>t.scope),[null,null,'альфа']);const saved=normalizeMemory(JSON.parse(await readFile(join(root,'data','memory.json'),'utf8')));assert.equal(dialogSources(saved.dialogs[0],saved)[0].scope,null);
+  await m.close(id);assert.equal(m.data.items.find(i=>i.text==='Моя собака Рекс').scope,undefined);assert.equal(m.data.entities.find(i=>i.name==='Рекс').scope,undefined);assert.match(await m.context('Собака Рекс'),/Моя собака Рекс/);assert.match(await m.context('Проект «Бета»: Рекс'),/Моя собака Рекс/);
+});
+
+test('A global note included in a project sleep batch retains its global provenance',async t=>{
+  const workspace=emptyWorkspace();workspace.notes=[{id:'alpha-sleep',title:'Проект «Альфа»',body:'Работаем над запуском',updatedAt:at},{id:'personal-sleep',title:'Личное',body:'Моя собака Рекс',updatedAt:at}];
+  const {m}=await memoryStore(t,{workspace:()=>workspace,ask:async()=>JSON.stringify({note_facts:[{note:'alpha-sleep',text:'Работаем над запуском',evidence:[{source:'alpha-sleep-0',quote:'Работаем над запуском'}]},{note:'personal-sleep',text:'Моя собака Рекс',evidence:[{source:'personal-sleep-0',quote:'Моя собака Рекс'}]}]})});
+  await m.sleepNow();assert.equal(m.data.items.find(i=>i.text==='Работаем над запуском').scope,'альфа');assert.equal(m.data.items.find(i=>i.text==='Моя собака Рекс').scope,undefined);assert.match(await m.context('Рекс'),/Моя собака Рекс/);assert.equal(m.data.noteVersions['personal-sleep'],noteVersion(workspace.notes[1]));
+});
+
+test('Scoped historical proof sources apply the same creation cutoff as historical recall',async t=>{
+  const {m}=await memoryStore(t);upsert(m.data,'fact','Поздний бюджет 9000',{source:'user',pinned:true,scope:'Альфа',now:at});upsert(m.data,'fact','Ранний бюджет 5000',{source:'user',pinned:true,scope:'Альфа',now:'2025-01-01T00:00:00Z',validFrom:'2025-01-01'});
+  const query='Бюджет по состоянию на 2025-06-01',context=await m.context(query,query,'альфа'),proof=m.sources(query,'альфа');assert.doesNotMatch(context,/9000/);assert.doesNotMatch(JSON.stringify(proof),/9000/);assert.match(JSON.stringify(proof),/5000/);
+});
+
+test('A faded dated fact cannot block pending inputs from another project or consume repeated thinking allowance',async t=>{
+  const inputs=[];const {m}=await memoryStore(t,{thinkIdleMs:0,ask:async(system,input)=>{inputs.push(input);return '{"thoughts":[]}';}});upsert(m.data,'fact','СТАРЫЙ ИСТОЧНИК',{scope:'Альфа',source:'user',now:'2020-01-01T00:00:00Z',until:'2027-12-31',weight:0.01});upsert(m.data,'fact','НОВЫЙ БЕТА ОДИН',{scope:'Бета',source:'user',pinned:true});upsert(m.data,'fact','НОВЫЙ БЕТА ДВА',{scope:'Бета',source:'user',pinned:true});await m.tick(Date.now()+3*3600000);assert.match(inputs[0],/НОВЫЙ БЕТА/);assert.doesNotMatch(inputs[0],/СТАРЫЙ ИСТОЧНИК/);assert.ok(m.data.cognition.lastThoughtInput);await m.tick(Date.now()+4*3600000);assert.equal(inputs.length,1);
+});
+
+test('A model date absent from the correction quote cannot rewrite the old fact validity',()=>{
+  const m=emptyMemory(),old=upsert(m,'fact','Пользователь любит кофе',{source:'user',pinned:true,now:'2025-01-01T00:00:00Z',validFrom:'2025-01-01'}).item;
+  const id='dialog-dated-correction',d={id,messages:[{role:'user',content:'Пользователь не любит кофе'}],summary:'',signals:[],updatedAt:at,failures:0};applyReflection(m,{facts:[{text:'Пользователь не любит кофе',conflicts:old.id,validFrom:'2024-01-01',evidence:[{source:id+'-0',quote:'Пользователь не любит кофе'}]}]},d,new Set(),at);
+  assert.equal(old.validTo,'2026-10-30');const historical=memoryContext(m,'Кофе по состоянию на 2025-06-01',new Map(),Date.parse(at));assert.match(historical,/Пользователь любит кофе/);assert.doesNotMatch(historical,/не любит кофе/);
+});
+
+test('Comparison values require complete numbers and retain negation and range qualifiers',()=>{
+  const source={source:'price-complete',version:'v1',text:'Цена 5000 рублей. Цена не 500 рублей. Цена до 100 рублей. Цена ≤5000 рублей.',at,role:'user'};
+  const build=(value,quote)=>alternatives([{name:'A',criteria:[{name:'Цена',value,evidence:[{source:source.source,version:'v1',quote}]}]}],[source])[0].criteria[0];
+  assert.equal(build('500','Цена 5000 рублей').evidence.length,0);assert.equal(build('5000','Цена 5000 рублей').value,'5000');assert.equal(build('500','Цена не 500 рублей').evidence.length,0);assert.equal(build('100','Цена до 100 рублей').evidence.length,0);assert.equal(build('до 100 рублей','Цена до 100 рублей').value,'до 100 рублей');assert.equal(build('≥5000','Цена ≤5000 рублей').evidence.length,0);assert.equal(build('≤5000','Цена ≤5000 рублей').value,'≤5000');
+});
+
+
+test('A dialog retains its scope after reflection, restart and shortened history, while a global reset clears it',async t=>{
+  const {m,root}=await memoryStore(t,{ask:async()=>'{"facts":[]}'}),id='dialog-retained-scope';await m.record(id,[{role:'user',content:'Проект «Альфа»: обсудим работу'}],'');await m.close(id);assert.equal(m.projectScope(id,'Продолжай','Продолжай'),'альфа');assert.equal(m.projectScope('dialog-other-chat','Продолжай','Продолжай'),undefined);await m.shutdown();
+  const reopened=await openMemory(join(root,'data'),{ask:async()=>'{"facts":[]}',available:()=>true,workspace:()=>null,tickMs:1e9});own(root,()=>reopened.shutdown());assert.equal(reopened.projectScope(id,'Забудь бюджет','Забудь бюджет'),'альфа');await reopened.record(id,[{role:'user',content:'Продолжаем обсуждение без старых реплик'}],'');assert.equal(reopened.data.dialogs[0].messages[0].scope,'альфа');
+  await reopened.record(id,[{role:'user',content:'Общий контекст: теперь личное'}],'');await reopened.close(id);assert.equal(reopened.projectScope(id,'Продолжай','Продолжай'),undefined);
 });

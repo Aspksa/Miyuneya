@@ -126,7 +126,7 @@ export function neighbours(memory: Memory, id: string) {
 export const nextStepsOf = (goal: Goal) => goal.steps.filter(s => !s.done && s.after.every(id => goal.steps.find(x => x.id === id)?.done) && !goal.steps.some(x => x.parent === s.id && !x.done));
 export function memoryContext(memory: Memory, query: string, titles: Titles = new Map(), now = Date.now(), recall: Recall = {}) {
   if (!memory.settings.enabled) return '';
-  const asOf=historicalDate(recall.latest??query,today(now));if(asOf!==today(now)){const [y,m,d]=asOf.split('-').map(Number);now=new Date(y,m-1,d,12).getTime();}memory=projectMemory(memory,query,asOf,recall.latest??query);
+  const historical=/(?:по состоянию на|актуально на)\s+\d{4}-\d{2}-\d{2}/iu.test(recall.latest??query);const asOf=historicalDate(recall.latest??query,today(now));if(asOf!==today(now)){const [y,m,d]=asOf.split('-').map(Number);now=new Date(y,m-1,d,12).getTime();}memory=projectMemory(memory,query,asOf,recall.latest??query);
   const q = tokens(query);
   const lexical = (text: string) => { const t = tokens(text); return t.size ? Math.min(1, overlap(q, t) / Math.sqrt(t.size)) : 0; };
   const semantic = (text: string) => {
@@ -138,7 +138,7 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   // The upper levels of memory come first: matching topics lift their facts.
   const topics = memory.topics.map(t => ({ t, score: match(topicText(t)) })).filter(x => x.score > 0.3).sort((a, b) => b.score - a.score).slice(0, 3);
   const inTopic = new Set(topics.flatMap(x => x.t.facts));
-  const live = memory.items.filter(i => i.status!=='superseded' && !expired(i, now)).map(item => ({ item, power: strength(item, now) })).filter(x => x.power >= FORGET_BELOW);
+  const live = memory.items.filter(i => i.status!=='superseded' && !expired(i, now)).map(item => ({ item, power: historical&&item.source==='user'&&(item.validFrom||item.validTo||item.until)?Math.max(0.2,strength(item,now)):strength(item, now) })).filter(x => x.power >= FORGET_BELOW);
   const rules = live.filter(x => x.item.kind === 'rule').sort((a, b) => b.power - a.power);
   const facts = live.filter(x => x.item.kind === 'fact').map(x => { const m = match(x.item.text) + (inTopic.has(x.item.id) ? 0.25 : 0); return { ...x, match: m, score: x.power * (0.3 + m) }; }).sort((a, b) => b.score - a.score);
   const recent = memory.episodes.slice(-3).map(e => e.id);
