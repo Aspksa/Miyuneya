@@ -297,6 +297,12 @@
     <div class="kitsune-settings-content">
       <fieldset>
         <legend>Аватар</legend>
+        <label class="kitsune-upload" for="kitsune-image-upload">
+          <span>Заменить изображение аватара</span>
+          <input id="kitsune-image-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+        </label>
+        <button id="kitsune-image-restore" class="kitsune-restore" type="button">Вернуть исходную кицунэ</button>
+        <p class="kitsune-help">Фотография сохраняется локально на сервере в исходном разрешении (PNG/JPEG/WebP/GIF, до 15 МБ).</p>
         <label class="kitsune-control" for="kitsune-avatar-size">
           <span>Размер аватара</span><output id="kitsune-size-output">180 px</output>
           <input id="kitsune-avatar-size" type="range" min="100" max="300" step="10" value="180">
@@ -311,9 +317,18 @@
         <label class="kitsune-check" for="kitsune-animations">
           <input id="kitsune-animations" type="checkbox" checked> Плавная анимация аватара
         </label>
+        <p id="kitsune-settings-message" class="kitsune-help" role="status" aria-live="polite" hidden></p>
       </fieldset>
       <fieldset>
         <legend>Чат</legend>
+        <label class="kitsune-control" for="kitsune-chat-width">
+          <span>Ширина чата</span><output id="kitsune-chat-width-output">410 px</output>
+          <input id="kitsune-chat-width" type="range" min="320" max="800" step="10" value="410">
+        </label>
+        <label class="kitsune-control" for="kitsune-chat-height">
+          <span>Высота чата</span><output id="kitsune-chat-height-output">550 px</output>
+          <input id="kitsune-chat-height" type="range" min="350" max="900" step="10" value="550">
+        </label>
         <label class="kitsune-control" for="kitsune-chat-font">
           <span>Размер текста</span>
           <select id="kitsune-chat-font">
