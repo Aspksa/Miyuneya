@@ -137,6 +137,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   await evalJS('new Promise(resolve=>setTimeout(resolve,40))');
   assert.equal(await evalJS('document.getElementById("brain-workspace").hidden'),true);
   assert.equal(await evalJS('document.title'),'');
+  await evalJS('document.querySelector("#kitsune-avatar img").decode()');
   const kitsuneInitial=await evalJS(`(()=>{
     const avatar=document.getElementById('kitsune-avatar');
     const image=avatar.querySelector('img');
@@ -174,10 +175,40 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.equal(await evalJS('getComputedStyle(document.getElementById("kitsune-chat")).width'),'500px');
   await evalJS('document.getElementById("kitsune-settings-close").click()');
   assert.equal(await evalJS('document.getElementById("kitsune-settings").hidden'),true);
-  await evalJS(`(()=>{
-    document.getElementById('kitsune-settings-reset').click();
-    return true;
+  // Mouse dragging must move the avatar and NOT activate chat.
+  const beforeDrag=await evalJS(`(()=>{
+    const r=document.getElementById('kitsune-avatar').getBoundingClientRect();
+    return {left:r.left,top:r.top,x:r.left+r.width/2,y:r.top+r.height/2};
   })()`);
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:beforeDrag.x,y:beforeDrag.y});
+  await cd.send('Input.dispatchMouseEvent',{type:'mousePressed',x:beforeDrag.x,y:beforeDrag.y,button:'left',clickCount:1});
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:beforeDrag.x+30,y:beforeDrag.y-30,button:'left',buttons:1});
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:beforeDrag.x+30,y:beforeDrag.y-30,button:'left',clickCount:1});
+  const afterDrag=await evalJS(`(()=>{
+    const r=document.getElementById('kitsune-avatar').getBoundingClientRect();
+    return {left:r.left,top:r.top,chatHidden:document.getElementById('kitsune-chat').hidden};
+  })()`);
+  assert.ok(afterDrag.left>=beforeDrag.left+20,'Dragging moves avatar horizontally');
+  assert.ok(afterDrag.top<=beforeDrag.top-20,'Dragging moves avatar vertically');
+  assert.equal(afterDrag.chatHidden,true,'Dragging must not open chat');
+  await evalJS('document.getElementById("kitsune-avatar").click()');
+  assert.equal(await evalJS('document.getElementById("kitsune-chat").hidden'),false);
+  const headerBefore=await evalJS(`(()=>{
+    const p=document.getElementById('kitsune-chat').getBoundingClientRect();
+    const h=document.getElementById('kitsune-chat-header').getBoundingClientRect();
+    return {left:p.left,top:p.top,x:h.left+45,y:h.top+16};
+  })()`);
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:headerBefore.x,y:headerBefore.y});
+  await cd.send('Input.dispatchMouseEvent',{type:'mousePressed',x:headerBefore.x,y:headerBefore.y,button:'left',clickCount:1});
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:headerBefore.x+26,y:headerBefore.y+16,button:'left',buttons:1});
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:headerBefore.x+26,y:headerBefore.y+16,button:'left',clickCount:1});
+  const chatAfter=await evalJS(`(()=>{
+    const r=document.getElementById('kitsune-chat').getBoundingClientRect();
+    return {left:r.left,top:r.top};
+  })()`);
+  assert.ok(chatAfter.left>=headerBefore.left+15,'Chat moves by dragging the header');
+  await evalJS('document.getElementById("kitsune-chat-close").click()');
+  await evalJS('document.getElementById("kitsune-settings-reset").click()');
   assert.equal(await evalJS('document.getElementById("cloud-key").type'),'password');
   assert.equal(await evalJS('document.getElementById("cloud-key").value'),'');
   assert.equal(await evalJS('document.getElementById("cloud-panel") !== null'),true);
