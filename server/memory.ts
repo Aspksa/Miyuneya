@@ -210,7 +210,12 @@ export function upsert(memory: Memory, kind: MemoryKind, text: string, options: 
     if ((!options.origin || same.origin !== options.origin)&&(!['thought','review','logic','sleep'].includes(options.source||'dialog')||options.evidence.some(e=>!(same.evidence||[]).some(old=>old.source===e.source&&old.version===e.version&&old.quote===e.quote)))) reinforce(same, now);
     same.evidence = [...(same.evidence || []), ...(options.evidence || [])].filter((e,i,all)=>all.findIndex(x=>x.source===e.source&&x.version===e.version&&x.quote===e.quote)===i).slice(-8);
     if (options.source==='user'||options.evidence.length&&same.status!=='contested') same.status='active';
-    if (options.source==='user')same.source='user';
+    if (options.source==='user'){
+      same.source='user';const changeDay=temporal.validFrom||today(Date.parse(now));
+      for(const other of memory.items.filter(i=>i!==same&&inScope(i)&&i.kind===kind&&i.status!=='superseded'&&(!i.validFrom||i.validFrom<=changeDay)&&(!i.validTo||changeDay<i.validTo)&&!compatible(i.text,value)&&similarity(i.text,value)>=0.6)){
+        other.status='superseded';other.validTo=changeDay;other.validFrom ||= today(Date.parse(other.created));invalidate(memory,[other.id]);revision(memory,other,value,'явное подтверждение пользователем',options.evidence,now);
+      }
+    }
     if (options.pinned) same.pinned = true;
     if(options.source==='user'||options.evidence.length){delete same.stale;if(options.dependsOn!==undefined)same.dependsOn=options.dependsOn;}
     if (options.links) same.links = [...new Set([...same.links, ...options.links])].slice(0, 20);

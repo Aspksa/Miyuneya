@@ -226,3 +226,9 @@ test('Prompt character truncation leaves omitted rows pending instead of acknowl
   const {m}=await memoryStore(t,{thinkIdleMs:0,ask:async()=>'{"thoughts":[]}'});for(let i=0;i<80;i++){const prefix=String.fromCharCode(97+Math.floor(i/26))+String.fromCharCode(97+i%26)+'zzmarker';upsert(m.data,i<50?'fact':'rule',prefix+' '+('описание '.repeat(60)),{source:'user',pinned:true});}
   assert.equal(m.data.items.length,80);await m.tick(Date.now()+3*3600000);assert.ok(Object.keys(m.data.cognition.thoughtSeen).length<80);assert.equal(m.data.cognition.lastThoughtInput,undefined);await m.tick(Date.now()+4*3600000);assert.equal(Object.keys(m.data.cognition.thoughtSeen).length,80);assert.ok(m.data.cognition.lastThoughtInput);
 });
+
+
+test('Explicit confirmation of an existing candidate supersedes an older opposing user rule',async t=>{
+  const {m}=await memoryStore(t);const old=upsert(m.data,'rule','Не называй меня Алекс',{source:'user',pinned:true}).item;const candidate=upsert(m.data,'rule','Называй меня Алекс',{source:'thought'}).item;
+  const confirmed=await m.remember(candidate.text);assert.equal(confirmed.id,candidate.id);assert.equal(old.status,'superseded');assert.equal(confirmed.skill.status,'passed');const context=await m.context('Как ко мне обращаться');assert.match(context,/\n- Называй меня Алекс/);assert.doesNotMatch(context,/\n- Не называй меня Алекс/);
+});
