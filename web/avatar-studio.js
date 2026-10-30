@@ -44,6 +44,7 @@
   const all=()=>transaction('readonly',store=>store.getAll());
   const get=id=>transaction('readonly',store=>store.get(id));
   const put=row=>transaction('readwrite',store=>store.put(row));
+  const erase=id=>transaction('readwrite',store=>store.delete(id));
   async function decode(file){
     const url=URL.createObjectURL(file);
     try {
@@ -89,7 +90,8 @@
     const variants=[];
     for(const size of [192,384,768,1536]){
       const blob=await webp(img,rect,size,size<=384?.9:.94);
-      variants.push({width:Math.min(size,Math.max(rect.w,rect.h)),blob});
+      const scale=Math.min(1,size/Math.max(rect.w,rect.h));
+      variants.push({width:Math.max(1,Math.round(rect.w*scale)),blob});
     }
     return {original:file,preview:variants[0].blob,variants,
       width:img.naturalWidth,height:img.naturalHeight,crop:rect};
@@ -186,7 +188,20 @@
       const title=document.createElement('span');title.textContent=row.name.slice(0,40);
       b.append(thumbnail,title);b.setAttribute('aria-pressed',String(lastSelected===row.id));
       b.onclick=()=>void choose(row.id).catch(e=>notify(e.message,'error'));
-      grid.append(b);
+      const wrapper=document.createElement('div');wrapper.className='kitsune-library-entry';
+      const del=document.createElement('button');del.type='button';del.className='kitsune-library-delete';
+      del.textContent='Удалить';del.setAttribute('aria-label','Удалить образ '+row.name.slice(0,40));
+      del.onclick=async()=>{
+        try{
+          await erase(row.id);
+          if(lastSelected===row.id){
+            releaseURLs();lastSelected=null;store(selectedKey,null);
+            image.removeAttribute('srcset');image.src='/avatars/hayumeri-kitsune.avif';
+          }
+          await renderLibrary();notify('Образ удалён из библиотеки.');
+        }catch(e){notify(e.message,'error');}
+      };
+      wrapper.append(b,del);grid.append(wrapper);
     }
   }
   async function add(prepared){
@@ -205,6 +220,7 @@
   const regularUpload=$('kitsune-image-upload');
   // Capture before the legacy immediate-upload handler: approval is mandatory.
   regularUpload?.addEventListener('change',e=>{
+    if(!db)return; // Built-in server upload remains available when IndexedDB is unavailable.
     e.stopImmediatePropagation();
     const file=e.target.files?.[0];e.target.value='';
     if(!file)return;
