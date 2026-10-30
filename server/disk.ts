@@ -7,7 +7,7 @@ import { inflateRawSync, crc32 } from 'node:zlib';
 import { atomicWrite, retryFile } from '../scripts/runtime.mjs';
 export const FILE_LIMIT = 64 * 1024 * 1024;
 export type DiskFile = { id: string; name: string; folder: string | null; size: number; sha256: string; createdAt: string; updatedAt: string; starred: boolean; trashedAt: string | null };
-type Folder = { id: string; name: string };
+export type Folder = { id: string; name: string; parent?:string|null };
 type Index = { version: 1; revision: number; files: DiskFile[]; folders: Folder[] };
 const fail = (message: string, status = 400) => Object.assign(new Error(message), { status });
 const idValid = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9-]{36}$/.test(v);
@@ -18,9 +18,14 @@ export function fileName(value: unknown): string {
   if (!name || name.length > 180 || /[\x00-\x1f\x7f<>:"/\\|?*]/.test(name) || /[. ]$/.test(name) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name) || name === '.' || name === '..') throw fail('Имя содержит недопустимые символы или слишком длинное.');
   return name;
 }
+export function validFolders(folders:Folder[]) {
+  const ids=new Set(folders.map(f=>f.id));
+  for(const f of folders){if(f.parent!==undefined&&f.parent!==null&&!idValid(f.parent))return false;const seen=new Set([f.id]);let parent=f.parent;let depth=0;while(parent){if(!ids.has(parent)||seen.has(parent)||++depth>20)return false;seen.add(parent);parent=folders.find(x=>x.id===parent)?.parent;}}
+  return folders.every(f=>!folders.some(other=>other.id!==f.id&&(other.parent||null)===(f.parent||null)&&other.name.toLocaleLowerCase('ru')===f.name.toLocaleLowerCase('ru')));
+}
 function validIndex(v): v is Index {
   return v?.version === 1 && Number.isSafeInteger(v.revision) && v.revision >= 0 && Array.isArray(v.files) && v.files.length <= 10000 && Array.isArray(v.folders) && v.folders.length <= 500
-    && v.folders.every(f => idValid(f?.id) && (()=>{try{return fileName(f.name)===f.name;}catch{return false;}})())
+    && validFolders(v.folders) && v.folders.every(f => idValid(f?.id) && (()=>{try{return fileName(f.name)===f.name;}catch{return false;}})())
     && new Set([...v.files,...v.folders].map(x=>x?.id)).size === v.files.length + v.folders.length
     && v.files.every(f => idValid(f?.id) && Number.isSafeInteger(f.size) && f.size >= 0 && f.size <= FILE_LIMIT && /^[a-f0-9]{64}$/.test(f.sha256) && typeof f.starred === 'boolean' && dateValid(f.createdAt) && dateValid(f.updatedAt) && (f.trashedAt === null || dateValid(f.trashedAt)) && (f.folder === null || v.folders.some(d=>d.id===f.folder)) && (()=>{try{return fileName(f.name)===f.name;}catch{return false;}})());
 }
@@ -51,24 +56,48 @@ async function docxText(handle, size: number) {
   }
   throw fail('В DOCX отсутствует основной текст.');
 }
-export async function openDisk(dataDir: string) {
+export async function openDisk(dataDir: string, options:{onUploaded?:(file:DiskFile)=>Promise<void>}={}) {
   const root=join(dataDir,'disk'), blobs=join(root,'blobs'), indexFile=join(root,'index.json');
   let state: Index={version:1,revision:0,files:[],folders:[]};
   try{const saved=JSON.parse(await readFile(indexFile,'utf8'));if(!validIndex(saved))throw fail('Индекс диска повреждён.',503);state=saved;}
   catch(e){if(e.code!=='ENOENT')throw fail('Не удалось прочитать data/disk/index.json. Исходные файлы сохранены; восстановите индекс из копии.',503);}
-  let queue=Promise.resolve();
+  let queue=Promise.resolve();let undo:Index|null=null;let warning='';
   const enqueue=<T>(fn:()=>Promise<T>):Promise<T>=>{const operation=queue.then(fn);queue=operation.then(()=>{},()=>{});return operation;};
-  const view=()=>({...state,fileLimit:FILE_LIMIT});
+  const view=()=>({...state,fileLimit:FILE_LIMIT,canUndo:!!undo,warning});
   async function commit(next: Index){await atomicWrite(indexFile,JSON.stringify(next,null,2));state=next;}
   async function blobPath(id:string){const path=join(blobs,id);const stat=await lstat(path);if(!stat.isFile() || stat.isSymbolicLink())throw fail('Документ недоступен.',404);return path;}
-  async function json(req){if(!req.headers['content-type']?.startsWith('application/json'))throw fail('Ожидается JSON.',415);let body='';req.setEncoding('utf8');for await(const part of req){body+=part;if(Buffer.byteLength(body)>10000)throw fail('Слишком большой запрос.',413);}try{return JSON.parse(body);}catch{throw fail('Неверный JSON.');}}
-  async function mutate(req, fn:(next:Index,input:any)=>void){const input=await json(req);await enqueue(async()=>{if(!input || input.revision!==state.revision)throw fail('Список диска изменился. Обновите его и повторите действие.',409);const next=structuredClone(state);fn(next,input);next.revision++;await commit(next);});return view();}
+  async function json(req){if(!req.headers['content-type']?.startsWith('application/json'))throw fail('Ожидается JSON.',415);let body='';req.setEncoding('utf8');for await(const part of req){body+=part;if(Buffer.byteLength(body)>100000)throw fail('Слишком большой запрос.',413);}try{return JSON.parse(body);}catch{throw fail('Неверный JSON.');}}
+  async function mutate(req, fn:(next:Index,input:any)=>void){const input=await json(req);await enqueue(async()=>{if(!input || input.revision!==state.revision)throw fail('Список диска изменился. Обновите его и повторите действие.',409);const next=structuredClone(state);fn(next,input);if(!validIndex(next))throw fail('Недопустимая структура папок или документов.');next.revision++;const before=state;await commit(next);undo=before;});return view();}
+  async function previewFile(file:DiskFile){
+    const path=await blobPath(file.id);const handle=await open(path,'r');let preview;
+            try {
+              const head=Buffer.alloc(Math.min(file.size,100004));await handle.read(head,0,head.length,0);
+              if(head.subarray(0,5).toString()==='%PDF-')preview={kind:'pdf'};
+              else if(head.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))preview={kind:'image',mime:'image/png'};
+              else if(head[0]===255&&head[1]===216&&head[2]===255)preview={kind:'image',mime:'image/jpeg'};
+              else if(extname(file.name).toLowerCase()==='.docx')preview=await docxText(handle,file.size);
+              else if(/\.(txt|md|csv|tsv|json|log|xml|html|css|js|ts|yaml|yml)$/i.test(file.name)) {
+                let text;try{text=new TextDecoder('utf-8',{fatal:true}).decode(head.subarray(0,Math.min(file.size,100000)),{stream:file.size>100000});}catch{throw fail('Предпросмотр поддерживает текст в UTF-8. Оригинал можно скачать.');}
+                preview={kind:'text',text,truncated:file.size>100000,format:extname(file.name).slice(1).toUpperCase()};
+              }else preview={kind:'download'};
+            } finally {await handle.close();}
+    return preview;
+  }
   return {
     async handle(req,res,url:URL) {
       const send=(status:number,body:unknown)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(body));};
       try {
         const path=url.pathname.slice('/api/disk'.length);
         if(path==='' && req.method==='GET')return send(200,view());
+        if(path==='/undo'&&req.method==='POST'){const input=await json(req);await enqueue(async()=>{if(input.revision!==state.revision||!undo)throw fail('Отмена недоступна: диск изменился.',409);await commit({...undo,revision:state.revision+1});undo=null;});return send(200,view());}
+        if(path==='/files/batch'&&req.method==='PATCH')return send(200,await mutate(req,(next,input)=>{
+          if(!Array.isArray(input.ids)||!input.ids.length||input.ids.length>500||new Set(input.ids).size!==input.ids.length)throw fail('Выберите от 1 до 500 разных документов.');
+          const selected=input.ids.map(id=>next.files.find(f=>f.id===id));if(selected.some(f=>!f))throw fail('Один из документов не найден.',404);
+          if(input.folder!==undefined&&input.folder!==null&&!next.folders.some(f=>f.id===input.folder))throw fail('Папка не найдена.');
+          if(input.folder===undefined&&input.starred===undefined&&input.trashed===undefined)throw fail('Не выбрано действие.');
+          if(input.starred!==undefined&&typeof input.starred!=='boolean'||input.trashed!==undefined&&typeof input.trashed!=='boolean')throw fail('Неверный формат действия.');
+          for(const f of selected){if(input.folder!==undefined)f.folder=input.folder;if(input.starred!==undefined)f.starred=input.starred;if(input.trashed!==undefined)f.trashedAt=input.trashed?new Date().toISOString():null;f.updatedAt=new Date().toISOString();}
+        }));
         if(path==='/files' && req.method==='POST') {
           if(req.headers['content-type']!=='application/octet-stream')throw fail('Передайте файл двоичным потоком.',415);
           const name=fileName(url.searchParams.get('name'));const folder=url.searchParams.get('folder') || null;
@@ -88,14 +117,17 @@ export async function openDisk(dataDir: string) {
               catch(e){await retryFile(()=>rm(target,{force:true}));throw e;}
             });
           } finally {if(handle)await handle.close();if(!installed)await retryFile(()=>rm(temp,{force:true}));}
+          undo=null;warning='';
+          const uploaded=state.files.find(f=>f.id===id)!;
+          if(options.onUploaded)try{await options.onUploaded(uploaded);}catch(e){warning='Документ сохранён. Автоматизация не завершена: '+String(e.message).slice(0,200);}
           return send(201,view());
         }
-        if(path==='/folders' && req.method==='POST')return send(201,await mutate(req,(next,input)=>{const name=fileName(input.name);if(next.folders.length>=500)throw fail('Достигнут предел 500 папок.');if(next.folders.some(f=>f.name.toLocaleLowerCase('ru')===name.toLocaleLowerCase('ru')))throw fail('Такая папка уже есть.');next.folders.push({id:randomUUID(),name});}));
+        if(path==='/folders' && req.method==='POST')return send(201,await mutate(req,(next,input)=>{const name=fileName(input.name);if(next.folders.length>=500)throw fail('Достигнут предел 500 папок.');const parent=input.parent || null;if(parent!==null&&!next.folders.some(f=>f.id===parent))throw fail('Родительская папка не найдена.');next.folders.push({id:randomUUID(),name,parent});}));
         const folderMatch=path.match(/^\/folders\/([a-f0-9-]{36})$/);
         if(folderMatch && ['PATCH','DELETE'].includes(req.method))return send(200,await mutate(req,(next,input)=>{
           const folder=next.folders.find(f=>f.id===folderMatch[1]);if(!folder)throw fail('Папка не найдена.',404);
-          if(req.method==='DELETE'){if(next.files.some(f=>f.folder===folder.id))throw fail('Сначала переместите документы из папки, включая корзину.',409);next.folders=next.folders.filter(f=>f!==folder);}
-          else{const name=fileName(input.name);if(next.folders.some(f=>f.id!==folder.id&&f.name.toLowerCase()===name.toLowerCase()))throw fail('Такая папка уже есть.');folder.name=name;}
+          if(req.method==='DELETE'){if(next.files.some(f=>f.folder===folder.id)||next.folders.some(f=>f.parent===folder.id))throw fail('Сначала переместите документы и вложенные папки, включая корзину.',409);next.folders=next.folders.filter(f=>f!==folder);}
+          else{if(input.name!==undefined)folder.name=fileName(input.name);if(input.parent!==undefined)folder.parent=input.parent;}
         }));
         const fileMatch=path.match(/^\/files\/([a-f0-9-]{36})(?:\/(content|preview|inline))?$/);
         if(!fileMatch)throw fail('Раздел диска не найден.',404);
@@ -114,18 +146,7 @@ export async function openDisk(dataDir: string) {
           if(file.trashedAt)throw fail('Восстановите документ из корзины.',409);
           const path=await blobPath(id);
           if(fileMatch[2]==='preview' || fileMatch[2]==='inline') {
-            const handle=await open(path,'r');let preview;
-            try {
-              const head=Buffer.alloc(Math.min(file.size,100004));await handle.read(head,0,head.length,0);
-              if(head.subarray(0,5).toString()==='%PDF-')preview={kind:'pdf'};
-              else if(head.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))preview={kind:'image',mime:'image/png'};
-              else if(head[0]===255&&head[1]===216&&head[2]===255)preview={kind:'image',mime:'image/jpeg'};
-              else if(extname(file.name).toLowerCase()==='.docx')preview=await docxText(handle,file.size);
-              else if(/\.(txt|md|csv|tsv|json|log|xml|html|css|js|ts|yaml|yml)$/i.test(file.name)) {
-                let text;try{text=new TextDecoder('utf-8',{fatal:true}).decode(head.subarray(0,Math.min(file.size,100000)),{stream:file.size>100000});}catch{throw fail('Предпросмотр поддерживает текст в UTF-8. Оригинал можно скачать.');}
-                preview={kind:'text',text,truncated:file.size>100000,format:extname(file.name).slice(1).toUpperCase()};
-              }else preview={kind:'download'};
-            } finally {await handle.close();}
+            const preview=await previewFile(file);
             if(fileMatch[2]==='preview')return send(200,preview);
             if(!['pdf','image'].includes(preview.kind))throw fail('Для этого формата доступно только скачивание.',415);
             res.setHeader('Content-Type',preview.kind==='pdf'?'application/pdf':preview.mime);
@@ -140,6 +161,9 @@ export async function openDisk(dataDir: string) {
         throw fail('Метод не поддерживается.',405);
       } catch(e){if(!res.headersSent)send(e.status || (e.code==='ENOENT'?404:500),{error:e.status?e.message:e.code==='ENOENT'?'Оригинал документа не найден. Восстановите папку data/disk из копии.':'Не удалось выполнить операцию диска. Проверьте свободное место и права записи.'});else res.end();}
     },
+    snapshot:()=>structuredClone(view()),
+    async text(id:string){const file=state.files.find(f=>f.id===id&&!f.trashedAt);if(!file)throw fail('Документ не найден.');const p=await previewFile(file);if(p.kind!=='text')throw fail('Сценарий создания заметки поддерживает DOCX и текст UTF-8.');if(p.truncated)throw fail('Текст превышает предел сценария: используйте документ до 100 000 символов.');return p.text;},
+    async route(id:string,folder:string|null){await enqueue(async()=>{if(folder!==null&&!state.folders.some(f=>f.id===folder))throw fail('Папка правила не найдена.');const next=structuredClone(state),file=next.files.find(f=>f.id===id);if(!file)throw fail('Документ не найден.');if(file.folder===folder)return;file.folder=folder;file.updatedAt=new Date().toISOString();await commit({...next,revision:state.revision+1});undo=null;});},
     async shutdown(){await queue;}
   };
 }

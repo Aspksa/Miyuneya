@@ -1,3 +1,7 @@
+import { openWorkflows } from './workflows.ts';
+import { createHash } from 'node:crypto';
+import { reconcileTasks } from '../src/productivity.ts';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { openDisk } from './disk.ts';
 import { readFile, rm } from 'node:fs/promises';
@@ -84,7 +88,7 @@ export async function createApp(root: string, instance: string, preview = false,
   let queue = Promise.resolve();
   const files: Record<string, [string, string]> = {
     '/': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'],
-    '/disk.js': ['disk.js', 'text/javascript'], '/calendar.js': ['calendar.js', 'text/javascript'], '/main.js': ['main.js', 'text/javascript'], '/model.js': ['model.js', 'text/javascript'],
+    '/workbench.js':['workbench.js','text/javascript'], '/productivity.js':['productivity.js','text/javascript'], '/disk.js': ['disk.js', 'text/javascript'], '/calendar.js': ['calendar.js', 'text/javascript'], '/main.js': ['main.js', 'text/javascript'], '/model.js': ['model.js', 'text/javascript'],
     '/assistant.js': ['assistant.js', 'text/javascript'], '/appearance.js': ['appearance.js', 'text/javascript'], '/memory.js': ['memory.js', 'text/javascript'],
     '/style.css': ['style.css', 'text/css'], '/fox.svg': ['fox.svg', 'image/svg+xml'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'],
     ...Object.fromEntries([1, 2, 3, 4].map(n => [`/avatars/avatar${n}.png`, [`avatars/avatar${n}.png`, 'image/png']]))
@@ -153,8 +157,22 @@ export async function createApp(root: string, instance: string, preview = false,
     } finally { call.release(); }
   }
   const memory = await openMemory(dataDir, { ask, embed, embedModel: () => assistant.embedModel, available: () => !!assistant.apiKey, workspace: () => assistant.context ? state.data : null, idleMs: options.memoryIdleMs, tickMs: options.memoryTickMs, thinkIdleMs: options.memoryThinkIdleMs });
-  let disk; let diskError=false;
-  try{disk=await openDisk(dataDir);}catch{diskError=true;}
+  let disk; let diskError=false;let workflows;let workflowError='';
+  try{disk=await openDisk(dataDir,{onUploaded:async file=>{if(!workflows)throw new Error(workflowError || 'Автоматизации недоступны.');await workflows.uploaded(file);if(workflows.view().jobs.some(j=>j.file===file.id&&j.status==='failed'))throw new Error('Проверьте журнал сценариев в настройках.');}});}catch{diskError=true;}
+  try{workflows=await openWorkflows(dataDir,{
+    file:id=>disk?.snapshot().files.find(f=>f.id===id&&!f.trashedAt),folders:()=>disk?.snapshot().folders || [],text:id=>disk.text(id),route:(id,folder)=>disk.route(id,folder),
+    apply:async(id,note,tasks,group,file)=>{const operation=queue.then(async()=>{
+      if(state.data.automationApplied?.includes(id))return;
+      const next=structuredClone(state.data);if(next.notes.length+(note?1:0)>5000||next.tasks.length+tasks.length>5000)throw new Error('Достигнут предел записей пространства.');
+      const key=createHash('sha256').update(id).digest('hex').slice(0,24),now=new Date().toISOString();
+      if(note&&!next.notes.some(n=>n.id==='auto-note-'+key))next.notes.push({id:'auto-note-'+key,...note,updatedAt:now});
+      tasks.forEach((title,i)=>{if(!next.tasks.some(t=>t.id==='auto-task-'+key+'-'+i))next.tasks.push({id:'auto-task-'+key+'-'+i,title,details:'Создано правилом для документа на диске.',done:false,createdAt:now,group,attachments:[{kind:'file',id:file},...(note?[{kind:'note',id:'auto-note-'+key}]:[])]});});
+      next.automationApplied=[...(next.automationApplied || []),id].slice(-20000);
+      if(!validateWorkspace(next))throw new Error('Результат сценария не прошёл проверку.');
+      const saved={data:next,revision:state.revision+1};if(Buffer.byteLength(JSON.stringify(saved))>1900000)throw new Error('Пространство заполнено: экспортируйте записи и освободите место перед повтором.');await atomicWrite(dataFile,JSON.stringify(saved,null,2));state=saved;
+    });queue=operation.catch(()=>{});await operation;}
+  });void workflows.resume().catch(e=>{workflowError='Не удалось продолжить сценарии: '+e.message;});}catch(e){workflowError=e.message;}
+
   let stopping = false;
   const active = new Set<Promise<void>>();
   const server = createServer((req, res) => {
@@ -183,7 +201,13 @@ export async function createApp(root: string, instance: string, preview = false,
         return;
       }
       if (stopping) return send(503, { error: 'Сервер завершает работу' });
-      if(path==='/api/disk' || path.startsWith('/api/disk/')) {if(diskError)return send(503,{error:'Индекс диска повреждён. Документы сохранены; восстановите data/disk/index.json из копии.'});return await disk.handle(req,res,new URL(req.url,origin));}
+      if(path==='/api/disk' || path.startsWith('/api/disk/')) {memory.touch();if(diskError)return send(503,{error:'Индекс диска повреждён. Документы сохранены; восстановите data/disk/index.json из копии.'});return await disk.handle(req,res,new URL(req.url,origin));}
+      if(path==='/api/workflows'){
+        if(!workflows)return send(503,{error:workflowError || 'Автоматизации недоступны.'});
+        if(req.method==='GET')return send(200,{...workflows.view(),warning:workflowError});
+        const input=await readJson(req,send,100000);if(!input)return;
+        try{if(req.method==='PUT')return send(200,await workflows.configure(input.revision,input.rules));if(req.method==='POST')return send(200,await workflows.retry(input.id));return send(405,{error:'Метод не поддерживается'});}catch(e){return send(409,{error:e.message});}
+      }
       if (path.startsWith('/api/assistant')) {
         const route = path.slice('/api/assistant'.length);
         if (route === '' && req.method === 'GET') return send(200, publicConfig());
@@ -474,6 +498,7 @@ export async function createApp(root: string, instance: string, preview = false,
         memory.touch();
         const update = queue.then(async () => {
           if (input.revision !== state.revision) return send(409, { error: 'Данные изменены в другой вкладке. Экспортируйте свою копию и обновите страницу.' });
+          try{reconcileTasks(state.data,input.data,()=>randomUUID().replaceAll('-',''));}catch(e){return send(409,{error:e.message});}
           const next = { revision: state.revision + 1, data: input.data };
           await atomicWrite(dataFile, JSON.stringify(next, null, 2));
           state = next;
@@ -517,6 +542,7 @@ export async function createApp(root: string, instance: string, preview = false,
         if (server.listening) await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()));
         await Promise.all([...active]);
         await memory.shutdown();
+        await workflows?.shutdown();
         await disk?.shutdown();
         await queue;
       })();

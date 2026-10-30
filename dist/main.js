@@ -1,4 +1,7 @@
 // Generated from src/main.ts by npm run build.
+import { mountWorkbench } from './workbench.js';
+import { matchesTask,taskBlockers } from './productivity.js';
+
 import { createDisk } from './disk.js';
 import { emptyWorkspace, validateWorkspace, combineEntries, defaultLook, validLocalDate } from './model.js';
 import { formatNoteDate, localDateKey } from './calendar.js';
@@ -40,7 +43,7 @@ let data            = emptyWorkspace();
 let revision = 0;
 let page       = getPage();
 let query = '';
-let filter              = 'all';
+let filter           ='all';let group='';let committedData='';let restoring=false;let workbench                                  ;
 let saving = false;
 let saveError = '';
 let fatal = false;
@@ -49,7 +52,7 @@ let toastTimer                               ;
 let ai                  = { configured: false, keyHint: '', model: '', smartModel: '', embedModel: '', context: true, customAvatar: null };
 let saveAgain = false;
 let savingPromise                          = null;
-const disk = createDisk({render:()=>{if(page==='disk')render();},toast,addNote,draft:text=>{assistant?.draft(text);}});
+const disk = createDisk({render:()=>{if(page!=='settings')render();},toast,addNote,draft:text=>{assistant?.draft(text);},panel:(id,name,body)=>workbench.filePanel(id,name,body),sync:reloadWorkspace});
 let appearance             = loadAppearance();
 let aiModels                  = null;
 let aiBusy = false;
@@ -77,19 +80,20 @@ function empty(title        , description        , kind                 , label 
   return `<div class="empty">${icon(kind === 'note' ? 'notes' : 'tasks')}<h3>${title}</h3><p>${description}</p><button class="button quiet" data-new="${kind}">${icon('plus')}${label}</button></div>`;
 }
 function noteRow(n                            ) {
-  return `<div class="task-row note-entry">${icon('notes')}<button class="note-open" data-edit="${escape(n.id)}"><b>${escape(n.title)}</b>${n.body?`<p>${escape(n.body)}</p>`:''}</button><button class="icon-button note-pin ${n.pinned?'pinned':''}" data-pin-note="${escape(n.id)}" aria-label="${n.pinned?'Открепить':'Закрепить'} заметку" aria-pressed="${!!n.pinned}">☆</button><small>${shortDate(n.updatedAt)}</small><button class="icon-button" data-delete-note="${escape(n.id)}" aria-label="Удалить заметку ${escape(n.title)}">×</button></div>`;
+  return `<div class="task-row note-entry">${icon('notes')}<button class="note-open" data-edit="${escape(n.id)}"><b>${escape(n.title)}</b>${n.body?`<p>${escape(n.body.slice(0,220))}</p>`:''}</button><button class="icon-button note-pin ${n.pinned?'pinned':''}" data-pin-note="${escape(n.id)}" aria-label="${n.pinned?'Открепить':'Закрепить'} заметку" aria-pressed="${!!n.pinned}">☆</button><small>${shortDate(n.updatedAt)}</small><button class="icon-button" data-delete-note="${escape(n.id)}" aria-label="Удалить заметку ${escape(n.title)}">×</button></div>`;
 }
 function taskRow(t                            ) {
   const overdue=!t.done && t.dueDate && t.dueDate<localDateKey();
-  return `<div class="task-row ${t.done?'done':''}"><input type="checkbox" data-toggle="${escape(t.id)}" aria-label="Выполнить: ${escape(t.title)}" ${t.done?'checked':''} ${saving?'disabled':''}><button class="task-open" data-edit-task="${escape(t.id)}"><b>${escape(t.title)}</b>${t.details?`<p>${escape(t.details)}</p>`:''}<span class="task-meta">${t.dueDate?`<span class="${overdue?'overdue':''}">${overdue?'Просрочено · ':''}${escape(t.dueDate.split('-').reverse().join('.'))}</span>`:''}${t.priority==='high'?'<span class="priority-high">Высокий приоритет</span>':''}</span></button><button class="icon-button" data-delete-task="${escape(t.id)}" aria-label="Удалить задачу ${escape(t.title)}">×</button></div>`;
+  return `<div class="task-row ${t.done?'done':''}"><input type="checkbox" data-toggle="${escape(t.id)}" aria-label="Выполнить: ${escape(t.title)}" ${t.done?'checked':''} ${saving?'disabled':''}><button class="task-open" data-edit-task="${escape(t.id)}"><b>${escape(t.title)}</b>${t.details?`<p>${escape(t.details.slice(0,200))}</p>`:''}<span class="task-meta">${t.dueDate?`<span class="${overdue?'overdue':''}">${overdue?'Просрочено · ':''}${escape(t.dueDate.split('-').reverse().join('.'))}</span>`:''}${t.priority==='high'?'<span class="priority-high">Высокий приоритет</span>':''}${t.group?`<span>${escape(t.group)}</span>`:''}${t.parentId?`<span>↳ ${escape(data.tasks.find(p=>p.id===t.parentId)?.title.slice(0,40)||'Подзадача')}</span>`:''}${t.repeat?'<span>↻ Повторяется</span>':''}${data.tasks.some(c=>c.parentId===t.id)?`<span>Чек-лист ${data.tasks.filter(c=>c.parentId===t.id&&c.done).length}/${data.tasks.filter(c=>c.parentId===t.id).length}</span>`:''}${taskBlockers(data.tasks,t).length&&!t.done?'<span>Есть незавершённые условия</span>':''}</span></button><button class="icon-button" data-delete-task="${escape(t.id)}" aria-label="Удалить задачу ${escape(t.title)}">×</button></div>`;
 }
 function notes() {
-  const rows = combineEntries(data, query, filter).map(e => e.kind === 'note' ? noteRow(e.item) : taskRow(e.item)).join('');
+  const baseFilter=['today','overdue','week'].includes(filter)?'active':filter;
+  const rows = combineEntries(data, query, baseFilter               ).filter(e=>e.kind==='note'?!group:matchesTask(e.item,filter,group)).map(e => e.kind === 'note' ? noteRow(e.item) : taskRow(e.item)).join('');
   const blank = query ? empty('Ничего не найдено', 'Попробуйте другой поисковый запрос.', filter === 'notes' ? 'note' : 'task', filter === 'notes' ? 'Создать заметку' : 'Добавить задачу')
     : filter === 'notes' ? empty('Заметок пока нет', 'Сохраните идею, ссылку или наблюдение.', 'note', 'Создать заметку')
     : filter === 'done' ? empty('Выполненных задач пока нет', 'Отмеченные задачи появятся здесь.', 'task', 'Добавить задачу')
     : empty('Здесь пока пусто', 'Добавьте заметку или задачу.', 'task', 'Добавить задачу');
-  return `<div class="page-heading"><h1>Заметки и задачи</h1><div class="heading-actions"><button class="button" data-new="note">${icon('plus')}Заметка</button><button class="button primary" data-new="task">${icon('plus')}Задача</button></div></div><div class="task-controls" aria-label="Фильтр">${([['all','Всё'],['notes','Заметки'],['active','Задачи'],['done','Выполнено']]                          ).map(([key,label]) => `<button data-filter="${key}" class="${filter===key?'active':''}" aria-pressed="${filter===key}">${label}</button>`).join('')}</div><div class="panel">${rows || blank}</div>`;
+  return `<div class="page-heading"><h1>Заметки и задачи</h1><div class="heading-actions"><button class="button" data-new="note">${icon('plus')}Заметка</button><button class="button primary" data-new="task">${icon('plus')}Задача</button></div></div><div class="task-controls" aria-label="Фильтр">${([['all','Всё'],['notes','Заметки'],['active','Задачи'],['done','Выполнено'],['today','Сегодня'],['overdue','Просрочено'],['week','На неделю']]                         ).map(([key,label]) => `<button data-filter="${key}" class="${filter===key?'active':''}" aria-pressed="${filter===key}">${label}</button>`).join('')}</div><label class="group-filter">Группа <select data-task-group-filter aria-label="Фильтр по группе"><option value="">Все группы</option>${[...new Set(data.tasks.map(t=>t.group).filter(Boolean))].sort().map(g=>`<option value="${escape(g )}" ${g===group?'selected':''}>${escape(g )}</option>`).join('')}</select></label><div class="panel">${rows || blank}</div>${query?`<section class="global-documents"><h2>Документы · поиск по названию</h2>${disk.searchHtml(query)}</section>`:''}`;
 }
 const look = ()                          => ({ ...defaultLook(), ...data.settings.assistant });
 function aiCard() {
@@ -111,13 +115,14 @@ function appearanceCard() {
     + `</section>`;
 }
 function settings() {
-  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div>${appearanceCard()}<section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. JSON-копия содержит заметки, задачи и настройки. Документы хранятся отдельно в data/disk: для их резервной копии скопируйте эту папку при остановленном приложении.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.4.0</span><h2>Место для вашего мира</h2><p>Личное пространство для заметок, задач и документов. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Доступны заметки, задачи, диск документов, настройки и помощница с чатом через cloud.ru и собственной памятью: значок мозга вверху справа.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
+  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div>${appearanceCard()}<section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. JSON-копия содержит заметки, задачи и настройки. Документы хранятся отдельно в data/disk: для их резервной копии скопируйте эту папку при остановленном приложении.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}${workbench.automationCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.5.0</span><h2>Место для вашего мира</h2><p>Личное пространство для заметок, задач и документов. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Доступны заметки, задачи, диск документов, настройки и помощница с чатом через cloud.ru и собственной памятью: значок мозга вверху справа.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
 }
 function render(focus = false) {
   applyTheme();
   const count = data.notes.length + data.tasks.filter(t => !t.done).length;
-  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><nav class="nav" aria-label="Основная навигация"><a href="#notes" data-tip="${pageNames.notes}" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span>${count?`<span class="count" aria-label="записей: ${count}">${count}</span>`:''}</a><a href="#disk" data-tip="Диск документов" class="${page==='disk'?'active':''}" ${page==='disk'?'aria-current="page"':''}>${navIcon('disk')}<span class="nav-text">Диск документов</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" data-tip="${pageNames.settings}" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">${pageNames.settings}</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="${page==='disk'?'Поиск документов':'Поиск по заметкам и задачам'}" placeholder="${page==='disk'?'Найти документ по названию':'Найти в своём пространстве'}" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button><button class="icon-button memory-toggle ${memoryMode.private?'private':''} ${memoryMode.enabled?'':'off'}" data-memory-toggle aria-label="Память помощницы" title="Память Миюнэи" aria-haspopup="dialog" aria-expanded="${memoryPanel.isOpen()}">${icon('brain')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${page==='disk'?disk.html(query):({notes,settings})[page]()}</main></div></div>`;
+  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><nav class="nav" aria-label="Основная навигация"><a href="#notes" data-tip="${pageNames.notes}" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span>${count?`<span class="count" aria-label="записей: ${count}">${count}</span>`:''}</a><a href="#disk" data-tip="Диск документов" class="${page==='disk'?'active':''}" ${page==='disk'?'aria-current="page"':''}>${navIcon('disk')}<span class="nav-text">Диск документов</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" data-tip="${pageNames.settings}" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">${pageNames.settings}</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Общий поиск по пространству" placeholder="Заметки, задачи и документы" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button><button class="icon-button memory-toggle ${memoryMode.private?'private':''} ${memoryMode.enabled?'':'off'}" data-memory-toggle aria-label="Память помощницы" title="Память Миюнэи" aria-haspopup="dialog" aria-expanded="${memoryPanel.isOpen()}">${icon('brain')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${workbench.toolbar()}${page!=='settings'?workbench.recent():''}${page==='disk'?disk.html(query):({notes,settings})[page]()}</main></div></div>`;
   for (const el of app.querySelectorAll             ('[data-swatch]')) el.style.setProperty('--swatch', el.dataset.swatch );
+  workbench.refresh();workbench.rememberView(page);
   if (focus) document.querySelector             ('#content')?.focus();
 }
 // A change made while another save is in flight is sent right after it instead of being dropped.
@@ -133,16 +138,19 @@ async function flush()                   {
   try{
     while(saveAgain){
       saveAgain=false;
+      const sent=JSON.stringify(data);const before=committedData;
       const response=await fetch('/api/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,data})});
       const result=await response.json();if(!response.ok)throw new Error(result.error || 'Не удалось сохранить данные.');
       revision=result.revision;saveError='';
+      if(JSON.stringify(data)===sent)data=result.data;else{const sentIds=new Set(JSON.parse(sent).tasks.map(t=>t.id));for(const task of result.data.tasks)if(!sentIds.has(task.id)&&!data.tasks.some(t=>t.id===task.id))data.tasks.push(task);}
+      committedData=JSON.stringify(result.data);if(before&&before!==committedData&&!restoring)workbench.recordUndo(before,revision);
     }
     return true;
   }catch(e){saveAgain=false;saveError=(e         ).message || 'Сервер недоступен.';toast('Изменения пока не сохранены');return false;}
   finally{saving=false;savingPromise=null;render();}
 }
 
-function showEditor(kind                 , id         ) {
+function showEditor(kind                 , id         ,parent        ) {
   if (saving) { toast('Дождитесь завершения сохранения.'); return; }
   if (fatal) { toast('Сначала восстановите подключение к серверу.'); return; }
   editing = {kind,id};
@@ -154,6 +162,13 @@ function showEditor(kind                 , id         ) {
   const task=kind==='task'?note                                          :undefined;
   document.querySelector             ('#task-fields') .hidden=kind!=='task';
   document.querySelector                  ('#task-due') .value=task?.dueDate || '';document.querySelector                   ('#task-priority') .value=task?.priority || 'normal';
+  if(kind==='task'){
+    document.querySelector                  ('#task-group') .value=task?.group||(parent?data.tasks.find(t=>t.id===parent)?.group:group)||'';
+    document.querySelector                   ('#task-parent') .innerHTML='<option value="">Основная задача</option>'+data.tasks.filter(t=>t.id!==id).map(t=>`<option value="${escape(t.id)}" ${t.id===(task?.parentId||parent)?'selected':''}>${escape(t.title)}</option>`).join('');
+    document.querySelector                   ('#task-depends') .innerHTML=data.tasks.filter(t=>t.id!==id).map(t=>`<option value="${escape(t.id)}" ${task?.dependsOn?.includes(t.id)?'selected':''}>${escape(t.title)}${t.done?' ✓':''}</option>`).join('');
+    document.querySelector                   ('#task-repeat') .value=task?.repeat?.unit||'';document.querySelector                  ('#task-interval') .value=String(task?.repeat?.interval||1);
+    document.querySelector                   ('#task-materials') .innerHTML=[...data.notes.map(n=>({kind:'note',id:n.id,title:'Заметка · '+n.title})),...disk.files().filter(f=>!f.trashedAt).map(f=>({kind:'file',id:f.id,title:'Документ · '+f.name}))].map(a=>`<option value="${a.kind}:${escape(a.id)}" ${task?.attachments?.some(x=>x.kind===a.kind&&x.id===a.id)?'selected':''}>${escape(a.title)}</option>`).join('');
+  }
   editor.showModal(); title.focus();
 }
 function download() {
@@ -173,8 +188,8 @@ app.addEventListener('click', async event => {
   if (!target) return;
   const diskTarget=(event.target               ).closest             ('[data-disk]');if(diskTarget)return void disk.click(diskTarget);
   if (target.dataset.new) return showEditor(target.dataset.new                 );
-  if(target.dataset.editTask)return showEditor('task',target.dataset.editTask);
-  if (target.dataset.edit) return showEditor('note',target.dataset.edit);
+  if(target.dataset.editTask)return workbench.open('task',target.dataset.editTask);
+  if (target.dataset.edit) return workbench.open('note',target.dataset.edit);
   if (target.hasAttribute('data-export')) return download();
   if (target.hasAttribute('data-memory-toggle')) return memoryPanel.toggle();
   if (target.dataset.accent) return setAppearance({accent:target.dataset.accent});
@@ -184,9 +199,9 @@ app.addEventListener('click', async event => {
   if (saving || fatal) return;
   if(target.dataset.pinNote){const note=data.notes.find(n=>n.id===target.dataset.pinNote);if(note){note.pinned=!note.pinned;await save();}return;}
   if (target.hasAttribute('data-retry')) return void await save();
-  if (target.dataset.deleteNote && await confirmDelete('Удалить заметку?')) { data.notes=data.notes.filter(n=>n.id!==target.dataset.deleteNote); if(await save()) toast('Заметка удалена'); }
-  if (target.dataset.deleteTask && await confirmDelete('Удалить задачу?')) { data.tasks=data.tasks.filter(t=>t.id!==target.dataset.deleteTask); if(await save()) toast('Задача удалена'); }
-  if (target.dataset.filter) { filter=target.dataset.filter               ; render(); }
+  if (target.dataset.deleteNote && await confirmDelete('Удалить заметку?')) { data.notes=data.notes.filter(n=>n.id!==target.dataset.deleteNote);for(const t of data.tasks)t.attachments=t.attachments?.filter(a=>a.kind!=='note'||a.id!==target.dataset.deleteNote); if(await save()) toast('Заметка удалена'); }
+  if (target.dataset.deleteTask && await confirmDelete('Удалить задачу?')) { data.tasks=data.tasks.filter(t=>t.id!==target.dataset.deleteTask);for(const t of data.tasks){if(t.parentId===target.dataset.deleteTask)delete t.parentId;t.dependsOn=t.dependsOn?.filter(id=>id!==target.dataset.deleteTask);} if(await save()) toast('Задача удалена'); }
+  if (target.dataset.filter) { filter=target.dataset.filter              ; render(); }
   if (target.dataset.theme) { data.settings.theme=target.dataset.theme                                  ; applyTheme(); await save(); }
   if (target.hasAttribute('data-cycle-theme')) { data.settings.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'; applyTheme(); await save(); }
   if (target.hasAttribute('data-ai-models')) return void await loadModels(true);
@@ -198,19 +213,19 @@ app.addEventListener('input', event => {
   // Live preview while the palette is open; the choice is stored on change.
   if (input.id==='accent-custom') { applyAppearance({...appearance,accent:input.value},document.documentElement.dataset.theme==='dark'); return; }
   if (input.id==='search') {
-    query=input.value; const caret=input.selectionStart;
-    if(page==='settings') { page='notes'; history.replaceState(null,'','#notes'); }
+    const wasSearching=!!query.trim();query=input.value; const caret=input.selectionStart;if(!wasSearching&&query.trim()){filter='all';group='';}
+    if(page!=='notes') { page='notes'; history.replaceState(null,'','#notes'); }
+    if(!disk.loaded())void disk.load();
     render(); const search=document.querySelector                  ('#search') ; search.focus(); search.setSelectionRange(caret,caret);
   }
 });
 app.addEventListener('change', async event => {
   const input=event.target                    ;
+  if(input.dataset.diskPick){disk.pick(input.dataset.diskPick,input.checked);return;}
   if(input.hasAttribute('data-disk-upload') && input.files){void disk.upload(input.files);return;}
   if(input.hasAttribute('data-disk-sort')){disk.sort(input.value);return;}
-  if (input.dataset.toggle) {
-    if (saving) return;
-    const task=data.tasks.find(t=>t.id===input.dataset.toggle); if(task) {task.done=input.checked;if(task.done)task.completedAt=new Date().toISOString();else delete task.completedAt;task.updatedAt=new Date().toISOString();await save();}
-  }
+  if(input.hasAttribute('data-task-group-filter')){group=input.value;render();return;}
+  if(input.dataset.toggle){await toggleTask(input.dataset.toggle,input.checked);return;}
   if (input.id==='accent-custom') return setAppearance({accent:input.value.toLowerCase()});
   if (input.id==='ai-avatar-visible') return updateLook({hidden:!input.checked});
   if (input.id==='ai-context') { if(await saveAi({context:input.checked})) toast(input.checked?'Помощница видит заметки и задачи':'Доступ к заметкам и задачам выключен'); return; }
@@ -279,7 +294,7 @@ async function addNote(title        , body        ) {
 }
 async function removeEntry(kind           , id        ) {
   const before=data.notes.length+data.tasks.length;
-  if (kind==='task') data.tasks=data.tasks.filter(t=>t.id!==id); else data.notes=data.notes.filter(n=>n.id!==id);
+  if (kind==='task') {data.tasks=data.tasks.filter(t=>t.id!==id);for(const t of data.tasks){if(t.parentId===id)delete t.parentId;t.dependsOn=t.dependsOn?.filter(dep=>dep!==id);}} else data.notes=data.notes.filter(n=>n.id!==id);
   const changed=before!==data.notes.length+data.tasks.length;
   if (changed) { render(); return await persist(); }
   return false;
@@ -299,13 +314,20 @@ document.querySelector('#editor-form') .addEventListener('submit', async event=>
     if(dueDate && !validLocalDate(dueDate))return toast('Проверьте срок задачи');
     const priority=document.querySelector                   ('#task-priority') .value                         ;
     const existing=data.tasks.find(t=>t.id===editing.id);
-    const fields={title,details:body.slice(0,10000),dueDate,priority,updatedAt:new Date().toISOString()};
-    if(existing)Object.assign(existing,fields);else data.tasks.push({id:newId(),done:false,createdAt:new Date().toISOString(),...fields});
+    const parentId=document.querySelector                   ('#task-parent') .value||undefined;
+    const dependsOn=[...document.querySelector                   ('#task-depends') .selectedOptions].map(o=>o.value);
+    const unit=document.querySelector                   ('#task-repeat') .value                        ;const interval=Number(document.querySelector                  ('#task-interval') .value);
+    if(unit&&parentId)return toast('Повторение задаётся для основной задачи. Её подзадачи будут скопированы автоматически.');
+    if(unit&&(!Number.isInteger(interval)||interval<1||interval>365))return toast('Интервал повторения — целое число от 1 до 365.');
+    const attachments=[...document.querySelector                   ('#task-materials') .selectedOptions].map(o=>{const split=o.value.indexOf(':');const kind=o.value.slice(0,split),id=o.value.slice(split+1);return{kind:kind                 ,id};});
+    const fields={title,details:body.slice(0,10000),dueDate,priority,parentId,dependsOn,group:document.querySelector                  ('#task-group') .value.trim(),attachments,repeat:unit?{unit,interval,anchorDay:dueDate?Number(dueDate.slice(-2)):undefined}:undefined,updatedAt:new Date().toISOString()};
+    const candidate=structuredClone(data);const changed=existing?candidate.tasks.find(t=>t.id===existing.id):null;if(changed)Object.assign(changed,fields);else candidate.tasks.push({id:newId(),done:false,createdAt:new Date().toISOString(),...fields});
+    if(!validateWorkspace(candidate))return toast('Проверьте зависимости и родителя: циклы и отсутствующие задачи недопустимы.');data=candidate;
   }
   editor.close(); if(await save()) toast(editing.kind==='note'?'Заметка сохранена':editing.id?'Задача сохранена':'Задача добавлена');
 });
 for(const id of ['close-editor','cancel-editor']) document.querySelector('#'+id) .addEventListener('click',()=>editor.close());
-window.addEventListener('hashchange',()=>{page=getPage();query='';render(true);window.scrollTo(0,0);if(page==='disk'&&!disk.loaded())void disk.load();if(page==='settings' && ai.configured && !aiModels) void loadModels(false);if(location.hash==='#diary') openDiary();});
+window.addEventListener('hashchange',()=>{page=getPage();render(true);window.scrollTo(0,0);if(page==='disk'&&!disk.loaded())void disk.load();if(page==='settings'){void workbench.loadWorkflows();if(ai.configured&&!aiModels)void loadModels(false);}if(location.hash==='#diary') openDiary();});
 window.addEventListener('beforeunload', event=>{ if(saving || saveError || disk.busy()) {event.preventDefault();event.returnValue='';} });
 document.addEventListener('keydown',event=>{
   const target=event.target               ;
@@ -321,17 +343,24 @@ function memoryChanged(view            ) {
 const memoryPanel=mountMemory({ toast, confirm:confirmDelete, changed:memoryChanged,
   entry:id=>{ const note=data.notes.find(n=>n.id===id); if(note) return {kind:'note',title:note.title}; const task=data.tasks.find(t=>t.id===id); return task?{kind:'task',title:task.title}:null; },
   openNote:id=>{ if(page!=='notes') location.hash='notes'; if(data.notes.some(n=>n.id===id)) showEditor('note',id); } });
+workbench=mountWorkbench({data:()=>data,revision:()=>revision,render:()=>render(),toast,current:()=>({query,filter,group,page,...disk.viewPrefs()}),filters:v=>{query=v.query;filter=v.filter;group=v.group;page=v.page==='disk'?'disk':'notes';if(page==='disk')disk.setView(v.diskView||'all',v.diskSort);history.replaceState(null,'','#'+page);render();},edit:showEditor,file:id=>void disk.preview(id),toggle:toggleTask,diskFiles:()=>disk.files(),diskFolders:()=>disk.folders(),sync:reloadWorkspace,restore:async snapshot=>{
+  if(saving||saveError)return false;const r=await fetch('/api/workspace');const current=await r.json();if(current.revision!==revision){toast('Данные изменились в другой вкладке. Отмена не выполнена.');return false;}data=JSON.parse(snapshot);restoring=true;try{const ok=await save();if(ok)toast('Действие отменено');return ok;}finally{restoring=false;}
+}});
+const remembered=workbench.prefs();if(!location.hash){page=remembered.page        ;history.replaceState(null,'','#'+page);}query=remembered.query;filter=remembered.filter              ;group=remembered.group;
+async function toggleTask(id       ,done        ){if(saving||fatal)return;const task=data.tasks.find(t=>t.id===id);if(!task)return;const blocked=taskBlockers(data.tasks,task);if(done&&blocked.length){toast('Сначала завершите: '+blocked.slice(0,3).map(t=>t.title).join(', '));render();return;}task.done=done;if(done)task.completedAt=new Date().toISOString();else delete task.completedAt;task.updatedAt=new Date().toISOString();await save();}
+async function reloadWorkspace(){if(saving||saveError||fatal)return;try{const r=await fetch('/api/workspace');const next=await r.json();if(!r.ok||!validateWorkspace(next.data))return;data=next.data;revision=next.revision;committedData=JSON.stringify(data);render();}catch{toast('Файл сохранён, но список записей пока не обновился.');}}
 // The diary now lives in the memory menu; old #diary links open it there.
 function openDiary() { history.replaceState(null,'','#notes'); memoryPanel.open('diary'); }
 try {
   const response=await fetch('/api/workspace'); if(!response.ok) throw new Error('Сервер вернул ошибку.');
   const saved=await response.json();
   if(!validateWorkspace(saved.data) || !Number.isSafeInteger(saved.revision)) throw new Error('Неверный формат данных сервера.');
-  data=saved.data;revision=saved.revision;
+  data=saved.data;revision=saved.revision;committedData=JSON.stringify(data);
 } catch(e) { fatal=true; saveError='Не удалось загрузить данные. Проверьте окно Miyuneya.bat и обновите страницу. '+(e         ).message; }
 try { ai=await aiRequest('/api/assistant'); } catch {}
 render();
-if(page==='disk')void disk.load();
+void disk.load().then(()=>workbench.reopen());
+if(page==='settings')void workbench.loadWorkflows();
 assistant=mountAssistant({ look, update:updateLook, status:()=>ai, setStatus:value=>{ai=value;if(page==='settings')render();}, toast, addTask, addNote, remove:removeEntry, memory:()=>memoryMode, memoryChanged:()=>void memoryPanel.refresh() });
 void memoryPanel.load();
 if(page==='settings' && ai.configured) void loadModels(false);

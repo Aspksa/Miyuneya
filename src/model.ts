@@ -1,9 +1,11 @@
+import { validTaskGraph } from './productivity.ts';
 export type Note = { id: string; title: string; body: string; updatedAt: string; pinned?: boolean };
-export type Task = { id: string; title: string; done: boolean; createdAt: string; details?: string; dueDate?: string; priority?: 'low' | 'normal' | 'high'; updatedAt?: string; completedAt?: string };
+export type Attachment={kind:'note'|'file';id:string};
+export type Task = { parentId?:string; dependsOn?:string[]; group?:string; attachments?:Attachment[]; repeat?:{unit:'day'|'week'|'month';interval:number;anchorDay?:number}; repeatOf?:string; seriesId?:string; id: string; title: string; done: boolean; createdAt: string; details?: string; dueDate?: string; priority?: 'low' | 'normal' | 'high'; updatedAt?: string; completedAt?: string };
 // Avatar appearance travels with the workspace; its screen position stays in the browser.
 // avatar 5 is the user's own uploaded image; animate, snap and opacity arrived later and stay optional.
 export type AssistantLook = { avatar: 1 | 2 | 3 | 4 | 5; size: 's' | 'm' | 'l'; mirror: boolean; hidden: boolean; animate?: boolean; snap?: boolean; opacity?: number };
-export type Workspace = { version: 1; notes: Note[]; tasks: Task[]; settings: { theme: 'light' | 'dark' | 'auto'; name: string; assistant?: AssistantLook } };
+export type Workspace = { version: 1; automationApplied?:string[]; notes: Note[]; tasks: Task[]; settings: { theme: 'light' | 'dark' | 'auto'; name: string; assistant?: AssistantLook } };
 export const defaultLook = (): Required<AssistantLook> => ({ avatar: 1, size: 'm', mirror: false, hidden: false, animate: true, snap: true, opacity: 1 });
 export function emptyWorkspace(): Workspace {
   return { version: 1, notes: [], tasks: [], settings: { theme: 'light', name: 'Хозяин' } };
@@ -26,6 +28,9 @@ export function validateWorkspace(value: unknown): value is Workspace {
     if (!record(item) || !text(item.id, 100) || !item.id || ids.has(item.id) || !text(item.title, 200) || !item.title.trim()) return false;
     ids.add(item.id);
   }
+  if(value.automationApplied!==undefined && (!Array.isArray(value.automationApplied)||value.automationApplied.length>20000||!value.automationApplied.every(x=>text(x,150))))return false;
+  if(!value.tasks.every((t:any)=>(t.parentId===undefined||text(t.parentId,100))&&(t.group===undefined||text(t.group,80))&&(t.dependsOn===undefined||Array.isArray(t.dependsOn)&&t.dependsOn.length<=50&&t.dependsOn.every(x=>text(x,100)))&&(t.attachments===undefined||Array.isArray(t.attachments)&&t.attachments.length<=50&&t.attachments.every(a=>record(a)&&['note','file'].includes(String(a.kind))&&text(a.id,100)))&&(t.repeat===undefined||record(t.repeat)&&['day','week','month'].includes(String(t.repeat.unit))&&Number.isInteger(t.repeat.interval)&&Number(t.repeat.interval)>=1&&Number(t.repeat.interval)<=365&&(t.repeat.anchorDay===undefined||Number.isInteger(t.repeat.anchorDay)&&Number(t.repeat.anchorDay)>=1&&Number(t.repeat.anchorDay)<=31))&&(t.repeatOf===undefined||text(t.repeatOf,100))&&(t.seriesId===undefined||text(t.seriesId,100))))return false;
+  if(!validTaskGraph(value.tasks as Task[]))return false;
   return value.notes.every(n => record(n) && text(n.body, 100000) && date(n.updatedAt) && (n.pinned===undefined || typeof n.pinned==='boolean')) && value.tasks.every(t => record(t) && typeof t.done === 'boolean' && date(t.createdAt) && (t.details===undefined || text(t.details,10000)) && (t.dueDate===undefined || t.dueDate==='' || validLocalDate(t.dueDate)) && (t.priority===undefined || ['low','normal','high'].includes(String(t.priority))) && (t.updatedAt===undefined || date(t.updatedAt)) && (t.completedAt===undefined || date(t.completedAt)));
 }
 export function searchNotes(notes: Note[], query: string): Note[] {
