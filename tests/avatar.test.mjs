@@ -77,3 +77,12 @@ test('Streaming code formatter uses DOM text nodes instead of untrusted HTML',()
   assert.match(js,/classList\.add\('mini'\)/);
   assert.match(js,/classList\.remove\('mini'\)/);
 });
+
+test('Avatar icon symbols never shadow the chat element IDs',async()=>{
+  for(const page of [html,await readFile(new URL('web/index.html',root),'utf8')]){
+    const ids=[...page.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);
+    assert.equal(new Set(ids).size,ids.length,'No duplicate id allowed');
+    assert.equal(ids.filter(id=>id==='kitsune-chat').length,1);
+    assert.ok(ids.includes('kitsune-glyph-chat'));
+  }
+});
