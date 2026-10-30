@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "fingerprint": "b130103c15e2374fa4c20dd7a3ac51f5462ca9579fedf696adc42e41ab0ec5df",
+  "fingerprint": "d06ffcf21fe3cd99e92ebe685be2b920e21fa7572798747eb0ff2249e304da08",
   "outputs": {
     "appearance.js": "be3c7d9aa4c3a5303c1a3a03578fc7c02c75a47efa3964dfbadb717b0207dd1a",
     "assistant.js": "bb573bd724ba4354a6687742829c56ddc00a3c38abd0d571455136b84add31fc",
@@ -11,7 +11,7 @@
     "model.js": "952941601a90a7f3a307e48703caee55256670f0e54e0f9b4801b03262e82b93",
     "productivity.js": "b93316f1e70082ed09fefe041d4abbf9783e56dd93e713919bea5682e59c5c8a",
     "workbench.js": "54d842585a734509d006489d0a464e888c8ed3e217b79ceb0696d53d71b4fd04",
-    "index.html": "a5a264c3d62fbf03cec3cb011a935948541be4147e26626a1f5f534bb1dd1346",
+    "index.html": "17a959ef95e561e6295f7379032840e293f7c77370071d1da91796f8025c7ba1",
     "style.css": "27053031c8ddee63a0011c4fef24488d72604e0076148edf03b6208e33a4a21a",
     "fox.svg": "bef18372e8192a53b6ded46ca31f9c07e4d6735b10c6142d223c64612924e50b",
     "favicon.svg": "8a4ab40e731f2a9b9404ca0a703c2bd65df73e692c258d51158cdec9517634e9",
@@ -19,11 +19,12 @@
     "avatars/avatar2.png": "7d3113263f834ed76aa818d73edd59a81ed7e557dd8ebce14add1e6700bc23a0",
     "avatars/avatar3.png": "9eb46d2f5a6f54545690cacffbdb1a6256dcd40a8aee07461e8649a566dbc010",
     "avatars/avatar4.png": "f1767d080142d982f3267859ba11d857b4f355219395af520bcafa06c62df3d4",
-    "blank.html": "14fdf3081bd8a8ecb3f11e35da47be1cb367a2ef19a23db3bfe1a89e53d1db1b",
+    "blank.html": "9fd61b7cdbeb1260a017dd3c29de4586e05aaf112320c0028095a5490706c610",
     "blank.css": "a60356bf78a20fa5438950a84ed5290fbadd4c689d38a76678689cf49b8b8a73",
     "blank.js": "9223ee65424251b40c38a70e94f2d881b0a308a284f42d28acf4966a1a862eef",
-    "avatar.js": "1be806760d9d78d0e3e408b9abef9121ac01f62cc597b3e8c41d67f236ca7cde",
-    "avatar.css": "96f3cf321461c313f0b85e02736d9575ecc40a22a994c8f4e69b413e99e00aa7",
-    "avatars/hayumeri-kitsune.avif": "4f332669f87c4b042628c884bf88ed4712a6be5d1b1566c9e4308ac70d8f7097"
+    "avatar.js": "af5d99eb00e71f83b6a9933836f53b7766042e07c2316029b75f1dd6e8bd7291",
+    "avatar.css": "ea5d6b24b86fa8b0ec767e004b5af83b51dc8446956130d43cf75bf19043ecec",
+    "avatars/hayumeri-kitsune.avif": "4f332669f87c4b042628c884bf88ed4712a6be5d1b1566c9e4308ac70d8f7097",
+    "avatar-studio.js": "1fd5b48d8ef3c38a09b72ba984ce0f93f96b4212fbf33ecfe669e63765da8c76"
   }
 }
