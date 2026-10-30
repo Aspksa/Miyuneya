@@ -86,3 +86,55 @@ test('Avatar icon symbols never shadow the chat element IDs',async()=>{
     assert.ok(ids.includes('kitsune-glyph-chat'));
   }
 });
+
+
+test('One visible avatar is mounted on /workspace and disk drafts use its chat', async () => {
+  const legacy = await readFile(new URL('web/index.html', root), 'utf8');
+  const main = await readFile(new URL('src/main.ts', root), 'utf8');
+  const compiled = await readFile(new URL('dist/main.js', root), 'utf8');
+  for (const page of [html,legacy]) {
+    const matches = [...page.matchAll(/id="kitsune-avatar"/g)];
+    assert.equal(matches.length, 1, 'Shared avatar must be unique in the markup');
+  }
+  assert.doesNotMatch(main, /assistant\s*=\s*mountAssistant\s*\(/, 'Legacy assistant must not create duplicate floating widgets');
+  assert.doesNotMatch(compiled, /assistant\s*=\s*mountAssistant\s*\(/, 'Built JS must use shared widget');
+  assert.match(main, /getElementById\('kitsune-avatar'\)/, 'Keep workspace drafting into new chat');
+  assert.match(main, /field\.value=text\.slice\(0,20000\)/);
+  assert.match(compiled, /getElementById\('kitsune-chat'\)/);
+});
+
+test('All standalone avatar and chat controls carry matching inline SVG glyphs', async () => {
+  const legacy = await readFile(new URL('web/index.html', root), 'utf8');
+  const controls = [
+    'kitsune-avatar-size','kitsune-avatar-opacity','kitsune-framing',
+    'kitsune-vertical','kitsune-chat-width','kitsune-chat-height',
+    'kitsune-chat-font','kitsune-auto-trim','kitsune-glow',
+    'kitsune-animations','kitsune-gold-glow','kitsune-drag-ease'
+  ];
+  for(const page of [html, legacy]) {
+    for(const id of controls) {
+      const inputAt = page.indexOf('id="'+id+'"');
+      assert.ok(inputAt >= 0,'Missing '+id);
+      const labelStart = page.lastIndexOf('<label', inputAt);
+      const labelEnd = page.indexOf('</label>', inputAt);
+      assert.ok(labelStart >= 0 && labelEnd >= 0, 'Malformed label: '+id);
+      const label = page.slice(labelStart,labelEnd);
+      assert.match(label, /<svg class="kitsune-ui-icon"/, 'Control has no vector icon: '+id);
+      assert.match(label, /href="#kitsune-glyph-[^"]+"/, 'Missing SVG symbol ref: '+id);
+    }
+    assert.match(page,/id="kitsune-image-restore"[\s\S]*?<svg class="kitsune-ui-icon"/);
+    assert.match(page,/id="kitsune-settings-reset"[\s\S]*?<svg class="kitsune-ui-icon"/);
+    const ids = [...page.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);
+    assert.equal(new Set(ids).size,ids.length,'Duplicate page IDs');
+  }
+});
+
+test('The shared-chat bridge in dist/main.js matches TypeScript stripping exactly',async()=>{
+  const { stripTypeScriptTypes }=await import('node:module');
+  const source=await readFile(new URL('src/main.ts',root),'utf8');
+  const built=await readFile(new URL('dist/main.js',root),'utf8');
+  let expected='// Generated from src/main.ts by npm run build.\n'+stripTypeScriptTypes(source,{mode:'strip'});
+  expected=expected.replace(/[ \t]+$/gm,'');
+  expected=expected.replace(/(from\s+['"]\.{1,2}\/[^'"]+)\.ts(['"])/g,'$1.js$2');
+  assert.equal(built,expected,'Regenerate dist/main.js using npm run build; never ship stale JS');
+});
