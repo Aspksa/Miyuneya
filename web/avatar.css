@@ -384,3 +384,13 @@
   max-width:none;
   max-height:none;
 }
+
+/* Matching SVG pictograms on every setting, not only section tabs. */
+.kitsune-upload > span { display: inline-flex; align-items: center; gap: 8px; }
+.kitsune-check .kitsune-ui-icon { flex: 0 0 19px; }
+.kitsune-restore .kitsune-ui-icon,
+.kitsune-settings-footer .kitsune-ui-icon { vertical-align: middle; margin-right: 7px; }
+.kitsune-control > span > .kitsune-ui-icon { flex-shrink: 0; }
+@media (forced-colors: active) {
+  .kitsune-settings .kitsune-ui-icon { stroke: ButtonText; }
+}
