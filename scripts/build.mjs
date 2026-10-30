@@ -34,7 +34,20 @@ export async function ensureBuild(root, check = false) {
     }
     if(intact) return false;
   }
-  if(check) throw new Error('Сборка отсутствует, повреждена или устарела: выполните npm run build.');
+  if (check) {
+    if (cached?.fingerprint !== fingerprint) {
+      console.error('Сборка: fingerprint', { expected: fingerprint, found: cached?.fingerprint });
+    } else {
+      for (const name of [...assets,...modules.map(name => name+'.js')]) {
+        try {
+          const actual=hash(await readFile(join(root,'dist',name)));
+          if (actual!==cached.outputs?.[name])
+            console.error('Сборка: отличается файл',name,'ожидается',cached.outputs?.[name],'фактически',actual);
+        } catch(e) { console.error('Сборка: недоступен файл',name,(e).code); }
+      }
+    }
+    throw new Error('Сборка отсутствует, повреждена или устарела: выполните npm run build.');
+  }
   for(const name of modules) {
     let code='// Generated from src/'+name+'.ts by npm run build.\n'+stripTypeScriptTypes(inputs[`src/${name}.ts`].toString('utf8'),{mode:'strip'});
     code=code.replace(/[ \t]+$/gm,'');
