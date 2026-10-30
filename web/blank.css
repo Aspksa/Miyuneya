@@ -171,6 +171,8 @@ button:focus-visible, input:focus-visible + .appearance-preview {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
 }
+.theme-status { margin: 18px 0 0; color: var(--secondary); font-size: 12px; line-height: 1.4; }
+.theme-status[data-error="true"] { color: #c85e5e; }
 @media (max-width: 540px) {
   .right-rail { width: 62px; padding-inline: 6px; padding-bottom: 12px; }
   .settings-toggle { width: 48px; height: 48px; }
