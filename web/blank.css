@@ -552,3 +552,58 @@ input[type="color"]:focus-visible, input[type="range"]:focus-visible,
   .cloud-status[data-state="connected"] .cloud-dot { background: Highlight; }
   .cloud-status[data-state="error"] .cloud-dot { background: Mark; }
 }
+
+/* Iconography and alignment: all settings share the same 18px SVG grid. */
+.settings-icon-defs {
+  position: absolute; width: 0; height: 0; overflow: hidden;
+  pointer-events: none;
+}
+.setting-icon {
+  display: block; flex: 0 0 18px; width: 18px; height: 18px;
+  fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+  shape-rendering: geometricPrecision;
+}
+.setting-heading {
+  display: inline-flex; align-items: center; gap: 10px;
+  min-width: 0; min-height: 26px;
+  color: var(--text);
+}
+.setting-heading > .setting-icon { width: 20px; height: 20px; flex-basis: 20px; color: var(--text); }
+.setting-label-with-icon,
+.setting-row-name, .setting-check-name, .cloud-label-name {
+  display: inline-flex; align-items: center; gap: 10px;
+  min-width: 0; color: var(--text); overflow-wrap: anywhere;
+}
+.setting-row-name { flex: 1 1 150px; }
+.setting-row-name > span, .setting-check-name > span, .cloud-label-name > span { min-width: 0; }
+.setting-row-name .setting-icon, .setting-check-name .setting-icon,
+.cloud-label-name .setting-icon, .setting-label-with-icon .setting-icon { color: var(--secondary); }
+.setting-check { min-height: 34px; }
+.setting-check-name { flex: 1 1 auto; }
+.cloud-label-name { font-weight: 625; }
+.cloud-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 9px; }
+.cloud-button, .cloud-forget, .reset-button {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 8px; text-align: center; overflow-wrap: anywhere;
+}
+.cloud-button { width: 100%; min-height: 46px; line-height: 1.35; padding: 10px; }
+.cloud-button .setting-icon, .cloud-forget .setting-icon, .reset-button .setting-icon {
+  width: 17px; height: 17px; flex-basis: 17px; flex-shrink: 0;
+}
+.cloud-forget { min-height: 44px; }
+.cloud-guide a, .cloud-note a {
+  color: var(--text); text-decoration: underline; text-underline-offset: 3px;
+  display: inline-flex; align-items: center; gap: 5px; vertical-align: middle;
+}
+.cloud-note a .setting-icon { width: 15px; height: 15px; flex-basis: 15px; }
+.cloud-status[data-state="working"] .cloud-dot { background: #229c69; }
+@media (max-width: 540px) {
+  .setting-row-name { flex-basis: 145px; }
+  .cloud-actions { grid-template-columns: minmax(0,1fr); }
+  .setting-heading { gap: 8px; }
+}
+@media (forced-colors: active) {
+  .cloud-status[data-state="working"] .cloud-dot { background: Highlight; }
+  .setting-icon { stroke: currentColor; }
+}
