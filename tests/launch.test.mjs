@@ -13,7 +13,7 @@ import { emptyWorkspace } from '../src/model.ts';
 import { prepareUpdate } from '../scripts/update.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 
-test('Default homepage is empty and untitled; original workspace and APIs are preserved',async t=>{
+test('Default homepage has only the right settings rail; original workspace and APIs are preserved',async t=>{
   const root=await fixture(t);
   const child=nodeLaunch(root,{MIYUNEYA_OFFLINE:'1'});
   const pointer=await waitReady(root,child);
@@ -22,10 +22,20 @@ test('Default homepage is empty and untitled; original workspace and APIs are pr
   assert.equal(home.status,200);
   assert.match(home.headers.get('content-type'),/^text\/html/);
   const html=await home.text();
-  assert.equal(html,await readFile(join(root,'web','blank.html'),'utf8'));
+  assert.equal(html,await readFile(join(root,'dist','blank.html'),'utf8'));
   assert.match(html,/<title><\/title>/);
-  assert.match(html,/<body><\/body>/);
-  assert.doesNotMatch(html,/<(?:script|link|nav|main|section|header|footer)\b/i);
+  assert.match(html,/<main[^>]*><\/main>/);
+  assert.match(html,/<nav[^>]*class="right-rail"/);
+  assert.match(html,/<svg\b/);
+  assert.match(html,/id="settings-toggle"/);
+  assert.match(html,/id="settings-panel"[^>]*role="dialog"/);
+  assert.match(html,/name="appearance" value="light"/);
+  assert.match(html,/name="appearance" value="dark"/);
+  for (const filename of ['blank.css','blank.js']) {
+    const asset=await fetch(base+'/'+filename);
+    assert.equal(asset.status,200);
+    assert.equal(await asset.text(),await readFile(join(root,'web',filename),'utf8'));
+  }
   assert.doesNotMatch(html,/Miyuneya|Миюнэя/i);
   const head=await fetch(base+'/',{method:'HEAD'});
   assert.equal(head.status,200);
@@ -37,6 +47,33 @@ test('Default homepage is empty and untitled; original workspace and APIs are pr
   const workspace=await fetch(base+'/api/workspace');
   assert.equal(workspace.status,200);
   assert.equal((await workspace.json()).revision,0);
+});
+
+test('Theme settings survive a BAT-style server restart without altering notes',async t=>{
+  const root=await fixture(t);
+  const first=nodeLaunch(root,{MIYUNEYA_OFFLINE:'1'});
+  const one=await waitReady(root,first);
+  const base=`http://127.0.0.1:${one.port}`;
+  const seed=emptyWorkspace();
+  seed.notes.push({id:'saved-note',title:'Сохранить',body:'Не менять данные',updatedAt:new Date().toISOString()});
+  const saved=await fetch(base+'/api/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:0,data:seed})});
+  assert.equal(saved.status,200);
+  assert.equal((await fetch(base+'/api/site/theme')).status,200);
+  const bad=await fetch(base+'/api/site/theme',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:'invalid'})});
+  assert.equal(bad.status,400);
+  const result=await fetch(base+'/api/site/theme',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:'dark'})});
+  assert.equal(result.status,200);
+  assert.equal((await result.json()).theme,'dark');
+  const firstData=await (await fetch(base+'/api/workspace')).json();
+  assert.equal(firstData.data.settings.theme,'dark');
+  assert.deepEqual(firstData.data.notes,seed.notes);
+  await stop(root,first);
+  const second=nodeLaunch(root,{MIYUNEYA_OFFLINE:'1'});
+  const two=await waitReady(root,second);
+  assert.equal((await (await fetch(`http://127.0.0.1:${two.port}/api/site/theme`)).json()).theme,'dark');
+  const persisted=JSON.parse(await readFile(join(root,'data','workspace.json'),'utf8'));
+  assert.deepEqual(persisted.data.notes,seed.notes);
+  await stop(root,second);
 });
 
 test('A missing blank homepage fails the preflight check with a specific cause',async t=>{

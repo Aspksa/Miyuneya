@@ -87,6 +87,7 @@ export async function createApp(root: string, instance: string, preview = false,
   }
   let queue = Promise.resolve();
   const files: Record<string, [string, string]> = {
+    '/': ['blank.html', 'text/html'], '/blank.css': ['blank.css', 'text/css'], '/blank.js': ['blank.js', 'text/javascript'],
     '/workspace': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'],
     '/workbench.js':['workbench.js','text/javascript'], '/productivity.js':['productivity.js','text/javascript'], '/disk.js': ['disk.js', 'text/javascript'], '/calendar.js': ['calendar.js', 'text/javascript'], '/main.js': ['main.js', 'text/javascript'], '/model.js': ['model.js', 'text/javascript'],
     '/assistant.js': ['assistant.js', 'text/javascript'], '/appearance.js': ['appearance.js', 'text/javascript'], '/memory.js': ['memory.js', 'text/javascript'],
@@ -201,12 +202,23 @@ export async function createApp(root: string, instance: string, preview = false,
         return;
       }
       if (stopping) return send(503, { error: 'Сервер завершает работу' });
-      // The homepage is intentionally blank: no title, modules, scripts or navigation.
-      // Keep the existing workspace at /workspace without touching its data or APIs.
-      if ((req.method === 'GET' || req.method === 'HEAD') && path === '/') {
-        const html = await readFile(join(root, 'web', 'blank.html'));
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(req.method === 'HEAD' ? undefined : html);
+      if (path === '/api/site/theme') {
+        if (req.method === 'GET') return send(200, { theme: state.data.settings.theme === 'dark' ? 'dark' : 'light' });
+        if (req.method !== 'PUT') return send(405, { error: 'Метод не поддерживается' });
+        const input = await readJson(req, send, 1000);
+        if (input === undefined) return;
+        if (!input || (input.theme !== 'light' && input.theme !== 'dark')) return send(400, { error: 'Выберите светлую или тёмную тему.' });
+        const update = queue.then(async () => {
+          if (state.data.settings.theme !== input.theme) {
+            const next = { revision: state.revision + 1, data: structuredClone(state.data) };
+            next.data.settings.theme = input.theme;
+            await atomicWrite(dataFile, JSON.stringify(next, null, 2));
+            state = next;
+          }
+          send(200, { theme: input.theme });
+        });
+        queue = update.catch(() => {});
+        await update;
         return;
       }
       if(path==='/api/disk' || path.startsWith('/api/disk/')) {memory.touch();if(diskError)return send(503,{error:'Индекс диска повреждён. Документы сохранены; восстановите data/disk/index.json из копии.'});return await disk.handle(req,res,new URL(req.url,origin));}
