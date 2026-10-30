@@ -190,7 +190,6 @@
   });
   document.getElementById('kitsune-chat-close').addEventListener('click',closeChat);
   openSettings.addEventListener('click',openSettingsDialog);
-  document.getElementById('kitsune-avatar-settings-shortcut').addEventListener('click',openSettingsDialog);
   settingsClose.addEventListener('click',closeSettingsDialog);
   settingsBackdrop.addEventListener('click',closeSettingsDialog);
   settings.addEventListener('keydown',event=>{
