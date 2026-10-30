@@ -5,7 +5,48 @@ export type Task = { parentId?:string; dependsOn?:string[]; group?:string; attac
 // Avatar appearance travels with the workspace; its screen position stays in the browser.
 // avatar 5 is the user's own uploaded image; animate, snap and opacity arrived later and stay optional.
 export type AssistantLook = { avatar: 1 | 2 | 3 | 4 | 5; size: 's' | 'm' | 'l'; mirror: boolean; hidden: boolean; animate?: boolean; snap?: boolean; opacity?: number };
-export type Workspace = { version: 1; automationApplied?:string[]; notes: Note[]; tasks: Task[]; settings: { theme: 'light' | 'dark' | 'auto'; name: string; assistant?: AssistantLook } };
+export type Appearance = {
+  accent: string;
+  railWidth: 'narrow' | 'regular' | 'wide';
+  iconSize: 'small' | 'regular' | 'large';
+  railOpacity: number;
+  font: 'system' | 'segoe' | 'arial' | 'georgia';
+  fontSize: 'small' | 'regular' | 'large';
+  radius: 'small' | 'regular' | 'large';
+  density: 'compact' | 'comfortable';
+  motion: boolean;
+  background: string;
+  scale: number;
+  contrast: boolean;
+};
+export type SiteAppearance = Appearance & { theme: 'light' | 'dark' | 'auto' };
+export const defaultAppearance = (): Appearance => ({
+  accent: '#7775d7', railWidth: 'regular', iconSize: 'regular',
+  railOpacity: 100, font: 'system', fontSize: 'regular',
+  radius: 'regular', density: 'comfortable', motion: true,
+  background: 'default', scale: 100, contrast: false
+});
+const colorValue = (v: unknown) => typeof v === 'string' && /^#[a-fA-F0-9]{6}$/.test(v);
+const oneOf = (v: unknown, allowed: readonly string[]) => typeof v === 'string' && allowed.includes(v);
+export function validAppearance(v: unknown): v is SiteAppearance {
+  if (!record(v)) return false;
+  const keys = ['theme', ...Object.keys(defaultAppearance())];
+  return Object.keys(v).length === keys.length && Object.keys(v).every(k => keys.includes(k))
+    && oneOf(v.theme, ['light', 'dark', 'auto'])
+    && colorValue(v.accent)
+    && oneOf(v.railWidth, ['narrow', 'regular', 'wide'])
+    && oneOf(v.iconSize, ['small', 'regular', 'large'])
+    && Number.isInteger(v.railOpacity) && Number(v.railOpacity) >= 75 && Number(v.railOpacity) <= 100
+    && oneOf(v.font, ['system', 'segoe', 'arial', 'georgia'])
+    && oneOf(v.fontSize, ['small', 'regular', 'large'])
+    && oneOf(v.radius, ['small', 'regular', 'large'])
+    && oneOf(v.density, ['compact', 'comfortable'])
+    && typeof v.motion === 'boolean'
+    && (v.background === 'default' || colorValue(v.background))
+    && [90, 100, 110, 120].includes(v.scale as number)
+    && typeof v.contrast === 'boolean';
+}
+export type Workspace = { version: 1; automationApplied?:string[]; notes: Note[]; tasks: Task[]; settings: { theme: 'light' | 'dark' | 'auto'; name: string; assistant?: AssistantLook; appearance?: Appearance } };
 export const defaultLook = (): Required<AssistantLook> => ({ avatar: 1, size: 'm', mirror: false, hidden: false, animate: true, snap: true, opacity: 1 });
 export function emptyWorkspace(): Workspace {
   return { version: 1, notes: [], tasks: [], settings: { theme: 'light', name: 'Хозяин' } };
@@ -23,6 +64,8 @@ export function validateWorkspace(value: unknown): value is Workspace {
   if (!record(value) || value.version !== 1 || !Array.isArray(value.notes) || !Array.isArray(value.tasks) || !record(value.settings)) return false;
   if (value.notes.length > 5000 || value.tasks.length > 5000 || !['light', 'dark', 'auto'].includes(String(value.settings.theme)) || !text(value.settings.name, 80)) return false;
   if (value.settings.assistant !== undefined && !validLook(value.settings.assistant)) return false;
+  if (value.settings.appearance !== undefined && !validAppearance({ theme: value.settings.theme, ...value.settings.appearance })) return false;
+
   const ids = new Set<string>();
   for (const item of [...value.notes, ...value.tasks]) {
     if (!record(item) || !text(item.id, 100) || !item.id || ids.has(item.id) || !text(item.title, 200) || !item.title.trim()) return false;
