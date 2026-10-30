@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "fingerprint": "dab990af980ff3b384ae6d5cbdeaa0c1056b53b2eb56521d009c5170af7721fb",
+  "fingerprint": "18099fa16f92ef191c950818186213f15108820643213ffa3d0523d8327085a1",
   "outputs": {
     "appearance.js": "be3c7d9aa4c3a5303c1a3a03578fc7c02c75a47efa3964dfbadb717b0207dd1a",
     "assistant.js": "bb573bd724ba4354a6687742829c56ddc00a3c38abd0d571455136b84add31fc",
@@ -12,7 +12,7 @@
     "productivity.js": "b93316f1e70082ed09fefe041d4abbf9783e56dd93e713919bea5682e59c5c8a",
     "workbench.js": "54d842585a734509d006489d0a464e888c8ed3e217b79ceb0696d53d71b4fd04",
     "index.html": "a5a264c3d62fbf03cec3cb011a935948541be4147e26626a1f5f534bb1dd1346",
-    "style.css": "4d13e599cddad66927b073ad4d7cd1cab574e5e95df64de6ba35693dcc186478",
+    "style.css": "c0d304ba300d58537ac7c093abe0cf8f7cbf4ecd730bc5f5c834a1fb2adaa5d0",
     "fox.svg": "bef18372e8192a53b6ded46ca31f9c07e4d6735b10c6142d223c64612924e50b",
     "favicon.svg": "8a4ab40e731f2a9b9404ca0a703c2bd65df73e692c258d51158cdec9517634e9",
     "avatars/avatar1.png": "bcc0f540c1f2628f418713d5ae6582a23a1a3d95bac36a4f2b02e34479d77af8",
