@@ -190,7 +190,8 @@ export function upsert(memory: Memory, kind: MemoryKind, text: string, options: 
   const now = options.now || new Date().toISOString();
   const value = clip(text);
   if (!value || forgotten(memory,value)) return null;
-  options.evidence=(options.evidence || []).filter(e=>compatible(value,e.quote)&&similarity(value,e.quote)>=0.3);
+  // A review quote proves the user's feedback, while the lesson itself may be a concise paraphrase of it.
+  options.evidence=(options.evidence || []).filter(e=>options.source==='review' ? e.role==='user' : compatible(value,e.quote)&&similarity(value,e.quote)>=0.3);
   const until = validDate(options.until) ? options.until : null;
   const same = memory.items.find(i => i.id === options.same && i.kind === kind && i.status!=='superseded' && compatible(i.text,value) && similarity(i.text,value)===1)
     || memory.items.filter(i => i.kind === kind && i.status !== 'superseded' && compatible(i.text,value)).map(i => [i, similarity(i.text, value)] as const).filter(([, s]) => s === 1).sort((a, b) => b[1] - a[1])[0]?.[0];
@@ -536,9 +537,9 @@ export const REFLECT_PROMPT = SOURCE_PROMPT + '\n' + `Ты модуль памя
 "facts":[{"text":"факт о пользователе","category":"work","until":"ГГГГ-ММ-ДД","about":["имя сущности"],"same":"id такого же известного факта","conflicts":"id факта, который это опровергает","links":["id"]}],
 "rules":[{"text":"как пользователь хочет, чтобы ты отвечала или действовала","same":"id","conflicts":"id"}],
 "relations":[{"from":"id или имя","to":"id или имя","type":"part_of"}],
-"confirm":["id фактов и правил, которые разговор подтвердил"],
+"confirm":[{"id":"id факта или правила, которое разговор подтвердил","evidence":[{"source":"id источника","version":"версия","quote":"точная цитата пользователя"}]}],
 "weaken":["id фактов и правил, которые оказались неверными"],
-"review":{"score":4,"good":"что в твоих ответах получилось","weak":"главное слабое место","lesson":"как действовать в следующий раз"},
+"review":{"score":4,"good":"что в твоих ответах получилось","weak":"главное слабое место","lesson":"как действовать в следующий раз","evidence":[{"source":"id источника","version":"версия","quote":"точная цитата поправки пользователя"}]},
 "answers":[{"question":"id открытого вопроса","text":"что ты узнала из ответа пользователя"}],
 "questions":["вопрос пользователю о пробеле в памяти"],
 "promises":[{"text":"что ты пообещала сделать, проверить или подготовить","due":"ГГГГ-ММ-ДД"}],
@@ -551,7 +552,8 @@ export const REFLECT_PROMPT = SOURCE_PROMPT + '\n' + `Ты модуль памя
 "steps_done":[{"goal":"id цели","step":"id шага"}]}
 Факты: только устойчивое и полезное в будущем — кто пользователь, его предпочтения, привычки, планы, важные обстоятельства. Пиши в третьем лице, коротко, по-русски. Не записывай содержимое заметок, разовые просьбы и общие знания.
 Правила: явные просьбы о стиле и порядке работы. Обязательно сделай рефлексию: оцени свои ответы. Если пользователь тебя поправил, переспросил, попросил короче, иначе или по-другому, сформулируй из этого правило.
-Самооценка (review): честно оцени свои ответы в этом разговоре от 1 до 5 (5 — пользователь получил то, что хотел, с первого раза). weak — главное слабое место одной фразой, если оно было. lesson — правило-навык для себя на будущее, только если слабое место повторимо, например «Перед длинным ответом уточнять, что именно нужно». Не выдумывай промахов, если всё прошло хорошо.
+Самооценка (review): честно оцени свои ответы в этом разговоре от 1 до 5 (5 — пользователь получил то, что хотел, с первого раза). weak — главное слабое место одной фразой, если оно было. lesson — правило-навык для себя на будущее, только если слабое место повторимо, например «Перед длинным ответом уточнять, что именно нужно». Если урок основан на поправке или явной просьбе пользователя, добавь в review.evidence точную цитату этой поправки; собственные слова помощницы не подходят. Не выдумывай промахов, если всё прошло хорошо.
+Подтверждения (confirm): возвращай только при новой точной цитате пользователя, которая прямо подтверждает существующую запись. Не считай подтверждением отсутствие возражений, собственный ответ или похожую тему.
 Открытые вопросы: если пользователь в разговоре ответил на один из них, верни answers. Если в разговоре появилось что-то важное и непонятное (неизвестный человек или проект), можно добавить до двух вопросов в questions.
 Обещания: если ты (Миюнэя) пообещала что-то сделать позже — проверить, подготовить, напомнить, вернуться к вопросу, — запиши это в promises; due — только если срок назван. Если в разговоре ты выполнила одно из открытых обещаний, верни его id в kept.
 Напоминания: если пользователь попросил напомнить о чём-то, когда речь зайдёт о теме (а не в определённое время), запиши в reminders; уже поставленные не повторяй.
@@ -697,6 +699,11 @@ function applyGraph(memory: Memory, result: any, resolve: (ref: unknown) => stri
   for (const entry of list(result.entities)) upsertEntity(memory, entry.name, entry.type, entry.about, now);
   for (const entry of list(result.relations)) { const from = resolve(entry.from), to = resolve(entry.to); if (from && to) addEdge(memory, from, to, entry.type, now); }
 }
+// A lesson may paraphrase feedback, but it still needs an exact user quote containing a correction or instruction.
+const FEEDBACK = /(?:^|[^\p{L}])(?:не\s+(?:так|то|надо|нужно|нравится)|хватит|перестань|слишком|лучше|надо|нужно|всегда|никогда|отвеч\p{L}*|пиш\p{L}*|сделай|делай|говори|формулируй|короче|подробнее|длиннее|убери|добавь|измени|исправь)(?:[^\p{L}]|$)/iu;
+function lessonEvidence(value: unknown, sources: Source[], weak: string, lesson: string) {
+  return evidence(value,sources).filter(e=>e.role==='user'&&(FEEDBACK.test(e.quote)||[weak,lesson].some(text=>text&&compatible(text,e.quote)&&similarity(text,e.quote)>=0.3)));
+}
 // Applies the post-dialog reflection: an episode, entities, new or confirmed facts and rules, relations and weakened mistakes.
 export function applyReflection(memory: Memory, result: any, dialog: Dialog, known: Set<string>, now = new Date().toISOString(), sources:Source[] = dialogSources(dialog)) {
   if (!result || typeof result !== 'object') return 0;
@@ -722,14 +729,22 @@ export function applyReflection(memory: Memory, result: any, dialog: Dialog, kno
     for (const name of Array.isArray(entry.about) ? entry.about.slice(0, 5) : []) { const target = resolve(name); if (target) addEdge(memory, added.item.id, target, 'about', now); }
   }
   for (const entry of list(result.relations)) { const from = resolve(entry.from), to = resolve(entry.to); if (from && to && addEdge(memory, from, to, entry.type, now)) changes++; }
-  for (const id of ids(result.confirm)) { const found = item(id); if (found && sources.some(s=>s.role==='user'&&canonical(s.text)===canonical(found.text))) { reinforce(found, now, 0.2); changes++; } }
+  for (const entry of Array.isArray(result.confirm) ? result.confirm.slice(0,30) : []) {
+    const found=item(typeof entry==='string'?entry:entry?.id);
+    if(!found||found.status==='superseded'||found.status==='contested')continue;
+    // Legacy id-only confirmations required the whole message to be the fact. New confirmations cite the exact supporting fragment.
+    if(typeof entry==='string') { if(sources.some(s=>s.role==='user'&&canonical(s.text)===canonical(found.text))){reinforce(found,now,0.2);changes++;} continue; }
+    const proof=evidence(entry.evidence,sources).filter(e=>e.role==='user'&&compatible(found.text,e.quote)&&similarity(found.text,e.quote)>=0.3);
+    if(proof.length&&upsert(memory,found.kind,found.text,{same:found.id,evidence:proof,now}))changes++;
+  }
   for (const id of ids(result.weaken)) { const found = item(id); if (found && !found.pinned && found.source!=='user') { found.status='contested'; changes++; } }
-  // Self-review: a repeatable weak spot becomes a procedural rule, so the next answers avoid it.
+  // Self-review alone is only a candidate. An exact user correction makes the lesson applicable to future answers.
   const review = result.review && typeof result.review === 'object' ? result.review : null;
   if (review && score(review.score)) {
-    const weak = clip(review.weak, 300);
+    const weak = clip(review.weak, 300), lesson = clip(review.lesson);
     journal(memory, 'review', `Самооценка ${score(review.score)}/5${weak ? ' · слабое место: ' + weak : ''}`, now);
-    if (upsert(memory, 'rule', review.lesson, { source: 'review', weight: 0.55, links: episode ? [episode.id] : [], now, origin: episode?.id ?? null })) changes++;
+    const proof=lessonEvidence(review.evidence,sources,weak,lesson);
+    if (upsert(memory, 'rule', lesson, { source: 'review', weight: 0.55, links: episode ? [episode.id] : [], now, origin: episode?.id ?? null, evidence:proof })) changes++;
   }
   for (const entry of list(result.promises)) if (promise(memory, entry.text, entry.due, episode?.id ?? null, now)) changes++;
   for (const id of ids(result.kept)) if (keep(memory, id, now)) changes++;
