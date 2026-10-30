@@ -297,6 +297,12 @@
     <div class="kitsune-settings-content">
       <fieldset>
         <legend>Аватар</legend>
+        <label class="kitsune-upload" for="kitsune-image-upload">
+          <span>Заменить изображение аватара</span>
+          <input id="kitsune-image-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+        </label>
+        <button id="kitsune-image-restore" class="kitsune-restore" type="button">Вернуть исходную кицунэ</button>
+        <p class="kitsune-help">Фотография сохраняется локально на сервере в исходном разрешении (PNG/JPEG/WebP/GIF, до 15 МБ).</p>
         <label class="kitsune-control" for="kitsune-avatar-size">
           <span>Размер аватара</span><output id="kitsune-size-output">180 px</output>
           <input id="kitsune-avatar-size" type="range" min="100" max="300" step="10" value="180">
