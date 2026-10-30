@@ -257,7 +257,7 @@
     setBusy(true);
     try {
       const data = await request('/api/assistant/models');
-      const valid = Array.isArray(data.models) ? data.models.filter(name => typeof name === 'string' && /^[\\w.:@\\/-]{1,200}$/.test(name)) : [];
+      const valid = Array.isArray(data.models) ? data.models.filter(name => typeof name === 'string' && /^[A-Za-z0-9_.:@/-]{1,200}$/.test(name)) : [];
       modelList.replaceChildren();
       for (const name of [...new Set(valid)].slice(0, 250)) {
         const option = document.createElement('option');
@@ -299,7 +299,7 @@
     event.preventDefault();
     if (busy) return;
     const selectedModel = model.value.trim();
-    if (!/^[\\w.:@\\/-]{1,200}$/.test(selectedModel)) {
+    if (!/^[A-Za-z0-9_.:@/-]{1,200}$/.test(selectedModel)) {
       status('error', 'Неверная модель', 'Введите корректный идентификатор модели.');
       return;
     }
