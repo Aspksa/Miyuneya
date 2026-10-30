@@ -81,6 +81,8 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   cd=await connect(page.webSocketDebuggerUrl);
   await cd.send('Page.enable');
   await cd.send('Runtime.enable');
+  // Stable screenshots: CSS transitions must not create temporary low contrast.
+  await cd.send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
   const source=await readFile(join(root,'web','blank.html'),'utf8');
   const stylesheet=await readFile(join(root,'web','blank.css'),'utf8');
   const script=await readFile(join(root,'web','blank.js'),'utf8');
@@ -153,6 +155,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
     const themedHashes=[];
     for (const theme of ['light','dark']) {
       await evalJS(`(()=>{const c=document.querySelector('[data-setting="theme"][value="${theme}"]');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+      await evalJS('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
       const metrics=await evalJS(`(()=>{
         const panel=document.getElementById('settings-panel');
         const rail=document.querySelector('.right-rail');
