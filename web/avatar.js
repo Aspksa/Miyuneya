@@ -22,14 +22,24 @@
   const glowInput = document.getElementById('kitsune-glow');
   const animationInput = document.getElementById('kitsune-animations');
   const fontInput = document.getElementById('kitsune-chat-font');
+  const widthInput = document.getElementById('kitsune-chat-width');
+  const heightInput = document.getElementById('kitsune-chat-height');
+  const widthValue = document.getElementById('kitsune-chat-width-output');
+  const heightValue = document.getElementById('kitsune-chat-height-output');
+  const imageInput = document.getElementById('kitsune-image-upload');
+  const imageRestore = document.getElementById('kitsune-image-restore');
+  const image = avatar.querySelector('img');
+  const imageStatus = document.getElementById('kitsune-settings-message');
   const avatarSizeValue = document.getElementById('kitsune-size-output');
   const opacityValue = document.getElementById('kitsune-opacity-output');
 
-  const defaults = { size: 180, opacity: 100, glow: true, animations: true, font: 15 };
+  const defaults = { size: 180, opacity: 100, glow: true, animations: true, font: 15, width: 410, height: 550 };
   const settingsKey = 'miyuneya.kitsune.settings.v1';
   const avatarKey = 'miyuneya.kitsune.position.v1';
   const chatKey = 'miyuneya.kitsune.chat-position.v1';
   const historyKey = 'miyuneya.kitsune.history.v1';
+  const customImageKey = 'miyuneya.kitsune.custom-image.v1';
+  const originalImageSrc = image.getAttribute('src');
   const clamp=(n,lo,hi)=>Math.max(lo,Math.min(hi,n));
   const read=(key,fallback)=>{
     try {const v=localStorage.getItem(key);return v===null?fallback:JSON.parse(v);} catch {return fallback;}
@@ -47,6 +57,8 @@
     if(typeof storedSettings.glow==='boolean')config.glow=storedSettings.glow;
     if(typeof storedSettings.animations==='boolean')config.animations=storedSettings.animations;
     if(Number.isInteger(storedSettings.font)&&storedSettings.font>=13&&storedSettings.font<=20)config.font=storedSettings.font;
+    if(Number.isInteger(storedSettings.width)&&storedSettings.width>=320&&storedSettings.width<=800)config.width=storedSettings.width;
+    if(Number.isInteger(storedSettings.height)&&storedSettings.height>=350&&storedSettings.height<=900)config.height=storedSettings.height;
   }
 
   const savedAvatar=read(avatarKey,null),savedChat=read(chatKey,null);
@@ -71,11 +83,17 @@
     avatar.classList.toggle('no-glow',!config.glow);
     avatar.classList.toggle('no-motion',!preferredMotion());
     chat.style.setProperty('--kitsune-font',config.font+'px');
+    chat.style.width='min('+config.width+'px, calc(100vw - 20px))';
+    chat.style.height='min('+config.height+'px, calc(100dvh - 24px))';
     sizeInput.value=String(config.size);
     opacityInput.value=String(config.opacity);
     glowInput.checked=config.glow;
     animationInput.checked=config.animations;
     fontInput.value=String(config.font);
+    widthInput.value=String(config.width);
+    heightInput.value=String(config.height);
+    widthValue.textContent=config.width+' px';
+    heightValue.textContent=config.height+' px';
     avatarSizeValue.textContent=config.size+' px';
     opacityValue.textContent=config.opacity+'%';
     placeAvatar();
@@ -188,6 +206,7 @@
   });
   for(const [node,field,transform] of [
     [sizeInput,'size',Number],[opacityInput,'opacity',Number],[fontInput,'font',Number],
+    [widthInput,'width',Number],[heightInput,'height',Number],
     [glowInput,'glow',()=>glowInput.checked],[animationInput,'animations',()=>animationInput.checked]
   ]){
     node.addEventListener('input',()=>{config[field]=transform(node.value);applySettings();write(settingsKey,config);});
@@ -197,6 +216,49 @@
     config={...defaults};avatarPos=null;chatPos=null;
     applySettings();write(settingsKey,config);write(avatarKey,avatarPos);write(chatKey,chatPos);
   });
+  // Custom full-resolution images reuse the existing, validated local avatar
+  // upload API. The repository's supplied fox illustration remains the fallback.
+  function imageMessage(text){imageStatus.textContent=text;imageStatus.hidden=!text;}
+  async function syncCustomImage(){
+    if(read(customImageKey,false)!==true)return;
+    try{
+      const response=await fetch('/api/assistant',{cache:'no-store'});
+      if(!response.ok)return;
+      const status=await response.json();
+      if(Number.isSafeInteger(status.customAvatar)&&status.customAvatar>0)
+        image.src='/api/assistant/avatar?v='+status.customAvatar;
+    }catch{}
+  }
+  imageInput.addEventListener('change',async()=>{
+    const file=imageInput.files?.[0];
+    if(!file)return;
+    const allowed=['image/png','image/jpeg','image/webp','image/gif'];
+    if(!allowed.includes(file.type)||file.size>15000000||file.size===0){
+      imageMessage('Выберите PNG, JPEG, WebP или GIF размером до 15 МБ.');
+      imageInput.value='';
+      return;
+    }
+    imageInput.disabled=true;
+    imageMessage('Сохраняем изображение без потери качества…');
+    try{
+      const response=await fetch('/api/assistant/avatar',{
+        method:'PUT',headers:{'Content-Type':file.type},body:file
+      });
+      const result=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error(result.error||'Не удалось загрузить изображение.');
+      write(customImageKey,true);
+      image.src='/api/assistant/avatar?v='+encodeURIComponent(result.customAvatar||Date.now());
+      imageMessage('Изображение сохранено локально в исходном качестве.');
+    }catch(error){imageMessage(error?.message||'Не удалось сохранить аватар.');}
+    finally{imageInput.disabled=false;imageInput.value='';}
+  });
+  imageRestore.addEventListener('click',()=>{
+    write(customImageKey,false);
+    image.src=originalImageSrc;
+    imageMessage('Исходная кицунэ восстановлена. Ранее загруженные файлы на сервере не удалялись.');
+  });
+  void syncCustomImage();
+
   clearChat.addEventListener('click',()=>{
     if(stream)stream.abort();
     history=[];saveHistory();renderChat();setStatus('История очищена в этом браузере.');
