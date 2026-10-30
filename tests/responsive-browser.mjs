@@ -100,6 +100,10 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   }
   assert.equal(await evalJS('document.readyState'),'complete');
   await evalJS(script);
+  assert.equal(await evalJS('document.getElementById("cloud-key").type'),'password');
+  assert.equal(await evalJS('document.getElementById("cloud-key").value'),'');
+  assert.equal(await evalJS('document.getElementById("cloud-panel") !== null'),true);
+  assert.equal(await evalJS('document.getElementById("cloud-model").value'),'openai/gpt-oss-120b');
   await evalJS('document.getElementById("settings-toggle").click()');
   assert.equal(await evalJS('document.getElementById("settings-panel").hidden'),false);
 
