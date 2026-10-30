@@ -100,6 +100,36 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90�
   }
   assert.equal(await evalJS('document.readyState'),'complete');
   await evalJS(script);
+  const brainInitially=await evalJS(`(()=>{
+    const node=document.getElementById('brain-nav-link');
+    const rail=document.querySelector('.right-rail').getBoundingClientRect();
+    const icon=node.getBoundingClientRect();
+    const gear=document.getElementById('settings-toggle').getBoundingClientRect();
+    return {
+      hidden:document.getElementById('brain-workspace').hidden,
+      label:node.getAttribute('aria-label'),
+      pathCount:node.querySelectorAll('path').length,
+      neurons:node.querySelectorAll('.brain-neuron').length,
+      top:icon.top,railTop:rail.top,gearTop:gear.top,
+      motion:getComputedStyle(node.querySelector('.brain-neuron')).animationName
+    };
+  })()`);
+  assert.equal(brainInitially.hidden,true,'Homepage must stay empty');
+  assert.equal(brainInitially.label,'Мозги Hayumeri');
+  assert.ok(brainInitially.pathCount>=9,'Brain must be a real vector, not an image');
+  assert.equal(brainInitially.neurons,9,'Expected nine neuron nodes');
+  assert.ok(brainInitially.top >= brainInitially.railTop && brainInitially.top < brainInitially.gearTop,
+    'Brain icon must sit at the top, above the settings gear');
+  assert.equal(brainInitially.motion,'none','System reduce-motion must disable pulsing');
+  await evalJS('document.getElementById("brain-nav-link").click()');
+  await evalJS('new Promise(resolve=>setTimeout(resolve,40))');
+  assert.equal(await evalJS('document.getElementById("brain-workspace").hidden'),false);
+  assert.equal(await evalJS('document.getElementById("brain-nav-link").getAttribute("aria-current")'),'page');
+  assert.equal(await evalJS('document.title'),'Мозги Hayumeri');
+  await evalJS('document.querySelector(".brain-back-link").click()');
+  await evalJS('new Promise(resolve=>setTimeout(resolve,40))');
+  assert.equal(await evalJS('document.getElementById("brain-workspace").hidden'),true);
+  assert.equal(await evalJS('document.title'),'');
   assert.equal(await evalJS('document.getElementById("cloud-key").type'),'password');
   assert.equal(await evalJS('document.getElementById("cloud-key").value'),'');
   assert.equal(await evalJS('document.getElementById("cloud-panel") !== null'),true);

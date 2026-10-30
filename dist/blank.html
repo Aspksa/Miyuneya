@@ -9,8 +9,88 @@
   <script type="module" src="/blank.js"></script>
 </head>
 <body>
-  <main class="work-area" aria-label="Пустая рабочая область"></main>
+  <main class="work-area" id="work-area" aria-label="Пустая рабочая область">
+    <section class="brain-workspace" id="brain-workspace" aria-labelledby="brain-heading" hidden>
+      <header class="brain-workspace-header">
+        <div>
+          <p class="brain-eyebrow">ЦЕНТР ЗНАНИЙ И РАЗВИТИЯ</p>
+          <h1 id="brain-heading">Мозги Hayumeri</h1>
+        </div>
+        <a class="brain-back-link" href="#" aria-label="Вернуться на главную">← На главную</a>
+      </header>
+      <div class="brain-empty-state">
+        <div class="brain-hero-emblem" aria-hidden="true">
+          <svg class="brain-vector" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+      <circle class="brain-orbit" cx="32" cy="32" r="29"/>
+
+    <path class="brain-left" d="M31.9 13.8C28.2 7 19.4 6.9 15.7 12.4c-7.5-.4-12.7 7-9.3 13.1-4 4.3-3.2 11.8 2.6 15.1-.2 7 6.3 11.6 12.5 9.4 3.2 4.4 10.4 3.6 10.4-3.8Z"/>
+    <path class="brain-right" d="M32.1 13.8C35.8 7 44.6 6.9 48.3 12.4c7.5-.4 12.7 7 9.3 13.1 4 4.3 3.2 11.8-2.6 15.1.2 7-6.3 11.6-12.5 9.4-3.2 4.4-10.4 3.6-10.4-3.8Z"/>
+    <path class="brain-seam" d="M32 14v36"/>
+    <g class="brain-wiring">
+      <path class="brain-circuit brain-circuit-a" d="M10.5 25 18 21l7.5 6 6.5-7"/>
+      <path class="brain-circuit brain-circuit-b" d="m11 37 7.5-3.5 7 5 6.5-6.5"/>
+      <path class="brain-circuit brain-circuit-c" d="m16 44 10 0 6-8"/>
+      <path class="brain-circuit brain-circuit-d" d="m53.5 25-7.5-4-7.5 6-6.5-7"/>
+      <path class="brain-circuit brain-circuit-e" d="m53 37-7.5-3.5-7 5-6.5-6.5"/>
+      <path class="brain-circuit brain-circuit-f" d="m48 44-10 0-6-8"/>
+    </g>
+    <g class="brain-neurons">
+      <circle class="brain-neuron n1" cx="18" cy="21" r="2.5"/>
+      <circle class="brain-neuron n2" cx="25.5" cy="27" r="2.3"/>
+      <circle class="brain-neuron n3" cx="18.5" cy="33.5" r="2.4"/>
+      <circle class="brain-neuron n4" cx="26" cy="44" r="2.4"/>
+      <circle class="brain-neuron n5" cx="46" cy="21" r="2.5"/>
+      <circle class="brain-neuron n6" cx="38.5" cy="27" r="2.3"/>
+      <circle class="brain-neuron n7" cx="45.5" cy="33.5" r="2.4"/>
+      <circle class="brain-neuron n8" cx="38" cy="44" r="2.4"/>
+      <circle class="brain-neuron n9" cx="32" cy="32" r="3"/>
+    </g>
+    </svg>
+        </div>
+        <h2>Пространство мозгов</h2>
+        <p>Здесь будут размещаться мозги Hayumeri. Пока раздел пуст — никаких модулей не запущено.</p>
+      </div>
+    </section>
+  </main>
+      <svg class="brain-definitions" width="0" height="0" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="brain-neon" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#c495ff"/>
+          <stop offset=".5" stop-color="#70b1ff"/>
+          <stop offset="1" stop-color="#54eedb"/>
+        </linearGradient>
+      </defs>
+    </svg>
+
   <nav class="right-rail" aria-label="Меню проекта">
+    <a href="#brains" class="brain-nav-link" id="brain-nav-link" aria-label="Мозги Hayumeri" title="Мозги Hayumeri">
+      <svg class="brain-vector" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+      <circle class="brain-orbit" cx="32" cy="32" r="29"/>
+
+    <path class="brain-left" d="M31.9 13.8C28.2 7 19.4 6.9 15.7 12.4c-7.5-.4-12.7 7-9.3 13.1-4 4.3-3.2 11.8 2.6 15.1-.2 7 6.3 11.6 12.5 9.4 3.2 4.4 10.4 3.6 10.4-3.8Z"/>
+    <path class="brain-right" d="M32.1 13.8C35.8 7 44.6 6.9 48.3 12.4c7.5-.4 12.7 7 9.3 13.1 4 4.3 3.2 11.8-2.6 15.1.2 7-6.3 11.6-12.5 9.4-3.2 4.4-10.4 3.6-10.4-3.8Z"/>
+    <path class="brain-seam" d="M32 14v36"/>
+    <g class="brain-wiring">
+      <path class="brain-circuit brain-circuit-a" d="M10.5 25 18 21l7.5 6 6.5-7"/>
+      <path class="brain-circuit brain-circuit-b" d="m11 37 7.5-3.5 7 5 6.5-6.5"/>
+      <path class="brain-circuit brain-circuit-c" d="m16 44 10 0 6-8"/>
+      <path class="brain-circuit brain-circuit-d" d="m53.5 25-7.5-4-7.5 6-6.5-7"/>
+      <path class="brain-circuit brain-circuit-e" d="m53 37-7.5-3.5-7 5-6.5-6.5"/>
+      <path class="brain-circuit brain-circuit-f" d="m48 44-10 0-6-8"/>
+    </g>
+    <g class="brain-neurons">
+      <circle class="brain-neuron n1" cx="18" cy="21" r="2.5"/>
+      <circle class="brain-neuron n2" cx="25.5" cy="27" r="2.3"/>
+      <circle class="brain-neuron n3" cx="18.5" cy="33.5" r="2.4"/>
+      <circle class="brain-neuron n4" cx="26" cy="44" r="2.4"/>
+      <circle class="brain-neuron n5" cx="46" cy="21" r="2.5"/>
+      <circle class="brain-neuron n6" cx="38.5" cy="27" r="2.3"/>
+      <circle class="brain-neuron n7" cx="45.5" cy="33.5" r="2.4"/>
+      <circle class="brain-neuron n8" cx="38" cy="44" r="2.4"/>
+      <circle class="brain-neuron n9" cx="32" cy="32" r="3"/>
+    </g>
+    </svg>
+    </a>
     <button class="settings-toggle" id="settings-toggle" type="button"
       aria-label="Настройки проекта" title="Настройки проекта"
       aria-expanded="false" aria-haspopup="dialog" aria-controls="settings-panel">
