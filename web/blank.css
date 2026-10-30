@@ -381,3 +381,115 @@ select:focus-visible, .palette-swatch:focus-visible {
   .appearance-option input:checked + .appearance-preview { border-color: Highlight; }
   .palette-swatch[aria-pressed="true"] { outline: 2px solid Highlight; }
 }
+
+/* 4K/HiDPI polish: CSS pixels are mapped by the browser to physical DPI.
+   Never zoom the fixed overlays or rasterize SVG/text. */
+:root {
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+:root[data-theme="light"] {
+  --text: #1d2636;
+  --secondary: #56657a;
+  --line: #dfe5ed;
+  --icon-hover: #edf0f8;
+  --shadow: 0 16px 45px rgba(24,36,62,.105), 0 2px 8px rgba(24,36,62,.055);
+  --focus-ring: #334fa5;
+  --status-error: #a32727;
+}
+:root[data-theme="dark"] {
+  --text: #f1f4fa;
+  --secondary: #b7c2d2;
+  --line: #3c4958;
+  --icon-hover: #2b3443;
+  --shadow: 0 16px 45px rgba(0,0,0,.39), 0 2px 10px rgba(0,0,0,.22);
+  --focus-ring: #c7d2ff;
+  --status-error: #ffaaa9;
+}
+body {
+  font-synthesis: none;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+  line-height: 1.55;
+  letter-spacing: .004em;
+}
+.settings-toggle svg, .settings-close svg, .appearance-preview svg {
+  display: block;
+  flex-shrink: 0;
+  shape-rendering: geometricPrecision;
+}
+.settings-toggle, .settings-close {
+  padding: 0;
+  border: 1px solid transparent;
+}
+.settings-toggle[aria-expanded="true"] {
+  background: var(--icon-hover);
+  border-color: var(--line);
+  color: var(--text);
+}
+.settings-panel {
+  width: min(calc(460px * var(--ui-scale)), calc(100vw - var(--rail-size) - 28px));
+  overflow-x: hidden;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.settings-header {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+}
+.settings-header h1 {
+  font-size: clamp(1.18em, 1.42em, 1.52em);
+  font-weight: 700;
+  letter-spacing: -.022em;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+.settings-eyebrow { font-weight: 750; letter-spacing: .14em; }
+.setting-group legend { font-weight: 690; letter-spacing: -.01em; }
+.appearance-option input:checked + .appearance-preview {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px var(--focus-ring);
+}
+.appearance-preview {
+  border-radius: clamp(10px, var(--ui-radius), 20px);
+}
+.appearance-label { font-weight: 570; }
+.palette-swatch { width: 34px; height: 34px; flex-basis: 34px; }
+.palette-swatch[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+.setting-row { min-height: 47px; }
+.setting-row select { min-height: 40px; border-radius: clamp(9px, var(--ui-radius), 18px); cursor: pointer; }
+.setting-row input[type="color"] { min-height: 40px; }
+.setting-row input[type="range"], .setting-check input { accent-color: var(--focus-ring); }
+.setting-check input { width: 18px; height: 18px; flex: none; }
+.settings-close { min-width: 44px; min-height: 44px; }
+.reset-button { min-height: 46px; font-weight: 660; }
+button:focus-visible, select:focus-visible,
+input[type="color"]:focus-visible, input[type="range"]:focus-visible,
+.palette-swatch:focus-visible, .appearance-option input:focus-visible + .appearance-preview {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+.theme-status[data-error="true"] { color: var(--status-error); }
+@media (min-width: 2560px) {
+  /* Keep reading controls compact: 4K must not stretch a dialog to 4K wide. */
+  .settings-panel { max-width: 610px; }
+}
+@media (max-width: 700px) {
+  .settings-panel { width: auto; }
+}
+@media (max-width: 360px) {
+  .settings-header h1 { font-size: 1.24em; }
+  .appearance-label { font-size: .78em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+@media (forced-colors: active) {
+  .palette-swatch[aria-pressed="true"], .settings-toggle[aria-expanded="true"] {
+    outline: 2px solid Highlight;
+  }
+}
