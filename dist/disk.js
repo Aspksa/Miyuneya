@@ -15,9 +15,10 @@ export function createDisk(host     ){
   function depth(id       ){return path(id).split(' / ').length-1;}
 
   const dialog=document.createElement('dialog');dialog.className='disk-dialog';dialog.setAttribute('aria-label','Документ');document.body.append(dialog);
-  let shown               =null,previewText='';let previewAbort                     =null;
+  let shown               =null; // Metadata dialog state is independent of the reading panel.
+  let previewFile               =null,previewText='';let previewAbort                     =null;
   const folderOptions=(selected            )=>`<option value="">Без папки</option>`+(state?.folders||[]).map(f=>`<option value="${f.id}" ${f.id===selected?'selected':''}>${esc(path(f.id))}</option>`).join('');
-  function close(){previewAbort?.abort();dialog.close();dialog.innerHTML='';shown=null;previewText='';}
+  function close(){dialog.close();dialog.innerHTML='';shown=null;}
   async function request(path       ,options            ={}){const response=await fetch('/api/disk'+path,options);const result=await response.json();if(!response.ok)throw new Error(result.error || 'Диск недоступен.');return result;}
   async function load(){if(loading)return loading;loading=(async()=>{try{state=await request('');if(!['all','starred','trash'].includes(view)&&!state .folders.some(f=>f.id===view))view='all';error='';}catch(e){error=(e         ).message;}finally{loading=null;host.render();}})();return loading;}
   async function change(path       ,input       ,method='PATCH'){
@@ -39,11 +40,11 @@ export function createDisk(host     ){
       catch(e){failures.push(`${file.name}: ${(e         ).message}`);}
     }}finally{busy=false;progress='';error=[...failures,...warnings].join('; ');await host.sync();host.toast(`Загружено: ${completed}${failures.length?`. Не удалось: ${failures.length}`:''}`);host.render();}
   }
-  function form(title       ,body       ,action       ){previewAbort?.abort();dialog.innerHTML=`<form data-disk-form="${action}"><div class="dialog-top"><span class="eyebrow">ДИСК MIYUNEYA</span><button type="button" class="icon-button" data-disk-close aria-label="Закрыть">×</button></div><h2>${esc(title)}</h2>${body}<p class="disk-dialog-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button quiet" data-disk-close>Отмена</button><button type="submit" class="button primary">Сохранить</button></div></form>`;if(!dialog.open)dialog.showModal();dialog.querySelector                  ('input')?.focus();}
-  async function showPreview(file          ){shown=file;previewText='';previewAbort?.abort();const controller=new AbortController();previewAbort=controller;
+  function form(title       ,body       ,action       ){dialog.innerHTML=`<form data-disk-form="${action}"><div class="dialog-top"><span class="eyebrow">ДИСК MIYUNEYA</span><button type="button" class="icon-button" data-disk-close aria-label="Закрыть">×</button></div><h2>${esc(title)}</h2>${body}<p class="disk-dialog-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button quiet" data-disk-close>Отмена</button><button type="submit" class="button primary">Сохранить</button></div></form>`;if(!dialog.open)dialog.showModal();dialog.querySelector                  ('input')?.focus();}
+  async function showPreview(file          ){previewFile=file;previewText='';previewAbort?.abort();const controller=new AbortController();previewAbort=controller;
     const tail=`<div class="dialog-actions"><a class="button" href="/api/disk/files/${file.id}/content" download>Скачать оригинал</a></div>`;
     const update=host.panel(file.id,file.name,'<p>Открываем документ…</p>'+tail);
-    try{const result=await request('/files/'+file.id+'/preview',{signal:controller.signal});if(controller.signal.aborted||shown?.id!==file.id)return;let body='';
+    try{const result=await request('/files/'+file.id+'/preview',{signal:controller.signal});if(controller.signal.aborted||previewFile?.id!==file.id)return;let body='';
       if(result.kind==='text'){previewText=result.text;body=`${result.truncated?'<p class="preview-warning">Показан начальный фрагмент. Полный текст доступен в оригинале.</p>':''}<pre tabindex="0">${esc(result.text || '(Документ пуст)')}</pre><div class="preview-tools"><button class="button" data-disk-preview-note>В заметку</button><button class="button" data-disk-preview-chat>Подготовить для чата</button></div><p class="disk-hint">Подстановка в чат без отправки.</p>`;}
       else if(result.kind==='pdf')body=`<iframe class="pdf-preview" src="/api/disk/files/${file.id}/inline" title="Предпросмотр PDF ${esc(file.name)}"></iframe>`;
       else if(result.kind==='image')body=`<img class="document-image" src="/api/disk/files/${file.id}/inline" alt="${esc(file.name)}">`;
@@ -73,12 +74,10 @@ export function createDisk(host     ){
     if(target.hasAttribute('data-disk-close'))return close();
     if(target.hasAttribute('data-disk-trash')&&shown){if(await change('/files/'+shown.id,{trashed:true})){close();host.toast('Документ перемещён в корзину');}}
     if(target.hasAttribute('data-disk-delete-folder')){if(await change('/folders/'+view,{},'DELETE')){view='all';close();host.render();}}
-    if(target.hasAttribute('data-disk-preview-note')&&shown){target.setAttribute('disabled','');const id=await host.addNote(shown.name.replace(/\.[^.]+$/,''),previewText);if(id)host.toast('Текст документа сохранён в заметки');else host.toast('Заметка пока не сохранена. Проверьте сообщение об ошибке.');target.removeAttribute('disabled');}
-    if(target.hasAttribute('data-disk-preview-chat')&&shown){host.draft(`Документ «${shown.name}»:\n\n${previewText.slice(0,20000)}${previewText.length>20000?'\n\n[Фрагмент документа]':''}`);close();}
   });
-  document.addEventListener('click',async e=>{const target=(e.target               ).closest             ('button');if(!target||dialog.contains(target)||!shown)return;
-    if(target.hasAttribute('data-disk-preview-note')){target.setAttribute('disabled','');const id=await host.addNote(shown.name.replace(/\.[^.]+$/,''),previewText);host.toast(id?'Текст сохранён в заметку':'Не удалось сохранить заметку');target.removeAttribute('disabled');}
-    if(target.hasAttribute('data-disk-preview-chat'))host.draft(`Документ «${shown.name}»:\n\n${previewText.slice(0,20000)}`);
+  document.addEventListener('click',async e=>{const target=(e.target               ).closest             ('button');if(!target||dialog.contains(target)||!previewFile)return;
+    if(target.hasAttribute('data-disk-preview-note')){target.setAttribute('disabled','');const id=await host.addNote(previewFile.name.replace(/\.[^.]+$/,''),previewText);host.toast(id?'Текст сохранён в заметку':'Не удалось сохранить заметку');target.removeAttribute('disabled');}
+    if(target.hasAttribute('data-disk-preview-chat'))host.draft(`Документ «${previewFile.name}»:\n\n${previewText.slice(0,20000)}`);
   });
   dialog.addEventListener('submit',async e=>{e.preventDefault();const formEl=e.target                   ;const formData=new FormData(formEl),action=formEl.dataset.diskForm;let ok=false;
     if(action==='folder')ok=await change('/folders',{name:formData.get('name'),parent:formData.get('parent')||null},'POST');
@@ -86,6 +85,6 @@ export function createDisk(host     ){
     if(action==='file'&&shown)ok=await change('/files/'+shown.id,{name:formData.get('name'),folder:formData.get('folder') || null});
     if(ok)close();else{const area=dialog.querySelector('.disk-dialog-error');if(area)area.textContent=error;}
   });
-  dialog.addEventListener('cancel',()=>{previewAbort?.abort();shown=null;});
+  dialog.addEventListener('cancel',()=>{shown=null;dialog.innerHTML='';});
   return {html,load,click,upload,viewPrefs:()=>({diskView:view,diskSort:sort}),setView(next       ,order        ){view=['all','starred','trash'].includes(next)||!state||state.folders.some(f=>f.id===next)?next:'all';if(order&&['new','name','size'].includes(order))sort=order;picked.clear();limit=50;remember();},files:()=>state?.files||[],folders:()=>state?.folders||[],async preview(id       ){if(!state)await load();const f=state?.files.find(f=>f.id===id&&!f.trashedAt);if(f)await showPreview(f);else host.toast('Документ недоступен: проверьте корзину диска.');},pick(id       ,value        ){if(value&&picked.size>=500)return host.toast('Можно выбрать до 500 документов.');if(value)picked.add(id);else picked.delete(id);host.render();},searchHtml(q       ){const files=state?.files.filter(f=>!f.trashedAt&&f.name.toLocaleLowerCase('ru').includes(q.trim().toLocaleLowerCase('ru')))||[];return files.slice(0,50).map(f=>`<button class="search-document" data-disk="preview" data-id="${f.id}"><b>${esc(f.name)}</b><small>${esc(f.folder?path(f.folder):'Корень диска')} · ${bytes(f.size)}</small></button>`).join('')||(state?'<p class="page-description">Документов с таким названием нет.</p>':'<p>Загружаем список документов…</p>');},busy:()=>busy,sort(value       ){sort=['new','name','size'].includes(value)?value:'new';remember();host.render();},loaded:()=>!!state};
 }

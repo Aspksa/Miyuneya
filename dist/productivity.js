@@ -6,6 +6,24 @@ export const repeatDate=(value       ,unit                     ,interval       ,
   const [y,m,d]=value.split('-').map(Number);const next=unit==='month'?new Date(y,m-1+interval,Math.min(anchor || d,new Date(y,m+interval,0).getDate()),12):new Date(y,m-1,d+interval*(unit==='week'?7:1),12);
   return localDateKey(next);
 };
+export function editedRepeat(task               ,dueDate       ,unit                        ,interval       )                {
+  if(!unit)return undefined;
+  const unchanged=(task?.dueDate||'')===dueDate&&task?.repeat?.unit===unit&&task.repeat.interval===interval;
+  return {unit,interval,anchorDay:unchanged?task?.repeat?.anchorDay:(dueDate?Number(dueDate.slice(-2)):undefined)};
+}
+// Merge server normalization while retaining only fields actually edited during the request.
+export function mergeCanonicalTasks(sent       ,local       ,canonical       )        {
+  const result=structuredClone(local),before=new Map(sent.map(t=>[t.id,t])),current=new Map(result.map(t=>[t.id,t]));
+  for(const server of canonical){const base=before.get(server.id),task=current.get(server.id);
+    if(!base){if(!task)result.push(structuredClone(server));continue;}
+    if(!task)continue; // A local deletion must stay deleted.
+    for(const key of new Set([...Object.keys(base),...Object.keys(server)]                  )){
+      if(JSON.stringify(task[key])!==JSON.stringify(base[key]))continue;
+      if(Object.hasOwn(server,key))Object.assign(task,{[key]:structuredClone(server[key])});else delete task[key];
+    }
+  }
+  return result;
+}
 export function taskBlockers(tasks       ,task     ){return tasks.filter(t=>(task.dependsOn || []).includes(t.id)&&!t.done || t.parentId===task.id&&!t.done);}
 export function validTaskGraph(tasks       ) {
   const map=new Map(tasks.map(t=>[t.id,t]));const visiting=new Set        (),done=new Set        ();
