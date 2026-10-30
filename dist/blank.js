@@ -52,7 +52,7 @@
       const value = settings[field];
       if (control.type === 'radio') control.checked = control.value === value;
       else if (control.type === 'checkbox') control.checked = value;
-      else if (field === 'background') control.value = value === 'default' ? '#f8f9fc' : value;
+      else if (field === 'background') control.value = value === 'default' ? (page.dataset.theme === 'dark' ? '#12151b' : '#f8f9fc') : value;
       else control.value = String(value);
       if (field === 'background') control.disabled = value === 'default';
     }
@@ -174,8 +174,9 @@
     persist();
   });
   defaultBackground.addEventListener('change', () => {
-    settings.background = defaultBackground.checked ? 'default' :
-      controls.find(c => c.dataset.setting === 'background').value;
+    // The first custom background should match the currently visible theme.
+    const selected = controls.find(c => c.dataset.setting === 'background');
+    settings.background = defaultBackground.checked ? 'default' : selected.value;
     persist();
   });
   resetButton.addEventListener('click', () => {
