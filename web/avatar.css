@@ -363,3 +363,8 @@
  .kitsune-stream-indicator::before {animation:none!important;}
 }
 :root[data-motion="off"] .kitsune-stream-indicator::before {animation:none!important;}
+
+.kitsune-library-entry {min-width:0;display:grid;gap:5px;}
+.kitsune-library-delete {min-height:32px;border:1px solid var(--line,#ddd);border-radius:8px;background:var(--panel,#fff);color:var(--status-error,#a32637);font:inherit;font-size:.78em;}
+.kitsune-tab:focus-visible,.kitsune-library-card:focus-visible,.kitsune-library-delete:focus-visible {outline:3px solid var(--focus-ring,#445cb6);outline-offset:2px;}
+.kitsune-preview-dialog:focus-visible {outline:3px solid var(--focus-ring,#445cb6);}
