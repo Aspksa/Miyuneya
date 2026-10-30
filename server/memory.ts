@@ -203,12 +203,14 @@ export function upsert(memory: Memory, kind: MemoryKind, text: string, options: 
   const scope=options.scope?scopeKey(options.scope):scopeOf(value,memory);if(forgotten(memory,value,scope))return null;
   const temporal=cognitiveMeta(options);delete temporal.skill;delete temporal.dependsOn;delete temporal.stale;
   const inScope=(i:MemoryItem)=>i.scope===scope;
-  const same = memory.items.find(i => i.id === options.same && inScope(i) && i.kind === kind && i.status!=='superseded' && compatible(i.text,value) && similarity(i.text,value)===1)
-    || memory.items.filter(i => inScope(i) && i.kind === kind && i.status !== 'superseded' && compatible(i.text,value)).map(i => [i, similarity(i.text, value)] as const).filter(([, s]) => s === 1).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const samePeriod=(i:MemoryItem)=>(temporal.validFrom||temporal.validTo)?i.validFrom===temporal.validFrom&&i.validTo===temporal.validTo:(!i.validTo||today(Date.parse(now))<i.validTo)&&(!i.until||today(Date.parse(now))<=i.until);
+  const same = memory.items.find(i => i.id === options.same && inScope(i) && samePeriod(i) && i.kind === kind && i.status!=='superseded' && compatible(i.text,value) && similarity(i.text,value)===1)
+    || memory.items.filter(i => inScope(i) && samePeriod(i) && i.kind === kind && i.status !== 'superseded' && compatible(i.text,value)).map(i => [i, similarity(i.text, value)] as const).filter(([, s]) => s === 1).sort((a, b) => b[1] - a[1])[0]?.[0];
   if (same) {
     if ((!options.origin || same.origin !== options.origin)&&(!['thought','review','logic','sleep'].includes(options.source||'dialog')||options.evidence.some(e=>!(same.evidence||[]).some(old=>old.source===e.source&&old.version===e.version&&old.quote===e.quote)))) reinforce(same, now);
     same.evidence = [...(same.evidence || []), ...(options.evidence || [])].filter((e,i,all)=>all.findIndex(x=>x.source===e.source&&x.version===e.version&&x.quote===e.quote)===i).slice(-8);
     if (options.source==='user'||options.evidence.length&&same.status!=='contested') same.status='active';
+    if (options.source==='user')same.source='user';
     if (options.pinned) same.pinned = true;
     if(options.source==='user'||options.evidence.length){delete same.stale;if(options.dependsOn!==undefined)same.dependsOn=options.dependsOn;}
     if (options.links) same.links = [...new Set([...same.links, ...options.links])].slice(0, 20);
@@ -225,7 +227,8 @@ export function upsert(memory: Memory, kind: MemoryKind, text: string, options: 
   }
   const item: MemoryItem = { ...temporal,scope,dependsOn:(options.dependsOn||[]).filter(d=>{const parent=memory.items.find(i=>i.id===d.id);return parent&&!parent.stale&&(!parent.scope||parent.scope===scope);}),id: newId(), kind, text: value, weight: options.pinned ? 1 : options.weight ?? 0.5, hits: 1, created: now, seen: now, pinned: !!options.pinned,
     status: options.source==='user' ? 'active' : options.evidence?.length ? 'active' : 'inferred', evidence: options.evidence || [], source: options.source || 'dialog', links: (options.links || []).slice(0, 20), category: kind === 'rule' ? 'other' : category(options.category), until, origin: options.origin ?? null };
-  const conflict = memory.items.find(i=>inScope(i) && i.kind===kind && i.status!=='superseded' && !compatible(i.text,value) && similarity(i.text,value)>=0.6);
+  const changeDay=temporal.validFrom||today(Date.parse(now));
+  const conflict = memory.items.find(i=>inScope(i)&&(!i.validFrom||i.validFrom<=changeDay)&&(!i.validTo||changeDay<i.validTo)&&(!i.until||changeDay<=i.until) && i.kind===kind && i.status!=='superseded' && !compatible(i.text,value) && similarity(i.text,value)>=0.6);
   if (conflict) {
     if (options.source==='user') { conflict.status='superseded';conflict.validTo=temporal.validFrom||today(Date.parse(now));if(!conflict.validFrom)conflict.validFrom=today(Date.parse(conflict.created));invalidate(memory,[conflict.id]); revision(memory,conflict,value,'явное изменение пользователем',options.evidence || [],now); }
     else { if(conflict.source!=='user'&&!conflict.pinned)conflict.status='contested'; item.status='contested'; ask(memory,'conflict','Какая из этих записей верна сейчас?',{scope,facts:[conflict.id,item.id]},now); }
@@ -642,6 +645,8 @@ causes — причинно-следственные связи из жизни 
 export const COMPACT_PROMPT = 'Ты сжимаешь начало разговора пользователя с помощницей Миюнэей, чтобы она не теряла нить. Напиши краткое резюме по-русски до 1200 знаков: о чём говорили, что решили, какие просьбы и договорённости остались в силе, открытые вопросы. Только резюме, без вступлений.';
 
 const itemLine = (i: MemoryItem) => `[${i.id}] ${i.text}${i.kind === 'fact' && i.category !== 'other' ? ` {${i.category}}` : ''}${i.until ? ` (до ${i.until})` : ''}${i.pinned ? ' (закреплено)' : ''}`;
+const thoughtEpisodeLine=(e:Episode)=>`[${e.id}] ${day(e.date)}: ${e.topic}${e.outcome?' — '+e.outcome:''}${e.score?` (самооценка ${e.score}/5${e.weak?', слабое место: '+e.weak:''})`:''}`;
+const thoughtTaskLine=(t:Workspace['tasks'][number])=>`[${t.id}] ${t.title} (${t.done?'выполнена':'в работе'}${t.dueDate?', срок '+t.dueDate:''})${t.details?' — '+t.details.slice(0,400):''}`;
 const entityLine = (e: Entity) => `[${e.id}] ${e.name} — ${entityNames[e.type]}${e.about ? ': ' + e.about : ''}`;
 export function transcript(messages: ChatMessage[], budget = 14_000) {
   const lines: string[] = [];
@@ -845,9 +850,9 @@ export function applySleep(memory: Memory, result: any, now = Date.now(), known:
 // What the assistant rereads when she thinks on her own: the upper levels of memory, recent talks and her own past thoughts.
 export function thinkInput(memory: Memory, workspace: Workspace | null = null, now = Date.now()) {
   const facts = memory.items.filter(i => i.kind === 'fact' && strength(i, now) >= FORGET_BELOW).sort((a, b) => strength(b, now) - strength(a, now)).slice(0, 50);
-  const episode = (e: Episode) => `[${e.id}] ${day(e.date)}: ${e.topic}${e.outcome ? ' — ' + e.outcome : ''}${e.score ? ` (самооценка ${e.score}/5${e.weak ? ', слабое место: ' + e.weak : ''})` : ''}`;
+  const episode = thoughtEpisodeLine;
   const notes = workspace ? [...workspace.notes].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 15).map(n => `[${n.id}] ${n.title}`) : [];
-  const tasks = workspace ? workspace.tasks.filter(t => !t.done).slice(-20).map(t => `[${t.id}] ${t.title}`) : [];
+  const tasks = workspace ? workspace.tasks.slice(-20).map(thoughtTaskLine) : [];
   return [`Сейчас ${new Date(now).toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}.`,
     `Общее понимание пользователя:\n${memory.understanding?.text || '— ещё нет'}`,
     `Темы:\n${memory.topics.map(t => `[${t.id}] ${t.title}: ${t.summary || '—'}`).join('\n') || '— нет'}`,
@@ -855,7 +860,7 @@ export function thinkInput(memory: Memory, workspace: Workspace | null = null, n
     `Последние разговоры:\n${memory.episodes.slice(-12).map(episode).join('\n') || '— нет'}`,
     `Открытые вопросы к пользователю:\n${memory.questions.map(q => q.text).join('\n') || '— нет'}`,
     `Твои открытые обещания:\n${openPromises(memory).map(p => p.text).join('\n') || '— нет'}`,
-    `Заметки:\n${notes.join('\n') || '— нет доступа или пусто'}`, `Открытые задачи:\n${tasks.join('\n') || '— нет'}`,
+    `Заметки:\n${notes.join('\n') || '— нет доступа или пусто'}`, `Задачи и их состояние:\n${tasks.join('\n') || '— нет'}`,
     `Твои прогнозы на проверку:\n${toCheck(memory, now).map(p => `[${p.id}] ${p.text} (${p.kind}, ${p.confidence}%, сделан ${day(p.created)}${p.due ? (p.due <= today(now) ? ', срок прошёл — проверь' : ', проверить ' + day(p.due)) : ''})`).join('\n') || '— нет'}`,
     `Точность твоих рассуждений по типам: ${accuracyLine(memory)}.`,
     `Журнал логических ошибок (последние):\n${memory.mistakes.slice(-8).map(m => `- ${m.text}${m.fix ? ' → ' + m.fix : ''}`).join('\n') || '— нет'}`,
@@ -1071,13 +1076,20 @@ export async function openMemory(dataDir: string, options: Options) {
     const workspace=structuredClone(options.workspace()),inputVersion=novelty(memory,workspace),seenRows=thoughtRows(memory,workspace);
     if(!force&&memory.cognition?.lastThoughtInput===inputVersion)return [];
     const previous=memory.cognition?.thoughtSeen||{},changed=(id:string)=>previous[id]!==seenRows[id];
-    const pendingItem=memory.items.find(i=>changed(i.id)&&seenRows[i.id]),pendingEpisode=memory.episodes.find(e=>changed(e.id)),pendingNote=workspace?.notes.find(n=>changed('note-'+n.id));
-    const scope=pendingItem?pendingItem.scope:pendingEpisode?pendingEpisode.scope:pendingNote?scopeOf(pendingNote.title+' '+pendingNote.body,memory):undefined;
+    const pendingItem=memory.items.find(i=>changed(i.id)&&seenRows[i.id]),pendingEpisode=memory.episodes.find(e=>changed(e.id)),pendingNote=workspace?.notes.find(n=>changed('note-'+n.id)),pendingTask=workspace?.tasks.find(t=>changed('task-'+t.id));
+    const scope=pendingItem?pendingItem.scope:pendingEpisode?pendingEpisode.scope:pendingNote?scopeOf(pendingNote.title+' '+pendingNote.body,memory):pendingTask?scopeOf(pendingTask.title+' '+(pendingTask.details||'')+' '+(pendingTask.group||''),memory):undefined;
     const delta=structuredClone(projectMemory(memory,scope?'проект «'+scope+'»':'',today(now))),selectedWorkspace=projectWorkspace(memory,workspace,scope);
     if(!force){delta.items=delta.items.filter(i=>changed(i.id));delta.episodes=delta.episodes.filter(e=>changed(e.id));if(selectedWorkspace){selectedWorkspace.notes=selectedWorkspace.notes.filter(n=>changed('note-'+n.id));selectedWorkspace.tasks=selectedWorkspace.tasks.filter(t=>changed('task-'+t.id));}}
-    const acknowledged=thoughtRows(delta,selectedWorkspace);
+    // Acknowledge only rows actually included in the bounded prompt, never an unseen tail.
+    delta.items=[...delta.items.filter(i=>i.kind==='fact'&&strength(i,now)>=FORGET_BELOW).sort((a,b)=>strength(b,now)-strength(a,now)).slice(0,50),...delta.items.filter(i=>i.kind==='rule').slice(0,30)];
+    delta.episodes=delta.episodes.slice(-12);
+    if(selectedWorkspace){selectedWorkspace.notes=selectedWorkspace.notes.slice().sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)).slice(0,15);selectedWorkspace.tasks=selectedWorkspace.tasks.slice(-20);}
+    const inputText=thinkInput(delta,selectedWorkspace,now),sent=structuredClone(delta),sentWorkspace=selectedWorkspace?structuredClone(selectedWorkspace):null;
+    sent.items=sent.items.filter(i=>inputText.includes(itemLine(i)));sent.episodes=sent.episodes.filter(e=>inputText.includes(thoughtEpisodeLine(e)));
+    if(sentWorkspace){sentWorkspace.notes=sentWorkspace.notes.filter(n=>inputText.includes('['+n.id+'] '+n.title));sentWorkspace.tasks=sentWorkspace.tasks.filter(t=>inputText.includes(thoughtTaskLine(t)));}
+    const acknowledged=thoughtRows(sent,sentWorkspace);
     let result;
-    try { result = memoryResult(parseJson(await options.ask(THINK_PROMPT+'\n'+COGNITION_PROMPT, thinkInput(delta, selectedWorkspace, now), 120_000, true)),'think'); accept(generation); }
+    try { result = memoryResult(parseJson(await options.ask(THINK_PROMPT+'\n'+COGNITION_PROMPT, inputText, 120_000, true)),'think'); accept(generation); }
     catch (e) { retryThinkAt = Date.now() + 3_600_000; memory.thinks = [...memory.thinks, new Date(now).toISOString()].slice(-20); await save(); throw e; }
     const beforeIds=recordIds(memory),added = applyThinking(memory, result, now, new Set(titles().keys()),[],scope);tagNew(memory,beforeIds,scope);
     const thoughtSeen={...previous,...acknowledged};memory.cognition={lastThoughtInput:Object.entries(seenRows).every(([id,v])=>thoughtSeen[id]===v)?inputVersion:undefined,thoughtSeen};await save();
@@ -1129,8 +1141,9 @@ export async function openMemory(dataDir: string, options: Options) {
     get generation(){return epoch;},
     get recording() { return memory.settings.enabled && !memory.settings.private; },
     // Recall for the next answer: the question is embedded once; records without a vector yet fall back to words.
-    async context(query: string, latest = query) {
-      if(refreshSources(memory,options.workspace()?.notes))await save();const scoped=projectMemory(memory,query,historicalDate(latest,today()),latest);
+    async context(query: string, latest = query,scope?:string) {
+      const scopedLatest=scope?'Проект «'+scope+'»: '+latest:latest;
+      if(refreshSources(memory,options.workspace()?.notes))await save();const scoped=projectMemory(memory,query,historicalDate(latest,today()),scopedLatest);
       let vector: number[] | undefined;
       if (embedReady() && vectors.size) { try { vector = (await options.embed!([query.slice(0, 4000)], 8000))[0]; } catch (e) { embedFailed(e); } }
       void index();
@@ -1140,8 +1153,8 @@ export async function openMemory(dataDir: string, options: Options) {
         ? scoped.questions.filter(q => q.asked < 3).sort((a, b) => a.asked - b.asked || a.created.localeCompare(b.created))[0] : undefined;
       const thoughts = scoped.thoughts.filter(t => !t.seen).slice(-3).map(t => t.text);
       if(!options.workspace())scoped.items=scoped.items.filter(i=>i.source==='user'||!i.evidence?.length||i.evidence.some(e=>e.role!=='note'));
-      const allowedWorkspace=projectWorkspace(memory,options.workspace(),requestScope(memory,query,latest)),allowedTitles=new Set([...(allowedWorkspace?.notes||[]),...(allowedWorkspace?.tasks||[])].map(r=>r.id));
-      const context = memoryContext(scoped, query, new Map([...titles()].filter(([id])=>allowedTitles.has(id))), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text, latest, thoughts });
+      const allowedWorkspace=projectWorkspace(memory,options.workspace(),requestScope(memory,query,scopedLatest)),allowedTitles=new Set([...(allowedWorkspace?.notes||[]),...(allowedWorkspace?.tasks||[])].map(r=>r.id));
+      const context = memoryContext(scoped, query, new Map([...titles()].filter(([id])=>allowedTitles.has(id))), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text, latest:scopedLatest, thoughts });
       if (question && context.includes(question.text)) { question.asked++; question.lastAsked = new Date(now).toISOString(); await save(); }
       return context;
     },

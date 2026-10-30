@@ -108,9 +108,9 @@ test('Oversized provider responses cancel their stream instead of accumulating u
 });
 
 async function fakeApp(t,handler,seed={}){const root=await fixture(t);await mkdir(join(root,'data'),{recursive:true});await writeFile(join(root,'data','assistant.json'),JSON.stringify({apiKey:'fake-key-for-test',model:'test/model',embedModel:''}));for(const [name,value] of Object.entries(seed))await writeFile(join(root,'data',name+'.json'),JSON.stringify(value));
-  const calls=[];const fake=createServer(async(req,res)=>{let body='';for await(const c of req)body+=c;const input=JSON.parse(body);calls.push(input);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:handler(input)}}]}));});fake.listen(0,'127.0.0.1');await once(fake,'listening');own(root,()=>new Promise((resolve,reject)=>fake.close(e=>e?reject(e):resolve())));
+  const calls=[];const fake=createServer(async(req,res)=>{let body='';for await(const c of req)body+=c;const input=JSON.parse(body);calls.push(input);res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:await handler(input)}}]}));});fake.listen(0,'127.0.0.1');await once(fake,'listening');own(root,()=>new Promise((resolve,reject)=>fake.close(e=>e?reject(e):resolve())));
   const server=await createApp(root,'cognition',false,{cloudUrl:`http://127.0.0.1:${fake.address().port}/v1`});server.listen(0,'127.0.0.1');await once(server,'listening');own(root,()=>server.shutdown());
-  return{calls,async diagnostics(){return (await fetch(`http://127.0.0.1:${server.address().port}/api/memory/diagnostics`)).json();},async chat(messages,summary=''){const r=await fetch(`http://127.0.0.1:${server.address().port}/api/assistant/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages,summary})});return (await r.text()).trim().split('\n').map(s=>JSON.parse(s));}};
+  return{calls,async memory(){return (await fetch(`http://127.0.0.1:${server.address().port}/api/memory`)).json();},async diagnostics(){return (await fetch(`http://127.0.0.1:${server.address().port}/api/memory/diagnostics`)).json();},async chat(messages,summary=''){const r=await fetch(`http://127.0.0.1:${server.address().port}/api/assistant/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages,summary})});return (await r.text()).trim().split('\n').map(s=>JSON.parse(s));}};
 }
 
 test('HTTP buffers a draft until all request conditions pass; failed checks never expose the draft or action tags',async t=>{
@@ -179,4 +179,50 @@ test('Identical goals, reminders, promises, predictions and corrections retain s
   const m=emptyMemory();for(const scope of ['Альфа','Бета']){assert.ok(addGoal(m,'Запустить продукт',[{text:'Подготовить'}],at,true,scope));assert.ok(remind(m,'запуск','Проверить отчёт','',at,scope));assert.ok(promise(m,'Проверить результат',null,null,at,scope));assert.ok(predict(m,{text:'Работа завершится',kind:'plan'},at,scope));assert.ok(mistake(m,{text:'Пропущен шаг',fix:'Проверять этапы'},null,at,scope));assert.ok(addCause(m,'Проверка','Меньше ошибок',60,['source'],at,scope));}
   for(const key of ['goals','reminders','promises','predictions','mistakes','causes']){assert.equal(m[key].length,2,key);assert.deepEqual(m[key].map(r=>r.scope),['альфа','бета']);}
   assert.equal(m.items.filter(i=>i.kind==='rule').length,2);
+});
+
+
+test('HTTP retains project context beyond three follow-ups and scoped forgetting cannot delete another project',async t=>{
+  const m=emptyMemory();upsertEntity(m,'Альфа','project','',at);upsertEntity(m,'Бета','project','',at);
+  const alpha=upsert(m,'fact','Бюджет составляет 5000',{scope:'Альфа',source:'user',pinned:true}).item,beta=upsert(m,'fact','Бюджет составляет 5000',{scope:'Бета',source:'user',pinned:true}).item;
+  const app=await fakeApp(t,()=> 'Готово.',{memory:m});const messages=[{role:'user',content:'Проект «Альфа»'}];for(let i=0;i<4;i++)messages.push({role:'assistant',content:'Уточняю'},{role:'user',content:'Уточнение номер '+i});messages.push({role:'assistant',content:'Продолжаем'},{role:'user',content:'Забудь бюджет'});
+  await app.chat(messages);const saved=await app.memory();assert.ok(!saved.items.some(i=>i.id===alpha.id));assert.ok(saved.items.some(i=>i.id===beta.id));
+  assert.equal(requestScope(m,'Проект «Альфа»\nОбщий контекст\nУточнение\nПродолжай','Продолжай'),undefined,'a global reset persists beyond the next follow-up');
+});
+
+test('Identical facts in distinct validity periods survive both current and historical recall',()=>{
+  const m=emptyMemory();const first=upsert(m,'fact','Любит кофе',{source:'user',pinned:true,now:'2025-01-01T00:00:00Z',validFrom:'2025-01-01',validTo:'2025-06-01'}).item;
+  const second=upsert(m,'fact','Любит кофе',{source:'user',pinned:true,now:at,validFrom:'2026-01-01'}).item;assert.notEqual(first.id,second.id);assert.equal(m.items.length,2);assert.equal(first.validTo,'2025-06-01');
+  assert.match(memoryContext(m,'Кофе',new Map(),Date.parse(at)),/Любит кофе/);assert.equal(projectMemory(m,'Кофе по состоянию на 2025-03-01','2025-03-01').items[0].id,first.id);
+  assert.equal(upsert(m,'fact','Любит кофе',{source:'user',pinned:true,now:at,validFrom:'2026-01-01'}).item.id,second.id,'same interval still deduplicates');
+});
+
+test('Explicitly remembering an existing automatic rule changes its provenance and makes the confirmed rule usable',async t=>{
+  const {m}=await memoryStore(t);const candidate=upsert(m.data,'rule','Называй меня Алекс',{source:'thought'}).item;assert.equal(candidate.skill.status,'candidate');const confirmed=await m.remember('Называй меня Алекс');assert.equal(confirmed.id,candidate.id);assert.equal(confirmed.source,'user');assert.equal(confirmed.pinned,true);assert.equal(confirmed.skill.status,'passed');assert.match(await m.context('как обращаться'),/Называй меня Алекс/);
+});
+
+test('A task-only project change selects its project and is acknowledged exactly once',async t=>{
+  const workspace=emptyWorkspace(),inputs=[];const {m}=await memoryStore(t,{workspace:()=>workspace,thinkIdleMs:0,ask:async(system,input)=>{inputs.push(input);return '{"thoughts":[]}';}});for(const text of ['Любит чай','Пишет программы','Читает книги'])upsert(m.data,'fact',text,{source:'user',pinned:true});await m.tick(Date.now()+3*3600000);
+  workspace.tasks.push({id:'project-task',title:'Проект «Альфа»: запустить продукт',details:'Проверить рабочую сборку',done:false,createdAt:at});await m.tick(Date.now()+4*3600000);assert.match(inputs[1],/запустить продукт/);assert.match(inputs[1],/Проверить рабочую сборку/);assert.ok(m.data.cognition.thoughtSeen['task-project-task']);assert.ok(m.data.cognition.lastThoughtInput);await m.tick(Date.now()+5*3600000);assert.equal(inputs.length,2);
+});
+
+test('Historical recall excludes later episodes, thoughts, summaries and completed goal state',()=>{
+  const m=emptyMemory();upsert(m,'fact','Любит кофе',{source:'user',pinned:true,now:'2025-01-01T00:00:00Z',validFrom:'2025-01-01',validTo:'2026-10-01'});
+  m.episodes=[{id:'later',date:at,topic:'Теперь не любит кофе',outcome:'БУДУЩИЙ ИТОГ',links:[],consolidated:true,score:null,weak:''}];m.thoughts=[{id:'future-thought',at,text:'БУДУЩАЯ МЫСЛЬ',kind:'idea',links:[],seen:false}];m.understanding={text:'БУДУЩЕЕ РЕЗЮМЕ',updated:at};m.goals=[{id:'future-goal',title:'БУДУЩЕЕ ЗАВЕРШЕНИЕ',created:'2025-01-01T00:00:00Z',done:at,steps:[]}];
+  const context=memoryContext(m,'Кофе по состоянию на 2025-06-01',new Map(),Date.parse(at));assert.match(context,/Любит кофе/);assert.doesNotMatch(context,/Теперь не любит|БУДУЩ/);
+});
+
+test('Three simultaneous constrained drafts release their slots before all three verifications',async t=>{
+  let drafts=0,release;const ready=new Promise(r=>release=r);const question='Ответь без таблицы';const app=await fakeApp(t,async input=>{const system=input.messages[0].content;if(system.includes('requirements:'))return JSON.stringify({requirements:[{quote:question,status:'met',answerQuote:'Краткий ответ'}]});if(++drafts===3)release();await ready;return 'Краткий ответ';});
+  const results=await Promise.all(Array.from({length:3},()=>app.chat([{role:'user',content:question}])));assert.ok(results.every(rows=>rows.at(-1).verification==='supported'));assert.equal(app.calls.filter(c=>c.messages[0].content.includes('requirements:')).length,3);assert.equal((await app.diagnostics()).resources.active,0);
+});
+
+test('A large changed-fact batch never acknowledges records omitted from the first prompt',async t=>{
+  const inputs=[];const {m}=await memoryStore(t,{thinkIdleMs:0,ask:async(system,input)=>{inputs.push(input);return '{"thoughts":[]}';}});for(let i=0;i<55;i++)upsert(m.data,'fact','Наблюдение '+String.fromCharCode(97+Math.floor(i/26))+String.fromCharCode(97+i%26)+'zzmarker',{source:'user',pinned:true});assert.equal(m.data.items.length,55);await m.tick(Date.now()+3*3600000);assert.equal(Object.keys(m.data.cognition.thoughtSeen).length,50);assert.equal(m.data.cognition.lastThoughtInput,undefined);await m.tick(Date.now()+4*3600000);assert.equal(Object.keys(m.data.cognition.thoughtSeen).length,55);assert.match(inputs[1],/cczzmarker/);assert.ok(m.data.cognition.lastThoughtInput);
+});
+
+
+test('Prompt character truncation leaves omitted rows pending instead of acknowledging their versions',async t=>{
+  const {m}=await memoryStore(t,{thinkIdleMs:0,ask:async()=>'{"thoughts":[]}'});for(let i=0;i<80;i++){const prefix=String.fromCharCode(97+Math.floor(i/26))+String.fromCharCode(97+i%26)+'zzmarker';upsert(m.data,i<50?'fact':'rule',prefix+' '+('описание '.repeat(60)),{source:'user',pinned:true});}
+  assert.equal(m.data.items.length,80);await m.tick(Date.now()+3*3600000);assert.ok(Object.keys(m.data.cognition.thoughtSeen).length<80);assert.equal(m.data.cognition.lastThoughtInput,undefined);await m.tick(Date.now()+4*3600000);assert.equal(Object.keys(m.data.cognition.thoughtSeen).length,80);assert.ok(m.data.cognition.lastThoughtInput);
 });

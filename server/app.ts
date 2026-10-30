@@ -292,7 +292,7 @@ export async function createApp(root: string, instance: string, preview = false,
           const recordingGeneration=memory.generation;
           memory.touch();
           const last = messages.at(-1).content;
-          const activeScope=requestScope(memory.data,messages.filter(m=>m.role==='user').slice(-3).map(m=>m.content).join('\n'),last);
+          const activeScope=requestScope(memory.data,messages.filter(m=>m.role==='user').map(m=>m.content).join('\n'),last);
           messages=scopedMessages(memory.data,messages,activeScope);
           const visibleWorkspace=projectWorkspace(memory.data,state.data,activeScope);
           // «Запомни …» and «забудь …» change the memory before the answer, so the model can confirm it.
@@ -323,7 +323,7 @@ export async function createApp(root: string, instance: string, preview = false,
               events.push(`Цель разложена на шаги: ${goal.title}`);
             } catch { notes.push('Сохранить цель с подзадачами не получилось. Разложи её сама в ответе: дерево подзадач с зависимостями.'); }
           }
-          const recall = await memory.context(messages.filter((m: ChatMessage) => m.role === 'user').slice(-3).map((m: ChatMessage) => m.content).join('\n'), last);
+          const recall = await memory.context(messages.filter((m: ChatMessage) => m.role === 'user').slice(-3).map((m: ChatMessage) => m.content).join('\n'), last,activeScope);
           // Strong logic: a complex question gets a hidden reasoning plan and the stronger model; numbers are counted by code.
           const hard = complexity(last).complex || !!goalTitle;
           const calcs = exactCalcs(last);
@@ -388,6 +388,7 @@ export async function createApp(root: string, instance: string, preview = false,
               }
             }
             if (!received) throw fail('Модель вернула пустой ответ. Попробуйте переформулировать или выбрать другую модель.', 502);
+            call.release(); // The consumed draft must not hold a slot needed by verification.
             if(verifying) {
               try { const checks=parseJson(await ask((grounding?VERIFY_PROMPT:'Проверь только выполнение условий запроса; не добавляй новых фактов.')+'\nВерни также requirements:[{quote:"точное условие",status:"met|unmet|unknown",answerQuote:"точный фрагмент ответа, показывающий соблюдение"}]. Проверь КАЖДОЕ условие. При сомнении unknown.',JSON.stringify({question:last,draft:answer,sources:proofSources,requirements:contract}),30000,true));reviewed=grounding?reviewAnswer(answer,checks,proofSources,true):{status:'supported',reasons:[],checked:0};if(!contractCheck(answer,contract,checks))reviewed={status:'blocked',reasons:['Не подтверждено соблюдение условий запроса.'],checked:contract.length}; }
               catch { reviewed={status:'uncertain',reasons:['Проверка источников сейчас недоступна.'],checked:0}; }
