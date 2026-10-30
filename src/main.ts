@@ -366,10 +366,10 @@ if(page==='settings')void workbench.loadWorkflows();
 // draft/refresh bridge used by the disk and other workspace modules.
 assistant={
   draft(text) {
-    const bubble=document.getElementById('kitsune-avatar') as HTMLButtonElement | null;
-    const panel=document.getElementById('kitsune-chat') as HTMLElement | null;
-    const field=document.getElementById('kitsune-message') as HTMLTextAreaElement | null;
-    if(!bubble||!panel||!field) { toast('Чат пока недоступен. Перезагрузите страницу.'); return; }
+    const bubble=document.getElementById('kitsune-avatar');
+    const panel=document.getElementById('kitsune-chat');
+    const field=document.getElementById('kitsune-message');
+    if(!bubble||!panel||!(field instanceof HTMLTextAreaElement)) { toast('Чат пока недоступен. Перезагрузите страницу.'); return; }
     if(panel.hidden)bubble.click();
     field.value=text.slice(0,20000);
     field.focus();
