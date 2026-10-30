@@ -212,7 +212,6 @@ body {
 .right-rail {
   width: var(--rail-width);
   background: color-mix(in srgb, var(--rail) var(--rail-opacity), transparent);
-  zoom: var(--ui-scale);
 }
 .settings-toggle { width: var(--icon-box); height: var(--icon-box); border-radius: var(--ui-radius); }
 .settings-toggle svg { width: var(--icon-art); height: var(--icon-art); }
@@ -220,7 +219,6 @@ body {
   right: calc(var(--rail-width) + 15px);
   width: min(420px, calc(100vw - var(--rail-width) - 30px));
   border-radius: calc(var(--ui-radius) + 6px);
-  zoom: var(--ui-scale);
 }
 .settings-header { margin-bottom: var(--density-gap); }
 .settings-body { display: grid; gap: var(--density-gap); }
@@ -282,4 +280,104 @@ body {
   .appearance-options { gap: 6px; }
   .setting-row select { max-width: 160px; }
   .setting-group { padding-top: 16px; }
+}
+
+/* Responsive geometry: never zoom fixed overlays independently of their offsets. */
+:root {
+  --rail-size: clamp(52px, calc(var(--rail-width) * var(--ui-scale)), 116px);
+  --focus-ring: #334fa5;
+}
+:root[data-theme="dark"] { --focus-ring: #c7d2ff; }
+body { font-size: calc(var(--ui-font-size) * var(--ui-scale)); }
+.right-rail {
+  width: var(--rail-size);
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 16px 7px max(14px, env(safe-area-inset-bottom));
+}
+.settings-toggle {
+  width: min(calc(var(--icon-box) * var(--ui-scale)), calc(var(--rail-size) - 12px));
+  height: min(calc(var(--icon-box) * var(--ui-scale)), calc(var(--rail-size) - 12px));
+  flex: none;
+}
+.settings-toggle svg {
+  width: calc(var(--icon-art) * var(--ui-scale));
+  height: calc(var(--icon-art) * var(--ui-scale));
+}
+.settings-panel {
+  box-sizing: border-box;
+  right: calc(var(--rail-size) + 14px);
+  left: auto;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  width: min(calc(450px * var(--ui-scale)), calc(100vw - var(--rail-size) - 28px));
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px - env(safe-area-inset-bottom));
+  padding: clamp(16px, 2.2vw, 28px);
+  font-size: 1em;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.settings-header {
+  position: sticky;
+  top: calc(-1 * clamp(16px, 2.2vw, 28px));
+  z-index: 2;
+  background: var(--panel);
+  padding-top: 7px;
+  padding-bottom: 12px;
+}
+.settings-header h1 { font-size: 1.4em; }
+.settings-close { min-width: 40px; min-height: 40px; }
+.settings-body { min-width: 0; }
+.appearance-options { min-width: 0; }
+.appearance-preview { height: clamp(54px, 7vh, 82px); }
+.appearance-label { overflow-wrap: anywhere; }
+.setting-row { min-width: 0; }
+.setting-row > span { min-width: 0; }
+.setting-row select { max-width: 100%; min-width: 0; }
+.setting-row input[type="range"] { max-width: 100%; }
+.setting-group { min-width: 0; }
+button:focus-visible, input:focus-visible + .appearance-preview,
+select:focus-visible, .palette-swatch:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+@media (max-width: 700px) {
+  .settings-panel {
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(10px, env(safe-area-inset-bottom));
+    width: auto;
+    max-height: calc(100vh - 20px);
+    max-height: calc(100dvh - 20px - env(safe-area-inset-bottom));
+    border-radius: min(calc(var(--ui-radius) + 6px), 23px);
+  }
+  .right-rail {
+    width: min(var(--rail-size), 76px);
+  }
+  .settings-body { gap: clamp(12px, 3vh, 24px); }
+  .appearance-options { gap: 8px; }
+  .settings-header { margin-bottom: 8px; }
+}
+@media (max-width: 360px) {
+  .settings-panel { padding: 14px; }
+  .settings-header { top: -14px; }
+  .appearance-options { gap: 5px; }
+  .appearance-label { font-size: .78em; }
+  .palette { gap: 6px; }
+  .setting-row { gap: 7px; }
+}
+@media (max-height: 500px) {
+  .settings-panel {
+    top: 8px;
+    bottom: 8px;
+    max-height: calc(100dvh - 16px);
+  }
+  .settings-body { gap: 12px; }
+  .appearance-preview { height: 52px; }
+}
+@media (forced-colors: active) {
+  .right-rail, .settings-panel { border: 1px solid CanvasText; }
+  .settings-toggle[aria-expanded="true"] { outline: 2px solid Highlight; }
+  .appearance-option input:checked + .appearance-preview { border-color: Highlight; }
+  .palette-swatch[aria-pressed="true"] { outline: 2px solid Highlight; }
 }
