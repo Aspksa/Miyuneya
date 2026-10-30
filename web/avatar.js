@@ -246,7 +246,7 @@
   settings.addEventListener('keydown',event=>{
     if(event.key==='Escape'){event.preventDefault();closeSettingsDialog();return;}
     if(event.key!=='Tab')return;
-    const nodes=[...settings.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled)')];
+    const nodes=[...settings.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled)')].filter(node=>node.getClientRects().length && !node.closest('[hidden]'));
     const i=nodes.indexOf(document.activeElement),next=event.shiftKey?(i<=0?nodes.length-1:i-1):(i<0||i===nodes.length-1?0:i+1);
     event.preventDefault();nodes[next]?.focus();
   });
