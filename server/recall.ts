@@ -51,7 +51,7 @@ export const searchTexts = (memory: Memory) => [...memory.items.filter(i=>i.stat
 
 // Time words in a question («вчера», «на прошлой неделе», «в прошлый вторник», «три дня назад») become a date range.
 const NUMBERS: Record<string, number> = { один: 1, одну: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5, шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10 };
-const WEEKDAYS = ['воскресень', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+const WEEKDAYS = ['воскресень', 'понедельник', 'вторник', 'сред', 'четверг', 'пятниц', 'суббот'];
 export function timeRange(text: string, now = Date.now()) {
   const t = text.toLocaleLowerCase('ru').replaceAll('ё', 'е');
   const today = new Date(now); today.setHours(0, 0, 0, 0);
