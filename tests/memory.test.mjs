@@ -49,7 +49,7 @@ test('Chat commands remember and forget', () => {
 test('Recall picks rules always, facts and episodes by topic, and follows links', () => {
   const memory=emptyMemory();
   const now='2026-10-29T10:00:00Z';
-  upsert(memory,'rule','Задачи формулировать коротко',{now});
+  upsert(memory,'rule','Задачи формулировать коротко',{now,source:'user'});
   const calendar=upsert(memory,'fact','Планирует вести календарь со сроками',{now,links:['n1']}).item;
   upsert(memory,'fact','Любит зелёный чай',{now});
   memory.episodes.push({id:'e1',date:now,topic:'Обсуждали календарь',outcome:'Решили добавить сроки',links:[calendar.id],consolidated:false});
@@ -67,10 +67,10 @@ test('Recall picks rules always, facts and episodes by topic, and follows links'
 test('Reflection records an episode and turns corrections into rules', () => {
   const memory=emptyMemory();
   const wrong=upsert(memory,'fact','Живёт в Москве').item;
-  const dialog={id:'dialog-0001',messages:[],summary:'',updatedAt:'2026-10-29T10:00:00Z',failures:0};
+  const dialog={id:'dialog-0001',messages:[{role:'user',content:'Живёт во Владивостоке'}],summary:'',updatedAt:'2026-10-29T10:00:00Z',failures:0};
   const result=parseJson('```json\n'+JSON.stringify({
     episode:{topic:'Календарь и сроки',outcome:'Решили добавить сроки',links:['n1','missing']},
-    facts:[{text:'Живёт во Владивостоке',conflicts:wrong.id}],
+    facts:[{text:'Живёт во Владивостоке',conflicts:wrong.id,evidence:[{source:'dialog-0001-0',quote:'Живёт во Владивостоке'}]}],
     rules:[{text:'Задачи формулировать коротко'}],
     weaken:['unknown'],
   })+'\n```');

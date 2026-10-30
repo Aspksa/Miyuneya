@@ -18,15 +18,17 @@ const KINDS: Reasoning[] = ['pattern', 'cause', 'habit', 'plan', 'analogy'];
 // The logic level: how often her predictions come true, how many of her conclusions held, and how many errors she turned into rules.
 export function logic(memory: Memory, now = Date.now()) {
   const recent = (date: string | null) => !!date && Date.parse(date) >= now - 7 * DAY;
-  const checked = memory.predictions.filter(p => p.outcome), right = checked.filter(p => p.outcome === 'right');
+  const checked = memory.predictions.filter(p => p.outcome && (p.verification==='user'||p.verification==='evidence')), right = checked.filter(p => p.outcome === 'right');
   // A conclusion is a checked prediction or a cause-and-effect link that came up again.
-  const confirmed = memory.causes.filter(c => c.hits > 1).length;
+  const confirmed = 0; // Repeated cause assertions are hypotheses, never checked conclusions.
   const fixed = memory.mistakes.filter(m => m.rule).length;
-  const points = right.length * 20 + (checked.length - right.length) * 6 + confirmed * 10 + memory.causes.length * 3 + fixed * 8 + memory.goals.length * 5 + memory.goals.filter(g => g.done).length * 10;
+  const points = right.length * 20; // Practice and volume are reported separately from correctness.
   const level = levelOf(points, 60);
   return {
-    points, ...level, name: LOGIC_LEVELS[Math.min(level.level, LOGIC_LEVELS.length) - 1],
-    predictions: { made: memory.predictions.length, open: memory.predictions.length - checked.length, checked: checked.length, right: right.length, accuracy: checked.length ? Math.round(right.length / checked.length * 100) : null },
+    activity: { records:memory.items.length, thoughts:memory.thoughts.length, hypotheses:memory.causes.length, goals:memory.goals.length },
+    quality:{sample:checked.length,brier:checked.length ? Math.round(checked.reduce((sum,p)=>sum+(p.confidence/100-(p.outcome==='right'?1:0))**2,0)/checked.length*1000)/1000:null, independent:false},
+    points, ...level, name: checked.length ? 'Практика проверенных прогнозов' : 'Проверенных результатов пока нет',
+    predictions: { made: memory.predictions.length, open: memory.predictions.filter(p=>!p.outcome).length, checked: checked.length, right: right.length, accuracy: checked.length ? Math.round(right.length / checked.length * 100) : null },
     conclusions: { right: right.length + confirmed, total: checked.length + confirmed, share: checked.length + confirmed ? Math.round((right.length + confirmed) / (checked.length + confirmed) * 100) : null },
     corrections: memory.mistakes.length, fixed, causes: memory.causes.length, goals: memory.goals.filter(g => !g.done).length,
     week: { predictions: memory.predictions.filter(p => recent(p.created)).length, checked: checked.filter(p => recent(p.checked)).length, right: right.filter(p => recent(p.checked)).length, corrections: memory.mistakes.filter(m => recent(m.at)).length },

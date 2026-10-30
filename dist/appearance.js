@@ -1,9 +1,9 @@
 // Generated from src/appearance.ts by npm run build.
 // Accent colour, corner rounding and interface scale. Stored per browser in localStorage
 // and applied as CSS variables on <html>; the light/dark theme itself stays in the workspace.
-                                                  
-                                                 
-                                                                          
+
+
+
 
 // Thirty muted tones that sit next to the original gold and jade.
 export const accents                     = [

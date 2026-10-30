@@ -1,3 +1,4 @@
+import { strictDate } from './integrity.ts';
 // Strong logic: which questions deserve a reasoning plan and the stronger model, and exact numbers counted by code,
 // so sums, percents, dates and deadlines in an answer are never guessed by the model.
 const DAY = 86_400_000;
@@ -7,7 +8,7 @@ const HARD = /(?:почему|зачем|из-за\s+чего|отчего|ка�
 export function complexity(text: string) {
   const t = text.trim();
   const reasons: string[] = [];
-  if (HARD.test(t) && t.length >= 20) reasons.push('нужно рассуждение');
+  if (HARD.test(t)) reasons.push('нужно рассуждение');
   if (t.length > 500) reasons.push('длинный вопрос');
   if ((t.match(/\?/g) || []).length >= 2 && t.length > 80) reasons.push('несколько вопросов');
   if ((t.match(/\d+(?:[.,]\d+)?/g) || []).length >= 3 && /[-+*/×÷%^]|сколько|итого|сумм/i.test(t)) reasons.push('расчёты');
@@ -101,9 +102,10 @@ export function parseDate(text: string, now = Date.now()): Date | null {
   if (/^завтра/.test(t)) return new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
   if (/^послезавтра/.test(t)) return new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2);
   let m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t);
-  if (m) return valid(new Date(+m[1], +m[2] - 1, +m[3]), +m[3]);
+  if (m) return strictDate(t) ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
   // Without a year a date means the nearest such day from today on.
   const future = (month: number, day: number, year?: number) => {
+    if(month<0 || month>11 || day<1)return null;
     if (year !== undefined) return valid(new Date(year < 100 ? 2000 + year : year, month, day), day);
     const d = valid(new Date(today.getFullYear(), month, day), day);
     return d && d < today ? valid(new Date(today.getFullYear() + 1, month, day), day) : d;
@@ -179,7 +181,7 @@ export function exactCalcs(text: string, now = Date.now()) {
   }
   for (const m of t.matchAll(/через\s+(\d+)\s+(дн|день|недел|месяц)/g)) {
     const n = Number(m[1]);
-    const d = m[2] === 'месяц' ? new Date(today.getFullYear(), today.getMonth() + n, today.getDate()) : new Date(today.getFullYear(), today.getMonth(), today.getDate() + n * (m[2].startsWith('недел') ? 7 : 1));
+    const d = m[2] === 'месяц' ? new Date(today.getFullYear(), today.getMonth() + n, Math.min(today.getDate(),new Date(today.getFullYear(),today.getMonth()+n+1,0).getDate())) : new Date(today.getFullYear(), today.getMonth(), today.getDate() + n * (m[2].startsWith('недел') ? 7 : 1));
     out.push(`Сегодня ${dateName(today)}; через ${m[1]} ${m[2].startsWith('недел') ? 'нед.' : m[2] === 'месяц' ? 'мес.' : 'дн.'} будет ${dateName(d)}`);
   }
   if (/какой\s+(?:это\s+|будет\s+)?день\s+недели|в\s+какой\s+день\s+недели/.test(t)) for (const d of found.slice(0, 3)) out.push(`${isoDate(d)} — ${WEEKDAYS[d.getDay()]}`);
@@ -209,7 +211,7 @@ export function reasoningBlock(complex: boolean, plan: Plan | null, calcs: strin
   const lines: string[] = [];
   if (complex) {
     lines.push('Вопрос требует рассуждения. Подумай по шагам, проверь каждый вывод, но пользователю дай ясный итог; ход рассуждения показывай, только если он помогает понять ответ.',
-      'Если у вопроса несколько возможных объяснений или исходов, назови 2–3 гипотезы с уверенностью в процентах и скажи, что помогло бы различить их. Опирайся на причины и следствия из памяти о пользователе.');
+      'Если у вопроса несколько возможных объяснений или исходов, назови 2–3 гипотезы с уверенностью в процентах только при достаточных данных (это оценка модели, не измеренная вероятность) и скажи, что помогло бы различить их. Опирайся на причины и следствия из памяти о пользователе.');
     if (plan?.steps.length) lines.push('Твой скрытый план рассуждения (не пересказывай его как план):', ...plan.steps.map((s, i) => `${i + 1}. ${s}`));
     if (plan?.hypotheses.length) lines.push('Гипотезы, которые стоит взвесить:', ...plan.hypotheses.map(h => `- ${h.text} — ${h.confidence}%`));
     if (plan?.check) lines.push('Проверь перед ответом: ' + plan.check);

@@ -1,8 +1,8 @@
 // Generated from src/disk.ts by npm run build.
-                                                                                                                                                              
-                                    
-                                                                                 
-                                                                                                                                 
+
+
+
+
 const esc=(s       )=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c] ));
 export const bytes=(n       )=>n<1024?`${n} Б`:n<1048576?`${(n/1024).toFixed(1)} КБ`:`${(n/1048576).toFixed(1)} МБ`;
 const documents=(n       )=>`${n} ${n%10===1&&n%100!==11?'документ':n%10>=2&&n%10<=4&&(n%100<12||n%100>14)?'документа':'документов'}`;

@@ -1,6 +1,6 @@
 {
   "name": "miyuneya",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Личное пространство Miyuneya",
@@ -15,6 +15,7 @@
     "check": "node scripts/build.mjs --check",
     "diagnose": "node scripts/diagnose.mjs",
     "diagnose:full": "node scripts/diagnose.mjs --full",
-    "update:prepare": "node scripts/update.mjs prepare"
+    "update:prepare": "node scripts/update.mjs prepare",
+    "evaluate": "node scripts/evaluate.mjs"
   }
 }

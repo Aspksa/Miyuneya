@@ -27,6 +27,7 @@ export async function ensureBuild(root, check = false) {
   if(check) throw new Error('Сборка отсутствует, повреждена или устарела: выполните npm run build.');
   for(const name of modules) {
     let code='// Generated from src/'+name+'.ts by npm run build.\n'+stripTypeScriptTypes(inputs[`src/${name}.ts`].toString('utf8'),{mode:'strip'});
+    code=code.replace(/[ \t]+$/gm,'');
     code=code.replace(/(from\s+['"]\.{1,2}\/[^'"]+)\.ts(['"])/g,'$1.js$2');
     const syntax=spawnSync(process.execPath,['--check','--input-type=module'],{input:code,encoding:'utf8',timeout:10000,windowsHide:true});
     if(syntax.status!==0) throw new Error('Ошибка синтаксиса в src/'+name+'.ts; исходники сохранены.');
