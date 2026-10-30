@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 import { request } from 'node:http';
 import { removeTemp, fixture, nodeLaunch, waitReady, stop } from './helpers/lifecycle.mjs';
 import { createApp } from '../server/app.ts';
-import { emptyWorkspace, validateWorkspace, searchNotes, combineEntries } from '../src/model.ts';
+import { emptyWorkspace, validateWorkspace, searchNotes, combineEntries, defaultAppearance, validAppearance } from '../src/model.ts';
 
 test('Validation and Russian full-text search', () => {
   const data=emptyWorkspace(); assert.ok(validateWorkspace(data));
@@ -19,6 +19,22 @@ test('Validation and Russian full-text search', () => {
   assert.equal(validateWorkspace({...data,notes:[...data.notes,...data.notes]}),false);
   assert.equal(validateWorkspace({...data,settings:{theme:'bad',name:'X'}}),false);
   assert.equal(validateWorkspace({...data,tasks:[{id:'t',title:'X',done:'yes',createdAt:'bad'}]}),false);
+});
+
+test('Appearance preferences reject malformed values and preserve old workspaces',()=>{
+  const data=emptyWorkspace();
+  assert.ok(validateWorkspace(data));
+  const initial={theme:'light',...defaultAppearance()};
+  assert.ok(validAppearance(initial));
+  assert.equal(validAppearance({...initial,accent:'url(javascript:bad)'}),false);
+  assert.equal(validAppearance({...initial,railOpacity:120}),false);
+  assert.equal(validAppearance({...initial,scale:125}),false);
+  assert.equal(validAppearance({...initial,unexpected:true}),false);
+  assert.equal(validAppearance({...initial,background:'#123456'}),true);
+  data.settings.appearance=defaultAppearance();
+  assert.ok(validateWorkspace(data));
+  data.settings.appearance.accent='invalid';
+  assert.equal(validateWorkspace(data),false);
 });
 
 test('Notes and tasks share one list', () => {
