@@ -57,7 +57,7 @@ const disk = createDisk({render:()=>{if(page!=='settings')render();},toast,addNo
 let appearance             = loadAppearance();
 let aiModels                  = null;
 let aiBusy = false;
-let assistant                                               ;
+let assistant                                                            ;
 let memoryMode = { enabled: true, private: false };
 const pageNames                      = { notes:'Заметки и задачи', disk:'Диск', settings:'Настройки' };
 // Old #home and #tasks links land on the shared list.
@@ -370,7 +370,7 @@ assistant={
     const bubble=document.getElementById('kitsune-avatar');
     const panel=document.getElementById('kitsune-chat');
     const field=document.getElementById('kitsune-message');
-    if(!bubble||!panel||!field) { toast('Чат пока недоступен. Перезагрузите страницу.'); return; }
+    if(!bubble||!panel||!(field instanceof HTMLTextAreaElement)) { toast('Чат пока недоступен. Перезагрузите страницу.'); return; }
     if(panel.hidden)bubble.click();
     field.value=text.slice(0,20000);
     field.focus();
