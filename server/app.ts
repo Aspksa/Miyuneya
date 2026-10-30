@@ -305,6 +305,26 @@ export async function createApp(root: string, instance: string, preview = false,
           }
           return send(405, { error: 'Метод не поддерживается' });
         }
+        // A saved key is NOT proof of connectivity. Verify actual access to the
+        // configured model using Cloud.ru's read-only model catalogue.
+        if (route === '/verify' && req.method === 'POST') {
+          if (!assistant.apiKey) return send(200, { status: 'not-configured', message: 'Сначала сохраните API-ключ Cloud.ru.', model: assistant.model });
+          try {
+            const body = await cloudJson('/models', 12_000);
+            const models = (Array.isArray(body?.data) ? body.data : []).map((m: { id?: unknown }) => m?.id).filter(validModel);
+            if (!models.length) return send(200, { status: 'error', message: 'Cloud.ru не вернул список моделей. Подключение не подтверждено.', model: assistant.model });
+            if (!models.includes(assistant.model)) return send(200, { status: 'model-unavailable', message: 'Ключ принят, но выбранная модель отсутствует в доступном списке.', model: assistant.model });
+            return send(200, { status: 'connected', message: 'API-ключ принят, модель доступна в списке Cloud.ru. Генерация ответа не проверялась.', model: assistant.model });
+          } catch (e) {
+            // Do not echo arbitrary upstream payloads: they may contain secrets.
+            const status = (e as { status?: number }).status;
+            const reason = (e as Error).message || '';
+            const message = /не принял ключ/.test(reason) ? 'Cloud.ru отклонил API-ключ.'
+              : status === 504 ? 'Cloud.ru не ответил. Проверьте интернет и повторите.'
+              : 'Не удалось проверить подключение к Cloud.ru.';
+            return send(200, { status: 'error', message, model: assistant.model });
+          }
+        }
         if (route === '/models' && req.method === 'GET') {
           if (!assistant.apiKey) return send(409, { error: 'Сначала сохраните API-ключ cloud.ru.' });
           try {
