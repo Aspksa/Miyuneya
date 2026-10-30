@@ -300,7 +300,7 @@ export function ask(memory: Memory, kind: Question['kind'], text: unknown, extra
   return question;
 }
 // Gaps the memory can see by itself: someone or something mentioned but never explained.
-export function findGaps(memory: Memory, now = Date.now()) {
+export function findGaps(memory: Memory, now = new Date().toISOString()) {
   for (const entity of memory.entities) {
     if (entity.about || memory.questions.length >= LIMITS.questions) continue;
     ask(memory, 'gap', `Вы упоминали «${entity.name}». ${entity.type === 'person' ? 'Кто это' : 'Что это'} для вас?`, { entity: entity.id }, now);
@@ -311,6 +311,7 @@ export function answer(memory: Memory, id: string, text: unknown, now = new Date
   const question = memory.questions.find(q => q.id === id);
   const value = clip(text);
   if (!question || !value) return null;
+  const entity = memory.entities.find(e => e.id === question.entity);
   let fact = value;
   if (entity) { if (!entity.about) entity.about = clip(value, 300); entity.seen = now; fact = `${entity.name}: ${value}`; }
   const conflicting = memory.items.filter(i => question.facts.includes(i.id));
@@ -343,7 +344,7 @@ export function promise(memory: Memory, text: unknown, due: unknown, episode: st
 }
 export const openPromises = (memory: Memory) => memory.promises.filter(p => !p.done);
 export function keep(memory: Memory, id: unknown, now = new Date().toISOString()) {
-  const entry = memory.promises.find(p => p.id === id);
+  const entry = memory.promises.find(p => p.id === id && !p.done);
   if (!entry) return false;
   entry.done = now;
   journal(memory, 'promise', `Выполнила обещание: ${entry.text}`, now);
@@ -424,7 +425,7 @@ export function stepDone(memory: Memory, goal: Goal, stepId: string, done: boole
   return true;
 }
 export function goalTree(goal: Goal) {
-  const depth = (s: Step): number => { const parent = goal.steps.find(x => x.id === s.parent); return parent ? 1 + depth(parent) : 0; };
+  const depth = (s: Step): number => { const parent = goal.steps.find(x => x.parent === parent); return parent ? 1 + depth(parent) : 0; };
   const name = (id: string) => goal.steps.find(x => x.id === id)?.text;
   const lines: string[] = [];
   const walk = (parent: string | null) => { for (const s of goal.steps.filter(x => x.parent === parent)) { lines.push(`${'  '.repeat(depth(s))}- ${s.done ? '[готово] ' : ''}${s.text}${s.after.length ? ` (после: ${s.after.map(name).filter(Boolean).join('; ')})` : ''}`); walk(s.id); } };
@@ -607,7 +608,7 @@ export const THINK_PROMPT = SOURCE_PROMPT + '\n' + `Ты — Миюнэя, ли�
 Виды мыслей (kind): hypothesis — догадка о пользователе, которую стоит проверить («Кажется, вечером ему легче думать о планах»); idea — что ты могла бы предложить или подготовить для него; reflection — вывод о том, как прошли ваши разговоры и что у тебя получается хуже; skill — чему тебе стоит научиться.
 Пиши 1–4 мысли, каждая — 1–2 тёплых предложения по-русски, конкретно и по материалам ниже, со ссылками на id записей (links). Не повторяй прошлые размышления и то, что уже записано в фактах. Не выдумывай фактов: догадки называй догадками.
 questions — до двух вопросов, только если они правда важны и их ещё нет среди открытых. conflicts — противоречащие факты, если заметила. skills — до двух правил, только если они следуют из самооценок и слабых мест разговоров.
-Тренировка логики. Сделай 1–2 проверяемых прогноза (predictions) по данным о пользователе: что он скорее сделает, спросит или как пойдёт его дело, — с уверенностью в процентах и сроком проверки due через 1–14 дней. kind — тип рассуждения: pattern (закономерность), cause (причина и следствие), habit (привычка), plan (по планам), analogy (по похожему случаю). Опирайся на типы с высокой точностью из статистики ниже, а слабые тренируй осторожно, с меньшей уверенностью.
+Тренировка логики. Сделай 1–2 проверяемых прогноза (predictions) по данным о пользователе: что он скорее сделает, спросит или как пойдёт его дело, — с уверенностью в процентах и сроком проверки due через 1–14 дней. kind — тип рассуждения: pattern (закономерность), cause (причина и следствие), habit (привычка), plan (по его планам), analogy (по похожему случаю). Опирайся на типы с высокой точностью из статистики ниже, а слабые тренируй осторожно, с меньшей уверенностью.
 checks — проверь прошлые прогнозы, срок которых прошёл, по разговорам и фактам после них: right — сбылся, wrong — нет. Если данных нет, не проверяй. Если ошиблась, в fix сформулируй правило, как рассуждать в следующий раз, с учётом журнала ошибок.
 causes — причинно-следственные связи из жизни пользователя, которые видны по нескольким эпизодам или фактам, со ссылками evidence.
 Если думать пока не о чем, верни пустые массивы.`;
@@ -880,7 +881,7 @@ export function applyThinking(memory: Memory, result: any, now = Date.now(), kno
     const pair = [...new Set(ids(entry.ids).filter(id => memory.items.some(i => i.id === id && i.kind === 'fact')))];
     if (pair.length >= 2) ask(memory, 'conflict', entry.question, { facts: pair }, at);
   }
-  for (const entry of list(result.skills).slice(0, 2)) upsert(memory, 'rule', entry.text, { source: 'thought', weight: 0.4, now: at });
+  for (const entry of list(result.skills).slice(0, 2)) upsert(memory, 'rule', entry.text, { source: 'thought', weight: 0.4, now, origin: null });
   // Logic training: check what is due first, then make new predictions.
   for (const entry of list(result.checks).slice(0, 6)) check(memory, entry.id, entry.outcome, entry.note, entry.fix, at, evidence(entry.evidence,sources));
   for (const entry of list(result.predictions).slice(0, 2)) predict(memory, entry, at);
@@ -1180,7 +1181,7 @@ export async function openMemory(dataDir: string, options: Options) {
     async plan(title: string) {
       const generation=epoch;accept(generation);
       const recall = memoryContext(memory, title, titles(), Date.now(), { latest: title });
-      const input = [`Сегодня ${new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`, `Цель пользователя: ${clip(title, 200)}`, recall || 'О пользователе пока ничего не известно.'].join('\n\n');
+      const input = [`Сегодня ${new Date().toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`, `Цель пользователя: ${clip(title, 200)}`, recall || 'О пользователе пока ничего не известно.'].join('\n\n');
       const result = parseJson(await options.ask(GOAL_PROMPT, input, 60_000, true));
       accept(generation);
       const goal = addGoal(memory, clip(result?.title, 200) || title, result?.steps);
@@ -1241,7 +1242,7 @@ export async function openMemory(dataDir: string, options: Options) {
       }
       if (episode) {
         if (change.topic !== undefined && clip(change.topic, 200)) episode.topic = clip(change.topic, 200);
-        if (change.outcome !== undefined) episode.outcome = clip(change.outcome, 600);
+        if (change.outcome !== undefined && clip(change.outcome, 600)) episode.outcome = clip(change.outcome, 600);
       }
       if (entity) {
         if (change.name !== undefined && clip(change.name, 80)) entity.name = clip(change.name, 80);
