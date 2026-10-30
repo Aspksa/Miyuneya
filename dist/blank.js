@@ -215,7 +215,7 @@
   const testButton = document.getElementById('cloud-test');
   const refresh = document.getElementById('cloud-refresh');
   const remove = document.getElementById('cloud-remove');
-  let configured = false, busy = false, savedModel = '';
+  let configured = false, busy = false, savedModel = '', draftEdited = false;
   let requestId = 0;
 
   function status(code, title, description) {
@@ -251,7 +251,17 @@
     const current = ++requestId;
     try {
       const data = await request('/api/assistant');
-      if (current === requestId) updateConfig(data);
+      if (current === requestId) {
+        if (draftEdited) {
+          // The user may type before the initial GET finishes. Read the saved
+          // state without destroying their unsaved key or model selection.
+          const typedKey = key.value, typedModel = model.value;
+          updateConfig(data);
+          key.value = typedKey;
+          model.value = typedModel;
+          status('unchecked', 'Несохранённые изменения', 'Нажмите «Сохранить», чтобы применить введённые данные.');
+        } else updateConfig(data);
+      }
     } catch {
       if (current === requestId) status('error', 'Ошибка', 'Не удалось прочитать настройки локального сервера.');
     }
@@ -341,6 +351,7 @@
       status('not-configured', 'Не подключено', 'Введите API-ключ Cloud.ru.');
       return;
     }
+    ++requestId; // Prevent a late initial GET from replacing a newly saved key.
     setBusy(true);
     status('checking', 'Сохраняем настройки…', 'Ключ отправляется только на локальный сервер.');
     try {
@@ -349,6 +360,7 @@
         body: JSON.stringify(input)
       });
       updateConfig(data);
+      draftEdited = false;
       await verifyAfterSave();
     } catch {
       status('error', 'Не удалось сохранить', 'Проверьте формат ключа и права записи в папку проекта.');
@@ -363,13 +375,16 @@
   testButton.addEventListener('click', () => { if (!busy) void testGeneration(); });
   refresh.addEventListener('click', () => { if (!busy) void loadModels(); });
   model.addEventListener('input', () => {
+    draftEdited = true;
     if (!busy && configured) status('unchecked', 'Несохранённый выбор модели', 'Нажмите «Сохранить» перед проверкой.');
   });
   key.addEventListener('input', () => {
+    draftEdited = true;
     if (!busy) status('unchecked', 'Несохранённый API-ключ', 'Нажмите «Сохранить». Проверка применяется только к сохранённому ключу.');
   });
   remove.addEventListener('click', async () => {
     if (busy || !configured) return;
+    ++requestId;
     setBusy(true);
     try {
       const data = await request('/api/assistant', {
@@ -378,6 +393,7 @@
       });
       modelList.replaceChildren();
       updateConfig(data);
+      draftEdited = false;
     } catch {
       status('error', 'Не удалось удалить ключ', 'Проверьте доступ к папке проекта.');
     } finally { setBusy(false); }
