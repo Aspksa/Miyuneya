@@ -128,3 +128,13 @@ test('All standalone avatar and chat controls carry matching inline SVG glyphs',
     assert.equal(new Set(ids).size,ids.length,'Duplicate page IDs');
   }
 });
+
+test('The shared-chat bridge in dist/main.js matches TypeScript stripping exactly',async()=>{
+  const { stripTypeScriptTypes }=await import('node:module');
+  const source=await readFile(new URL('src/main.ts',root),'utf8');
+  const built=await readFile(new URL('dist/main.js',root),'utf8');
+  let expected='// Generated from src/main.ts by npm run build.\n'+stripTypeScriptTypes(source,{mode:'strip'});
+  expected=expected.replace(/[ \t]+$/gm,'');
+  expected=expected.replace(/(from\s+['"]\.{1,2}\/[^'"]+)\.ts(['"])/g,'$1.js$2');
+  assert.equal(built,expected,'Regenerate dist/main.js using npm run build; never ship stale JS');
+});
