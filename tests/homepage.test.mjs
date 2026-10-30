@@ -9,6 +9,13 @@ const defaults = {
   railOpacity:100,font:'system',fontSize:'regular',radius:'regular',
   density:'comfortable',motion:true,background:'default',scale:100,contrast:false
 };
+test('Cloud settings script compiles exactly once without duplicated handlers',()=>{
+  assert.doesNotThrow(()=>new Function(source));
+  assert.equal(source.split("// Cloud.ru uses the SAME").length-1,1);
+  assert.equal(source.split("const validModelId =").length-1,1);
+  assert.equal(source.split("void load();").length-1,1);
+});
+
 const tick = () => new Promise(r => setImmediate(r));
 function mount(backend={appearance:{...defaults}},stored=new Map(),storageDisabled=false) {
   let document;

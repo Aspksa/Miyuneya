@@ -133,18 +133,38 @@ test('cloud.ru assistant keeps the key on the server and proxies chat', async t 
   const image=await fetch(url+'/avatars/avatar2.png');
   assert.equal(image.headers.get('content-type'),'image/png');assert.equal((await image.arrayBuffer()).byteLength,4);
   assert.deepEqual(await (await fetch(url+'/api/assistant')).json(),{configured:false,keyHint:'',model:'openai/gpt-oss-120b',smartModel:'',embedModel:'BAAI/bge-m3',context:true,customAvatar:null});
+  const notConnected=await json('/api/assistant/verify','POST',{});
+  assert.equal(notConnected.status,200);
+  assert.deepEqual(await notConnected.json(),{status:'not-configured',message:'Сначала сохраните API-ключ Cloud.ru.',model:'openai/gpt-oss-120b'});
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'}]})).status,409);
   assert.equal((await json('/api/assistant','PUT',{apiKey:'short'})).status,400);
   assert.equal((await json('/api/assistant','PUT',{model:'плохая модель'})).status,400);
   assert.equal((await json('/api/assistant','PUT',null)).status,400);
   let saved=await (await json('/api/assistant','PUT',{apiKey:'good-key-wrong'})).json();
   assert.equal(saved.configured,true);assert.equal(saved.keyHint,'••••rong');assert.ok(!JSON.stringify(saved).includes('good-key'));
+  const rejectedVerify=await json('/api/assistant/verify','POST',{});
+  assert.equal(rejectedVerify.status,200);
+  const verificationFailure=await rejectedVerify.json();
+  assert.equal(verificationFailure.status,'error');
+  assert.match(verificationFailure.message,/отклонил/);
+  assert.doesNotMatch(JSON.stringify(verificationFailure),/good-key-wrong/);
   const rejected=await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'}]});
   assert.equal(rejected.status,502);const rejectedBody=await rejected.json();
   assert.match(rejectedBody.error,/не принял ключ/);assert.ok(!rejectedBody.error.includes('good-key-wrong'));
   saved=await (await json('/api/assistant','PUT',{apiKey:'good-key-123',model:'zeta/model'})).json();
   assert.deepEqual(saved,{configured:true,keyHint:'••••-123',model:'zeta/model',smartModel:'',embedModel:'BAAI/bge-m3',context:true,customAvatar:null});
   assert.deepEqual(await (await fetch(url+'/api/assistant/models')).json(),{models:['openai/gpt-oss-120b','zeta/model']});
+  const accepted=await (await json('/api/assistant/verify','POST',{})).json();
+  assert.equal(accepted.status,'connected');
+  assert.equal(accepted.model,'zeta/model');
+  assert.doesNotMatch(JSON.stringify(accepted),/good-key-123/);
+  assert.equal(seen.at(-1).path,'/v1/models'); // verification does not generate a paid completion
+  await json('/api/assistant','PUT',{model:'missing/model'});
+  const missing=await (await json('/api/assistant/verify','POST',{})).json();
+  assert.equal(missing.status,'model-unavailable');
+  assert.equal(missing.model,'missing/model');
+  await json('/api/assistant','PUT',{model:'zeta/model'});
+
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'system',content:'x'}]})).status,400);
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'},{role:'assistant',content:'Да?'}]})).status,400);
   const lines=async response=>(await response.text()).trim().split('\n').map(line=>JSON.parse(line));

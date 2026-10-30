@@ -98,6 +98,39 @@
         <p class="setting-hint">При системном ограничении движения анимации отключаются автоматически.</p>
         <label class="setting-check"><input type="checkbox" data-setting="contrast"><span>Высокая контрастность</span></label>
       </fieldset>
+      <fieldset class="setting-group cloud-settings" id="cloud-panel">
+        <legend>Cloud.ru · Подключение ИИ</legend>
+        <p>Настройка моделей Foundation Models. Сначала сохраните API-ключ, затем проверьте доступность выбранной модели.</p>
+        <div class="cloud-status" id="cloud-status" data-state="not-configured" role="status" aria-live="polite">
+          <span class="cloud-dot" aria-hidden="true"></span>
+          <div>
+            <strong id="cloud-state-text">Не подключено</strong>
+            <span class="cloud-status-info" id="cloud-status-info">Ключ не сохранён.</span>
+          </div>
+        </div>
+        <form id="cloud-form" autocomplete="off">
+          <label class="cloud-field" for="cloud-key">
+            <span>API-ключ Cloud.ru</span>
+            <input id="cloud-key" type="password" autocomplete="new-password" spellcheck="false"
+              maxlength="512" placeholder="Введите API-ключ из кабинета Cloud.ru">
+          </label>
+          <p class="cloud-note" id="cloud-key-hint">Ключ не загружен. Сохраняется только на локальном сервере, не в браузере.</p>
+          <label class="cloud-field" for="cloud-model">
+            <span>Модель для ответов</span>
+            <input id="cloud-model" type="text" list="cloud-model-list" spellcheck="false" autocomplete="off"
+              maxlength="200" value="openai/gpt-oss-120b" placeholder="Выберите модель из списка или введите ID">
+          </label>
+          <datalist id="cloud-model-list"></datalist>
+          <div class="cloud-actions">
+            <button class="cloud-button primary" id="cloud-save" type="submit">Сохранить</button>
+            <button class="cloud-button" id="cloud-verify" type="button">Проверить подключение</button>
+            <button class="cloud-button secondary" id="cloud-refresh" type="button">Загрузить модели</button>
+          </div>
+          <button class="cloud-forget" id="cloud-remove" type="button" hidden>Удалить сохранённый ключ</button>
+        </form>
+        <p class="cloud-note">Статус «Подключено» означает, что Cloud.ru принял ключ и показал модель в списке. Генерация текста проверяется отдельно при работе чата. Запросы выполняет локальный сервер.</p>
+        <p class="cloud-note">Ключ хранится в <code>data/assistant.json</code> в исходном виде (без шифрования). Не пересылайте и не публикуйте этот файл.</p>
+      </fieldset>
       <button class="reset-button" type="button" id="appearance-reset">Сбросить оформление</button>
       <p class="save-caption">Изменения сохраняются автоматически.</p>
     </div>

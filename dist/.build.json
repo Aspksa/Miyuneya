@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "fingerprint": "05f62c9691a64f5048d19f6cf06531466f4c75fccbff47e5fca0dbcbcd066616",
+  "fingerprint": "bd8c23a173766e083451af9a0524465659f7b7318310db7bf7f35625ed23d0eb",
   "outputs": {
     "appearance.js": "be3c7d9aa4c3a5303c1a3a03578fc7c02c75a47efa3964dfbadb717b0207dd1a",
     "assistant.js": "bb573bd724ba4354a6687742829c56ddc00a3c38abd0d571455136b84add31fc",
@@ -19,8 +19,8 @@
     "avatars/avatar2.png": "7d3113263f834ed76aa818d73edd59a81ed7e557dd8ebce14add1e6700bc23a0",
     "avatars/avatar3.png": "9eb46d2f5a6f54545690cacffbdb1a6256dcd40a8aee07461e8649a566dbc010",
     "avatars/avatar4.png": "f1767d080142d982f3267859ba11d857b4f355219395af520bcafa06c62df3d4",
-    "blank.html": "a425098ad794e9e7cbd592f530f8a3f620f3e96d58cb85f19a2b9b411d8477bf",
-    "blank.css": "954e50955072d7524d8ce79f60c1b3b5849afad1c9d8a20d03a32e9db408c85a",
-    "blank.js": "bd96c020126d864b6fd3b089095d0ec2ee5b27cd9152c9f3c9f9d4f909d83546"
+    "blank.html": "46adc4d066ac647693c3f885dd856fe14bc7d495ad8d609a9c3bcb777e61bbee",
+    "blank.css": "bebf823876ff92ac06d99342846cb2109e874692b71a6c5d47daa8584a774576",
+    "blank.js": "ecb25ad83db082c8202d15a729d58748f0573778d1f0bc1f8c66b8ef27e63301"
   }
 }

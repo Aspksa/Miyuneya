@@ -100,6 +100,56 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90�
   }
   assert.equal(await evalJS('document.readyState'),'complete');
   await evalJS(script);
+  assert.equal(await evalJS('document.getElementById("cloud-key").type'),'password');
+  assert.equal(await evalJS('document.getElementById("cloud-key").value'),'');
+  assert.equal(await evalJS('document.getElementById("cloud-panel") !== null'),true);
+  assert.equal(await evalJS('document.getElementById("cloud-model").value'),'openai/gpt-oss-120b');
+  // Browser-level integration: simulate the already-covered local API, prove
+  // that saving a key does NOT claim connection before verification.
+  await evalJS('new Promise(resolve => setTimeout(resolve, 30))');
+  await evalJS(`(() => {
+    window.__cloudStub = { key: '', model: 'openai/gpt-oss-120b' };
+    window.fetch = async (path,opts={}) => {
+      const state = window.__cloudStub;
+      if (path === '/api/assistant') {
+        if (opts.method === 'PUT') {
+          const value=JSON.parse(opts.body);
+          if (value.apiKey === null) state.key='';
+          else if (value.apiKey) state.key=value.apiKey;
+          if (value.model) state.model=value.model;
+        }
+        return {ok:true,json:async()=>({configured:!!state.key,keyHint:state.key?'••••'+state.key.slice(-4):'',model:state.model})};
+      }
+      if (path === '/api/assistant/verify') {
+        return {ok:true,json:async()=>({
+          status:state.key==='good-key-123' && state.model==='zeta/model'?'connected':'model-unavailable',
+          message:state.key==='good-key-123' && state.model==='zeta/model'?'Модель доступна':'Модель отсутствует'
+        })};
+      }
+      if(path==='/api/assistant/models')return {ok:true,json:async()=>({models:['zeta/model','other/model']})};
+      return {ok:true,json:async()=>({appearance:null})};
+    };
+    return true;
+  })()`);
+  await evalJS(`(() => {
+    document.getElementById('cloud-key').value='good-key-123';
+    document.getElementById('cloud-model').value='zeta/model';
+    document.getElementById('cloud-form').dispatchEvent(new Event('submit',{cancelable:true}));
+    return true;
+  })()`);
+  await evalJS('new Promise(resolve => setTimeout(resolve, 50))');
+  assert.equal(await evalJS('document.getElementById("cloud-status").dataset.state'),'unchecked');
+  assert.equal(await evalJS('document.getElementById("cloud-key").value'),'');
+  await evalJS('document.getElementById("cloud-verify").click()');
+  await evalJS('new Promise(resolve => setTimeout(resolve, 40))');
+  assert.equal(await evalJS('document.getElementById("cloud-status").dataset.state'),'connected');
+  await evalJS('document.getElementById("cloud-refresh").click()');
+  await evalJS('new Promise(resolve => setTimeout(resolve, 40))');
+  assert.equal(await evalJS('document.getElementById("cloud-model-list").options.length'),2);
+  await evalJS('document.getElementById("cloud-remove").click()');
+  await evalJS('new Promise(resolve => setTimeout(resolve, 40))');
+  assert.equal(await evalJS('document.getElementById("cloud-status").dataset.state'),'not-configured');
+  assert.equal(await evalJS('document.getElementById("cloud-key").value'),'');
   await evalJS('document.getElementById("settings-toggle").click()');
   assert.equal(await evalJS('document.getElementById("settings-panel").hidden'),false);
 
