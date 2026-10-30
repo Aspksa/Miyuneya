@@ -29,8 +29,8 @@ test('Default homepage has only the right settings rail; original workspace and 
   assert.match(html,/<svg\b/);
   assert.match(html,/id="settings-toggle"/);
   assert.match(html,/id="settings-panel"[^>]*role="dialog"/);
-  assert.match(html,/name="appearance" value="light"/);
-  assert.match(html,/name="appearance" value="dark"/);
+  assert.match(html,/name="appearance" data-setting="theme" value="light"/);
+  assert.match(html,/name="appearance" data-setting="theme" value="dark"/);
   for (const filename of ['blank.css','blank.js']) {
     const asset=await fetch(base+'/'+filename);
     assert.equal(asset.status,200);
