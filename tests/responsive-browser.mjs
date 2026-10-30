@@ -16,7 +16,7 @@ const chrome = browsers.find(exe => {
 });
 
 async function debuggerPort(profile) {
-  for (let n=0;n<100;n++) {
+  for (let n=0;n<300;n++) {
     try {
       const data=await readFile(join(profile,'DevToolsActivePort'),'utf8');
       const port=Number(data.split('\n')[0]);
@@ -67,14 +67,16 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
     '--no-proxy-server','--no-first-run','--no-default-browser-check',
     '--remote-allow-origins=*','--remote-debugging-port=0',
     '--user-data-dir='+profile,'about:blank'
-  ],{stdio:'ignore'});
+  ],{stdio:['ignore','ignore','pipe']});
+  let browserErrors='';
+  browser.stderr?.on('data',chunk=>{browserErrors=(browserErrors+String(chunk)).slice(-2400);});
   let cd;
   t.after(async()=>{
     try{cd?.close();}catch{}
     try{browser.kill('SIGKILL');}catch{}
     await rm(profile,{recursive:true,force:true,maxRetries:4,retryDelay:150});
   });
-  const port=await debuggerPort(profile);
+  const port=await debuggerPort(profile).catch(e=>{throw new Error(e.message+'; Chromium stderr: '+browserErrors);});
   const targets=await (await fetch('http://127.0.0.1:'+port+'/json/list')).json();
   const page=targets.find(target=>target.type==='page');
   assert.ok(page?.webSocketDebuggerUrl,'Missing Chrome page target.');
@@ -88,6 +90,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   const script=await readFile(join(root,'web','blank.js'),'utf8');
   const avatarStyles=await readFile(join(root,'web','avatar.css'),'utf8');
   const avatarScript=await readFile(join(root,'web','avatar.js'),'utf8');
+  const studioScript=await readFile(join(root,'web','avatar-studio.js'),'utf8');
   const avatarBytes=await readFile(join(root,'web','avatars','hayumeri-kitsune.avif'));
   assert.ok(source.includes('<link rel="stylesheet" href="/blank.css">'));
   assert.ok(source.includes('<script type="module" src="/blank.js"></script>'));
@@ -96,6 +99,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
     .replace('<script type="module" src="/blank.js"></script>','')
     .replace('<link rel="stylesheet" href="/avatar.css">','<style>'+avatarStyles+'</style>')
     .replace('<script defer src="/avatar.js"></script>','')
+    .replace('<script defer src="/avatar-studio.js"></script>','')
     .replace('src="/avatars/hayumeri-kitsune.avif"','src="data:image/avif;base64,'+avatarBytes.toString('base64')+'"');
   const frame=await cd.send('Page.getFrameTree');
   await cd.send('Page.setDocumentContent',{frameId:frame.frameTree.frame.id,html:documentHTML});
@@ -107,6 +111,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.equal(await evalJS('document.readyState'),'complete');
   await evalJS(script);
   await evalJS(avatarScript);
+  await evalJS(studioScript);
   const brainInitially=await evalJS(`(()=>{
     const node=document.getElementById('brain-nav-link');
     const rail=document.querySelector('.right-rail').getBoundingClientRect();
@@ -150,6 +155,10 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.equal(kitsuneInitial.settingsHidden,true);
   await evalJS('document.getElementById("kitsune-avatar").click()');
   assert.equal(await evalJS('document.getElementById("kitsune-chat").hidden'),false,'Left click opens real chat');
+  await evalJS('document.getElementById("kitsune-minimize").click()');
+  assert.equal(await evalJS('document.getElementById("kitsune-chat").classList.contains("mini")'),true);
+  await evalJS('document.getElementById("kitsune-expand").click()');
+  assert.equal(await evalJS('document.getElementById("kitsune-chat").classList.contains("mini")'),false);
   await evalJS('document.getElementById("kitsune-avatar").click()');
   assert.equal(await evalJS('document.getElementById("kitsune-chat").hidden'),true);
   await evalJS(`(()=>{
@@ -162,8 +171,42 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
     return {hidden:el.hidden,centerX:r.left+r.width/2,centerY:r.top+r.height/2,width:innerWidth,height:innerHeight};
   })()`);
   assert.equal(modal.hidden,false,'Right click opens centered avatar and chat settings');
+  assert.equal(await evalJS('document.querySelectorAll("[data-kitsune-tab]").length'),4);
+  await evalJS('document.querySelector("[data-kitsune-tab=library]").click()');
+  assert.equal(await evalJS('document.querySelector("[data-kitsune-panel=library]").hidden'),false);
+  assert.equal(await evalJS('document.querySelector("[data-kitsune-panel=avatar]").hidden'),true);
+  await evalJS('document.querySelector("[data-kitsune-tab=avatar]").click()');
+  assert.equal(await evalJS('document.querySelector("[data-kitsune-panel=avatar]").hidden'),false);
+  await evalJS(`(()=>{
+    const scale=document.getElementById('kitsune-framing');
+    scale.value='140';scale.dispatchEvent(new Event('input',{bubbles:true}));
+    const vertical=document.getElementById('kitsune-vertical');
+    vertical.value='65';vertical.dispatchEvent(new Event('input',{bubbles:true}));
+    return true;
+  })()`);
+  const crop=await evalJS(`(()=>{
+    const frame=document.querySelector('.kitsune-image-viewport');
+    const image=frame.querySelector('img');
+    return {overflow:getComputedStyle(frame).overflow,
+      width:frame.getBoundingClientRect().width,imageWidth:image.getBoundingClientRect().width,
+      shift:getComputedStyle(image).translate};
+  })()`);
+  assert.equal(crop.overflow,'hidden','Framing must clip image to visible window');
+  assert.ok(crop.imageWidth>crop.width,'Framing 140% must enlarge content inside clipped viewport');
+  assert.notEqual(crop.shift,'none','Vertical framing needs a real transform');
+
+
   assert.ok(Math.abs(modal.centerX-modal.width/2)<2,'Settings horizontally centered');
   assert.ok(Math.abs(modal.centerY-modal.height/2)<2,'Settings vertically centered');
+  await cd.send('Emulation.setDeviceMetricsOverride',{width:1366,height:768,deviceScaleFactor:1.75,mobile:false});
+  const hi=await evalJS(`(()=>{
+    const r=document.getElementById('kitsune-settings').getBoundingClientRect();
+    return {dpr:devicePixelRatio,top:r.top,bottom:r.bottom,left:r.left,right:r.right};
+  })()`);
+  assert.equal(hi.dpr,1.75,'Windows 175% DPI must be testable');
+  assert.ok(hi.top>=0&&hi.bottom<=768&&hi.left>=0&&hi.right<=1366,'Settings must fit on 1366x768');
+  await cd.send('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
+
   await evalJS(`(()=>{
     const size=document.getElementById('kitsune-avatar-size');
     size.value='230';size.dispatchEvent(new Event('input',{bubbles:true}));
