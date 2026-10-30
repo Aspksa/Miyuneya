@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { atomicWrite, readJSON } from './runtime.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const assets=['blank.html','blank.css','blank.js','index.html','style.css','fox.svg','favicon.svg',...[1,2,3,4].map(n=>`avatars/avatar${n}.png`)];
+const assets=['blank.html','blank.css','blank.js','avatar.css','avatar.js','avatars/hayumeri-kitsune.avif','index.html','style.css','fox.svg','favicon.svg',...[1,2,3,4].map(n=>`avatars/avatar${n}.png`)];
 export async function ensureBuild(root, check = false) {
   const pkg = await readJSON(join(root,'package.json'));
   if (Object.keys(pkg.dependencies || {}).length || Object.keys(pkg.devDependencies || {}).length || pkg.workspaces) throw new Error('Изменился набор зависимостей. Эта версия запуска поддерживает проект без внешних пакетов; установка не выполнена.');
@@ -34,7 +34,21 @@ export async function ensureBuild(root, check = false) {
     }
     if(intact) return false;
   }
-  if(check) throw new Error('Сборка отсутствует, повреждена или устарела: выполните npm run build.');
+  if (check) {
+    if (cached?.fingerprint !== fingerprint) {
+      console.error('Сборка: fingerprint', { expected: fingerprint, found: cached?.fingerprint });
+      console.error('Сборка: actual input hashes', Object.entries(inputs).map(([name,bytes]) => [name,hash(bytes)]));
+    } else {
+      for (const name of [...assets,...modules.map(name => name+'.js')]) {
+        try {
+          const actual=hash(await readFile(join(root,'dist',name)));
+          if (actual!==cached.outputs?.[name])
+            console.error('Сборка: отличается файл',name,'ожидается',cached.outputs?.[name],'фактически',actual);
+        } catch(e) { console.error('Сборка: недоступен файл',name,(e).code); }
+      }
+    }
+    throw new Error('Сборка отсутствует, повреждена или устарела: выполните npm run build.');
+  }
   for(const name of modules) {
     let code='// Generated from src/'+name+'.ts by npm run build.\n'+stripTypeScriptTypes(inputs[`src/${name}.ts`].toString('utf8'),{mode:'strip'});
     code=code.replace(/[ \t]+$/gm,'');

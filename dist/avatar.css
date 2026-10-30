@@ -1,0 +1,273 @@
+/* Floating Hayumeri fox. Vector interface controls, transparent avatar, no framework. */
+.kitsune-avatar {
+  --kitsune-size: 180px;
+  --kitsune-alpha: 1;
+  position: fixed;
+  z-index: 850;
+  left: 24px;
+  top: 55vh;
+  display: grid;
+  place-items: center;
+  width: min(var(--kitsune-size), calc(100vw - 20px));
+  height: min(var(--kitsune-size), calc(100vw - 20px));
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 24px;
+  background: transparent;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  opacity: var(--kitsune-alpha);
+  transition: filter .25s ease;
+}
+.kitsune-avatar:active { cursor: grabbing; }
+.kitsune-avatar img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 8px 15px rgba(178,119,43,.28));
+  transform-origin: center bottom;
+  animation: kitsune-float 4.6s ease-in-out infinite;
+}
+.kitsune-avatar:not(.no-glow):hover img,
+.kitsune-avatar:not(.no-glow).talking img {
+  filter: drop-shadow(0 8px 20px rgba(240,178,65,.53));
+}
+.kitsune-avatar.no-glow img { filter: none; }
+.kitsune-avatar.no-motion img { animation: none !important; }
+.kitsune-avatar:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+@keyframes kitsune-float {
+  0%,100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-6px) scale(1.012); }
+}
+.kitsune-chat {
+  --kitsune-font: 15px;
+  position: fixed;
+  z-index: 890;
+  left: 210px;
+  top: 80px;
+  width: min(410px, calc(100vw - 20px));
+  height: min(550px, calc(100dvh - 24px));
+  min-width: min(300px, calc(100vw - 20px));
+  min-height: min(320px, calc(100dvh - 20px));
+  max-width: calc(100vw - 20px);
+  max-height: calc(100dvh - 20px);
+  border: 1px solid var(--line);
+  border-radius: 19px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  resize: both;
+  font-size: var(--kitsune-font);
+}
+.kitsune-chat-header {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 13px 12px 17px;
+  border-bottom: 1px solid var(--line);
+  touch-action: none;
+  cursor: move;
+  user-select: none;
+  background: var(--icon-hover);
+}
+.kitsune-chat-title { display: grid; gap: 1px; min-width: 0; font-size: 1.03em; font-weight: 750; }
+.kitsune-chat-title small { color: var(--secondary); font-size: .73em; font-weight: 500; }
+.kitsune-chat-tools { display: flex; align-items: center; gap: 4px; }
+.kitsune-chat-tools button {
+  display: grid; place-items: center;
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font-size: 1.05em;
+  cursor: pointer;
+}
+.kitsune-chat-tools button:hover { background: var(--panel); border-color: var(--line); }
+#kitsune-clear { padding-inline: 8px; font-size: .77em; font-weight: 600; }
+.kitsune-chat-tools svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+#kitsune-chat-close { font-size: 1.45em; line-height: 1; }
+.kitsune-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 17px;
+  scrollbar-gutter: stable;
+}
+.kitsune-log:empty::before {
+  content: "Напишите Миюнэе. Для работы чата подключите Cloud.ru в настройках проекта.";
+  display: block;
+  color: var(--secondary);
+  margin: auto;
+  max-width: 30ch;
+  text-align: center;
+  font-size: .89em;
+}
+.kitsune-bubble {
+  max-width: 94%;
+  min-width: 0;
+  border-radius: 14px;
+  padding: 9px 12px;
+  overflow-wrap: anywhere;
+  background: var(--icon-hover);
+  border: 1px solid var(--line);
+}
+.kitsune-bubble.user { align-self: flex-end; background: var(--accent-wash); }
+.kitsune-bubble.assistant { align-self: flex-start; }
+.kitsune-bubble strong { display: block; color: var(--text); font-size: .77em; margin-bottom: 4px; }
+.kitsune-bubble p { margin: 0; white-space: pre-wrap; font-size: .95em; line-height: 1.55; }
+.kitsune-chat-status { margin: 0; padding: 8px 14px; color: var(--status-error); background: var(--icon-hover); font-size: .8em; }
+.kitsune-chat-form {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+}
+.kitsune-chat-form textarea {
+  width: 100%;
+  min-width: 0;
+  max-height: 25dvh;
+  min-height: 60px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--panel);
+  font: inherit;
+}
+.kitsune-send-row { display: flex; justify-content: flex-end; gap: 8px; }
+.kitsune-send-row button {
+  min-height: 37px;
+  min-width: 92px;
+  padding: 7px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  color: var(--text);
+  background: var(--icon-hover);
+  font-size: .86em;
+  font-weight: 660;
+}
+#kitsune-send { color: #fff; background: #5967b9; border-color: transparent; }
+#kitsune-send:disabled { opacity: .55; cursor: wait; }
+.kitsune-settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 910;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  background: var(--veil);
+}
+.kitsune-settings {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 920;
+  transform: translate(-50%,-50%);
+  width: min(510px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  background: var(--panel);
+  color: var(--text);
+  padding: clamp(16px,3vw,27px);
+}
+.kitsune-settings-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px; padding-bottom: 15px; border-bottom: 1px solid var(--line);
+}
+.kitsune-settings-eyebrow { color: var(--secondary); font-weight: 740; letter-spacing: .12em; font-size: .7em; }
+.kitsune-settings-header h2 { font-size: clamp(1.2em,2vw,1.46em); line-height: 1.3; margin: 6px 0 0; }
+#kitsune-settings-close {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 1.65em;
+}
+.kitsune-settings-content { display: grid; gap: 15px; padding-block: 13px; }
+.kitsune-settings fieldset { border: 0; border-bottom: 1px solid var(--line); padding: 10px 0 15px; margin: 0; min-width: 0; }
+.kitsune-settings legend { padding: 0; font-size: 1em; font-weight: 760; }
+.kitsune-control {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: .91em;
+}
+.kitsune-control input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: var(--focus-ring); }
+.kitsune-control select {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+}
+.kitsune-control output { color: var(--secondary); font-variant-numeric: tabular-nums; }
+.kitsune-check { display: flex; align-items: center; gap: 10px; margin-top: 17px; font-size: .91em; }
+.kitsune-check input { width: 18px; height: 18px; accent-color: var(--focus-ring); }
+.kitsune-help { margin: 10px 0 0; color: var(--secondary); font-size: .82em; line-height: 1.65; }
+.kitsune-settings-footer { padding-top: 12px; }
+.kitsune-settings-footer button {
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--icon-hover);
+  color: var(--text);
+  font-size: .86em;
+  font-weight: 630;
+}
+.kitsune-avatar[hidden],.kitsune-chat[hidden],.kitsune-settings[hidden],.kitsune-settings-backdrop[hidden] { display: none !important; }
+.kitsune-settings button:focus-visible,
+.kitsune-settings input:focus-visible,
+.kitsune-chat button:focus-visible,
+.kitsune-chat textarea:focus-visible {
+  outline: 3px solid var(--focus-ring); outline-offset: 2px;
+}
+@media (max-width: 520px) {
+  .kitsune-chat { width: min(370px, calc(100vw - 20px)); }
+  .kitsune-chat-header { padding: 10px 8px 10px 12px; }
+  .kitsune-log { padding: 12px; }
+  .kitsune-settings { width: calc(100vw - 18px); padding: 16px; }
+}
+@media (max-height: 510px) {
+  .kitsune-chat { height: calc(100dvh - 18px); min-height: 200px; }
+  .kitsune-settings { max-height: calc(100dvh - 12px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kitsune-avatar img { animation: none !important; }
+}
+:root[data-motion="off"] .kitsune-avatar img { animation: none !important; }
+@media (forced-colors: active) {
+  .kitsune-chat, .kitsune-settings { border: 2px solid CanvasText; }
+  .kitsune-bubble { border-color: CanvasText; }
+}

@@ -86,11 +86,17 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   const source=await readFile(join(root,'web','blank.html'),'utf8');
   const stylesheet=await readFile(join(root,'web','blank.css'),'utf8');
   const script=await readFile(join(root,'web','blank.js'),'utf8');
+  const avatarStyles=await readFile(join(root,'web','avatar.css'),'utf8');
+  const avatarScript=await readFile(join(root,'web','avatar.js'),'utf8');
+  const avatarBytes=await readFile(join(root,'web','avatars','hayumeri-kitsune.avif'));
   assert.ok(source.includes('<link rel="stylesheet" href="/blank.css">'));
   assert.ok(source.includes('<script type="module" src="/blank.js"></script>'));
   // The complete real DOM and real stylesheet are rendered without external network.
   const documentHTML=source.replace('<link rel="stylesheet" href="/blank.css">','<style>'+stylesheet+'</style>')
-    .replace('<script type="module" src="/blank.js"></script>','');
+    .replace('<script type="module" src="/blank.js"></script>','')
+    .replace('<link rel="stylesheet" href="/avatar.css">','<style>'+avatarStyles+'</style>')
+    .replace('<script defer src="/avatar.js"></script>','')
+    .replace('src="/avatars/hayumeri-kitsune.avif"','src="data:image/avif;base64,'+avatarBytes.toString('base64')+'"');
   const frame=await cd.send('Page.getFrameTree');
   await cd.send('Page.setDocumentContent',{frameId:frame.frameTree.frame.id,html:documentHTML});
   async function evalJS(expression) {
@@ -100,6 +106,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   }
   assert.equal(await evalJS('document.readyState'),'complete');
   await evalJS(script);
+  await evalJS(avatarScript);
   const brainInitially=await evalJS(`(()=>{
     const node=document.getElementById('brain-nav-link');
     const rail=document.querySelector('.right-rail').getBoundingClientRect();
@@ -130,6 +137,78 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   await evalJS('new Promise(resolve=>setTimeout(resolve,40))');
   assert.equal(await evalJS('document.getElementById("brain-workspace").hidden'),true);
   assert.equal(await evalJS('document.title'),'');
+  await evalJS('document.querySelector("#kitsune-avatar img").decode()');
+  const kitsuneInitial=await evalJS(`(()=>{
+    const avatar=document.getElementById('kitsune-avatar');
+    const image=avatar.querySelector('img');
+    const chat=document.getElementById('kitsune-chat');
+    return {imageNatural:image.naturalWidth,chatHidden:chat.hidden,settingsHidden:document.getElementById('kitsune-settings').hidden,
+      bounds:avatar.getBoundingClientRect().toJSON()};
+  })()`);
+  assert.equal(kitsuneInitial.imageNatural,160,'Uploaded local AVIF must decode with transparency');
+  assert.equal(kitsuneInitial.chatHidden,true);
+  assert.equal(kitsuneInitial.settingsHidden,true);
+  await evalJS('document.getElementById("kitsune-avatar").click()');
+  assert.equal(await evalJS('document.getElementById("kitsune-chat").hidden'),false,'Left click opens real chat');
+  await evalJS('document.getElementById("kitsune-avatar").click()');
+  assert.equal(await evalJS('document.getElementById("kitsune-chat").hidden'),true);
+  await evalJS(`(()=>{
+    const avatar=document.getElementById('kitsune-avatar');
+    avatar.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,button:2}));
+    return true;
+  })()`);
+  const modal=await evalJS(`(()=>{
+    const el=document.getElementById('kitsune-settings'),r=el.getBoundingClientRect();
+    return {hidden:el.hidden,centerX:r.left+r.width/2,centerY:r.top+r.height/2,width:innerWidth,height:innerHeight};
+  })()`);
+  assert.equal(modal.hidden,false,'Right click opens centered avatar and chat settings');
+  assert.ok(Math.abs(modal.centerX-modal.width/2)<2,'Settings horizontally centered');
+  assert.ok(Math.abs(modal.centerY-modal.height/2)<2,'Settings vertically centered');
+  await evalJS(`(()=>{
+    const size=document.getElementById('kitsune-avatar-size');
+    size.value='230';size.dispatchEvent(new Event('input',{bubbles:true}));
+    const width=document.getElementById('kitsune-chat-width');
+    width.value='500';width.dispatchEvent(new Event('input',{bubbles:true}));
+    return true;
+  })()`);
+  assert.equal(await evalJS('document.getElementById("kitsune-avatar").getBoundingClientRect().width'),230);
+  assert.match(await evalJS('document.getElementById("kitsune-chat").style.width'),/500px/);
+  await evalJS('document.getElementById("kitsune-settings-close").click()');
+  assert.equal(await evalJS('document.getElementById("kitsune-settings").hidden'),true);
+  // Mouse dragging must move the avatar and NOT activate chat.
+  const beforeDrag=await evalJS(`(()=>{
+    const r=document.getElementById('kitsune-avatar').getBoundingClientRect();
+    return {left:r.left,top:r.top,x:r.left+r.width/2,y:r.top+r.height/2};
+  })()`);
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:beforeDrag.x,y:beforeDrag.y});
+  await cd.send('Input.dispatchMouseEvent',{type:'mousePressed',x:beforeDrag.x,y:beforeDrag.y,button:'left',clickCount:1});
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:beforeDrag.x+30,y:beforeDrag.y-30,button:'left',buttons:1});
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:beforeDrag.x+30,y:beforeDrag.y-30,button:'left',clickCount:1});
+  const afterDrag=await evalJS(`(()=>{
+    const r=document.getElementById('kitsune-avatar').getBoundingClientRect();
+    return {left:r.left,top:r.top,chatHidden:document.getElementById('kitsune-chat').hidden};
+  })()`);
+  assert.ok(afterDrag.left>=beforeDrag.left+20,'Dragging moves avatar horizontally');
+  assert.ok(afterDrag.top<=beforeDrag.top-20,'Dragging moves avatar vertically');
+  assert.equal(afterDrag.chatHidden,true,'Dragging must not open chat');
+  await evalJS('document.getElementById("kitsune-avatar").click()');
+  assert.equal(await evalJS('document.getElementById("kitsune-chat").hidden'),false);
+  const headerBefore=await evalJS(`(()=>{
+    const p=document.getElementById('kitsune-chat').getBoundingClientRect();
+    const h=document.getElementById('kitsune-chat-header').getBoundingClientRect();
+    return {left:p.left,top:p.top,x:h.left+45,y:h.top+16};
+  })()`);
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:headerBefore.x,y:headerBefore.y});
+  await cd.send('Input.dispatchMouseEvent',{type:'mousePressed',x:headerBefore.x,y:headerBefore.y,button:'left',clickCount:1});
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:headerBefore.x+26,y:headerBefore.y+16,button:'left',buttons:1});
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:headerBefore.x+26,y:headerBefore.y+16,button:'left',clickCount:1});
+  const chatAfter=await evalJS(`(()=>{
+    const r=document.getElementById('kitsune-chat').getBoundingClientRect();
+    return {left:r.left,top:r.top};
+  })()`);
+  assert.ok(chatAfter.left>=headerBefore.left+15,'Chat moves by dragging the header');
+  await evalJS('document.getElementById("kitsune-chat-close").click()');
+  await evalJS('document.getElementById("kitsune-settings-reset").click()');
   assert.equal(await evalJS('document.getElementById("cloud-key").type'),'password');
   assert.equal(await evalJS('document.getElementById("cloud-key").value'),'');
   assert.equal(await evalJS('document.getElementById("cloud-panel") !== null'),true);
@@ -269,7 +348,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
       assert.ok(metrics.x>=-1 && metrics.right<=width+1 && metrics.bottom<=height+1,
         `Clipped settings: ${name}/${theme}`);
       assert.ok(metrics.contrast>=4.5,`Low text contrast: ${name}/${theme} ${metrics.contrast}`);
-      assert.ok(metrics.svg>=3 && metrics.bitmaps===0,`Raster UI asset on blank homepage: ${name}`);
+      assert.ok(metrics.svg>=3 && metrics.bitmaps===1,`Raster UI asset on blank homepage: ${name}`);
       assert.ok(metrics.railWidth>=50 && metrics.railWidth<=117);
       const capture=await cd.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false,fromSurface:true});
       const bytes=Buffer.from(capture.data,'base64');

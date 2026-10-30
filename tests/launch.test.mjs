@@ -34,12 +34,20 @@ test('Default homepage has only the right settings rail; original workspace and 
   assert.match(html,/id="settings-panel"[^>]*role="dialog"/);
   assert.match(html,/name="appearance" data-setting="theme" value="light"/);
   assert.match(html,/name="appearance" data-setting="theme" value="dark"/);
-  for (const filename of ['blank.css','blank.js']) {
+  for (const filename of ['blank.css','blank.js','avatar.css','avatar.js']) {
     const asset=await fetch(base+'/'+filename);
     assert.equal(asset.status,200);
     assert.equal(await asset.text(),await readFile(join(root,'web',filename),'utf8'));
   }
-  assert.doesNotMatch(html,/Miyuneya|Миюнэя/i);
+  assert.match(html,/<title><\/title>/,'Blank homepage retains unnamed document title');
+  assert.match(html,/id="kitsune-avatar"/);
+  assert.match(html,/id="kitsune-settings"[^>]*role="dialog"/);
+  const image=await fetch(base+'/avatars/hayumeri-kitsune.avif');
+  assert.equal(image.status,200);
+  assert.match(image.headers.get('content-type'),/image\/avif/);
+  const received=Buffer.from(await image.arrayBuffer());
+  assert.deepEqual(received,await readFile(join(root,'web','avatars','hayumeri-kitsune.avif')));
+
   const head=await fetch(base+'/',{method:'HEAD'});
   assert.equal(head.status,200);
   assert.equal(await head.text(),'');
