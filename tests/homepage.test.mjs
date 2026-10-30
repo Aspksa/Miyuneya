@@ -107,7 +107,7 @@ test('All appearance controls apply live and persist across different browser po
   assert.equal(backend.appearance.railWidth,'wide');
   assert.equal(backend.appearance.iconSize,'large');
   assert.equal(backend.appearance.scale,110);
-  assert.equal(backend.appearance.background,'#f8f9fc');
+  assert.equal(backend.appearance.background,'#12151b');
   assert.equal(backend.appearance.accent,'#599a94');
   assert.equal(a.css.get('--ui-scale'),'1.1');
   assert.equal(a.css.get('--rail-width'),'96px');
