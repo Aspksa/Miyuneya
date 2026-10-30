@@ -175,6 +175,24 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.equal(await evalJS('document.querySelector("[data-kitsune-panel=avatar]").hidden'),true);
   await evalJS('document.querySelector("[data-kitsune-tab=avatar]").click()');
   assert.equal(await evalJS('document.querySelector("[data-kitsune-panel=avatar]").hidden'),false);
+  await evalJS(`(()=>{
+    const scale=document.getElementById('kitsune-framing');
+    scale.value='140';scale.dispatchEvent(new Event('input',{bubbles:true}));
+    const vertical=document.getElementById('kitsune-vertical');
+    vertical.value='65';vertical.dispatchEvent(new Event('input',{bubbles:true}));
+    return true;
+  })()`);
+  const crop=await evalJS(`(()=>{
+    const frame=document.querySelector('.kitsune-image-viewport');
+    const image=frame.querySelector('img');
+    return {overflow:getComputedStyle(frame).overflow,
+      width:frame.getBoundingClientRect().width,imageWidth:image.getBoundingClientRect().width,
+      shift:getComputedStyle(image).translate};
+  })()`);
+  assert.equal(crop.overflow,'hidden','Framing must clip image to visible window');
+  assert.ok(crop.imageWidth>crop.width,'Framing 140% must enlarge content inside clipped viewport');
+  assert.notEqual(crop.shift,'none','Vertical framing needs a real transform');
+
 
   assert.ok(Math.abs(modal.centerX-modal.width/2)<2,'Settings horizontally centered');
   assert.ok(Math.abs(modal.centerY-modal.height/2)<2,'Settings vertically centered');
