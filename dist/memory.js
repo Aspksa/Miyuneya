@@ -45,6 +45,18 @@ import { localDateKey } from './calendar.js';
 
 export const brainIcon = '<path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill"/><path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill" transform="matrix(-1 0 0 1 24 0)"/><path d="M12 5.4v14.1M12 9.2c-1.3 0-2.2-.8-2.3-2M9.6 12.3c-1.4-.4-2.8.2-3.4 1.4M12 15.6c-1.2 0-2.2-.7-2.5-1.8M12 9.2c1.3 0 2.2-.8 2.3-2M14.4 12.3c1.4-.4 2.8.2 3.4 1.4M12 15.6c1.2 0 2.2-.7 2.5-1.8M6.7 8.9c.6.5 1.4.7 2.1.5M17.3 8.9c-.6.5-1.4.7-2.1.5" class="accent-stroke"/>';
 const tabs                  = [['growth', 'Рост'], ['plans', 'Дела'], ['thoughts', 'Размышления'], ['logic', 'Логика'], ['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['timeline', 'Хронология'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
+// Eleven tabs never fitted the panel and scrolled sideways with nothing to say more were there.
+// They are the same eleven views, gathered into four groups by what you came to the memory for.
+
+export const groups                           = [
+  ['now', 'Сейчас', ['thoughts', 'plans']],
+  ['known', 'Знания', ['fact', 'rule', 'episode', 'map']],
+  ['history', 'История', ['timeline', 'diary', 'journal']],
+  ['growth', 'Рост', ['growth', 'logic']],
+];
+// Inside the «Рост» group the overview would repeat the group's own name.
+const tabLabel = (key     ) => key === 'growth' ? 'Итоги' : tabs.find(([t]) => t === key) [1];
+export const groupOf = (key     )        => groups.find(([, , list]) => list.includes(key)) [0];
 export const categories                       = [['personal', 'Личное'], ['work', 'Работа'], ['health', 'Здоровье'], ['plans', 'Планы'], ['tastes', 'Вкусы'], ['people', 'Люди'], ['other', 'Другое']];
 const categoryName = (c          ) => categories.find(([key]) => key === c)?.[1] || 'Другое';
 const sources                                           = { user: 'от вас', dialog: 'из разговора', sleep: 'после сна', note: 'из заметки', review: 'из самооценки', thought: 'из размышлений', logic: 'из журнала ошибок' };
@@ -120,8 +132,12 @@ export function mountMemory(host            ) {
   document.body.append(panel);
   let view                    = null;
   let tab      = 'growth';
+  let group        = 'growth';
+  let settings = false;
   let filter                   = 'all';
   let editing = '';
+  // Whoever sets the tab — a link from the chat, a reopen, the map — the group follows it.
+  const goTab = (next     ) => { tab = next; group = groupOf(next); };
   let selected = '';
   let busy = false;
   let poll                                           ;
@@ -172,7 +188,7 @@ export function mountMemory(host            ) {
       ? `<form class="memory-edit" data-memory-save="${id}"><textarea name="text" maxlength="400" rows="3" aria-label="Текст записи">${escape(item.text)}</textarea>${fact ? `<div class="memory-fields">${categorySelect(item.category)}<label>Актуально до <input type="date" name="until" value="${item.until || ''}"></label></div>` : ''}<div><button class="button primary" type="submit">Сохранить</button><button class="button quiet" type="button" data-memory-cancel>Отмена</button></div></form>`
       : `<p>${fact && item.category !== 'other' ? `<span class="memory-tag">${categoryName(item.category)}</span>` : ''}${escape(item.text)}</p>`;
     const until = item.until ? ` · ${item.expired ? '<em>устарело</em>' : 'до ' + when(item.until)}` : '';
-    return `<article class="memory-item ${item.pinned ? 'pinned' : ''} ${item.expired ? 'expired' : ''}" id="memory-${id}">${body}${item.status ? `<small class="memory-sub">${escape(({active:'Запись с источником или вашим подтверждением',inferred:'Непроверенное предположение',contested:'Есть противоречие — нужно уточнение',superseded:'Предыдущая версия, заменена'}                         )[item.status]||item.status)}</small>`:''}${item.evidence?.length?`<details class="memory-evidence"><summary>Источники: ${item.evidence.length}</summary>${item.evidence.map(e=>`<blockquote>${escape(e.quote)}<footer>${escape(e.source)} · ${when(e.at,true)} · версия ${escape(short(e.version,12))}</footer></blockquote>`).join('')}</details>`:''}${view?.history?.some(h=>h.id===item.id)?`<details class="memory-evidence"><summary>История изменения</summary>${view.history.filter(h=>h.id===item.id).map(h=>`<p>${escape(h.before)} → ${escape(h.after)}<small> · ${when(h.at,true)} · ${escape(h.reason)}</small></p>`).join('')}</details>`:''}<div class="memory-meta"><span class="meter" data-strength="${item.pinned ? 1 : item.strength}" title="Сила памяти ${Math.round(item.strength * 100)}%"><i></i></span><span>${strengthLabel(item)} · упоминаний ${item.hits} · ${origin(item)} · ${when(item.seen)}${until}</span></div>${linkChips([...item.links, ...related(item.id)])}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${id}">Изменить</button><button type="button" class="chat-link" data-memory-pin="${id}" aria-pressed="${item.pinned}">${item.pinned ? 'Открепить' : 'Закрепить'}</button><button type="button" class="chat-link" data-memory-select="${id}">На карте</button><button type="button" class="chat-link danger" data-memory-delete="${id}">Удалить</button></div></article>`;
+    return `<article class="memory-item ${item.pinned ? 'pinned' : ''} ${item.expired ? 'expired' : ''} ${item.status === 'contested' ? 'contested' : ''}" id="memory-${id}">${body}${item.status ? `<small class="memory-sub">${escape(({active:'Запись с источником или вашим подтверждением',inferred:'Непроверенное предположение',contested:'Есть противоречие — нужно уточнение',superseded:'Предыдущая версия, заменена'}                         )[item.status]||item.status)}</small>`:''}${item.evidence?.length?`<details class="memory-evidence"><summary>Источники: ${item.evidence.length}</summary>${item.evidence.map(e=>`<blockquote>${escape(e.quote)}<footer>${escape(e.source)} · ${when(e.at,true)} · версия ${escape(short(e.version,12))}</footer></blockquote>`).join('')}</details>`:''}${view?.history?.some(h=>h.id===item.id)?`<details class="memory-evidence"><summary>История изменения</summary>${view.history.filter(h=>h.id===item.id).map(h=>`<p>${escape(h.before)} → ${escape(h.after)}<small> · ${when(h.at,true)} · ${escape(h.reason)}</small></p>`).join('')}</details>`:''}<div class="memory-meta"><span class="meter" data-strength="${item.pinned ? 1 : item.strength}" title="Сила памяти ${Math.round(item.strength * 100)}%"><i></i></span><span>${strengthLabel(item)} · упоминаний ${item.hits} · ${origin(item)} · ${when(item.seen)}${until}</span></div>${linkChips([...item.links, ...related(item.id)])}<div class="memory-actions"><button type="button" class="chat-link" data-memory-edit="${id}">Изменить</button><button type="button" class="chat-link" data-memory-pin="${id}" aria-pressed="${item.pinned}">${item.pinned ? 'Открепить' : 'Закрепить'}</button><button type="button" class="chat-link" data-memory-select="${id}">На карте</button><button type="button" class="chat-link danger" data-memory-delete="${id}">Удалить</button></div></article>`;
   }
   const learned = (id        ) => { const ids = (view?.items || []).filter(i => i.origin === id).map(i => i.id); return ids.length ? `<p class="memory-sub">Узнала из этого разговора:</p>${linkChips(ids)}` : ''; };
   function episodeRow(e             ) {
@@ -217,7 +233,7 @@ export function mountMemory(host            ) {
   const mistakeNames                                      = { calc: 'Расчёт', assumption: 'Допущение', causality: 'Причинность', memory: 'Память', prediction: 'Прогноз', other: 'Другое' };
   function logicCard(l           , more = false) {
     const pct = (n               ) => n === null ? '—' : n + '%';
-    return `<section class="growth-card logic-card"><div class="growth-level"><span class="growth-badge logic">${l.level}</span><div><b>Логика: ${escape(l.name)}</b><small>Уровень ${l.level} · ${l.points} из ${l.next} очков</small></div>${more ? '<button type="button" class="chat-link" data-memory-tab="logic">Подробнее</button>' : ''}</div>${bar(l.points, l.floor, l.next)}
+    return `<section class="growth-card logic-card"><div class="growth-level"><span class="growth-badge logic">${l.level}</span><div><b>${escape(l.name)}</b><small>Уровень ${l.level} · ${l.points} из ${l.next} очков</small></div>${more ? '<button type="button" class="chat-link" data-memory-tab="logic">Подробнее</button>' : ''}</div>${bar(l.points, l.floor, l.next)}
       <div class="logic-stats"><div><b>${pct(l.predictions.accuracy)}</b><small>прогнозов сбылось${l.predictions.checked ? ` (${l.predictions.right} из ${l.predictions.checked})` : ''}</small></div><div><b>${pct(l.conclusions.share)}</b><small>проверенных исходов${l.conclusions.total ? ` (${l.conclusions.right} из ${l.conclusions.total})` : ''}</small></div><div><b>${l.corrections}</b><small>исправлений${l.fixed ? `, правил из них: ${l.fixed}` : ''}</small></div></div>
       ${l.week.predictions || l.week.checked || l.week.corrections ? `<p class="growth-line">За неделю: ${[l.week.predictions && plural(l.week.predictions, 'прогноз', 'прогноза', 'прогнозов'), l.week.checked && `проверено ${l.week.checked}, сбылось ${l.week.right}`, l.week.corrections && plural(l.week.corrections, 'исправление', 'исправления', 'исправлений')].filter(Boolean).join(' · ')}</p>` : ''}</section>`;
   }
@@ -366,12 +382,17 @@ export function mountMemory(host            ) {
     const scroll = panel.querySelector('.memory-list')?.scrollTop || 0;
     const off = !view || busy ? 'disabled' : '';
     panel.classList.toggle('wide', tab === 'map');
-    panel.innerHTML = `<header class="memory-head"><span class="memory-mark"><svg viewBox="0 0 24 24" aria-hidden="true">${brainIcon}</svg></span><div><b>Память Миюнэи</b><small>${escape(statusLine())}</small></div><button type="button" class="icon-button" data-memory-close aria-label="Закрыть память">×</button></header>`
-      + `<div class="memory-switches"><label class="switch"><input type="checkbox" data-memory-enabled ${view?.enabled ? 'checked' : ''} ${off}><span>Память включена</span></label><label class="switch"><input type="checkbox" data-memory-private ${view?.private ? 'checked' : ''} ${off || (view?.enabled ? '' : 'disabled')}><span>Приватный режим: новые разговоры не запоминаются</span></label>${view?.searchError && view.available ? `<p class="memory-warn">Поиск по смыслу недоступен, пока ищу по словам. ${escape(view.searchError)}</p>` : ''}</div>`
-      + `<div class="memory-tabs" role="tablist">${tabs.map(([key, label]) => `<button type="button" role="tab" aria-selected="${tab === key}" class="${tab === key ? 'active' : ''}" data-memory-tab="${key}">${label}${count(key) ? ` <small>${count(key)}</small>` : ''}</button>`).join('')}</div>`
+    panel.innerHTML = `<header class="memory-head"><span class="memory-mark"><svg viewBox="0 0 24 24" aria-hidden="true">${brainIcon}</svg></span><div><b>Память Миюнэи</b><small>${escape(statusLine())}</small></div><button type="button" class="icon-button ${settings ? 'active' : ''}" data-memory-settings aria-label="Настройки памяти" aria-expanded="${settings}" title="Настройки памяти"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg></button><button type="button" class="icon-button" data-memory-close aria-label="Закрыть память">×</button></header>`
+      + (settings ? `<div class="memory-switches"><label class="switch"><input type="checkbox" data-memory-enabled ${view?.enabled ? 'checked' : ''} ${off}><span>Память включена</span></label><label class="switch"><input type="checkbox" data-memory-private ${view?.private ? 'checked' : ''} ${off || (view?.enabled ? '' : 'disabled')}><span>Приватный режим: новые разговоры не запоминаются</span></label><div class="memory-danger"><button type="button" class="button quiet danger" data-memory-reset ${off}>Сбросить память</button><small>Факты, правила, эпизоды и дневник будут стёрты без возврата.</small></div></div>` : '')
+      + (view?.searchError && view.available ? `<p class="memory-warn">Поиск по смыслу недоступен, пока ищу по словам. ${escape(view.searchError)}</p>` : '')
+      + `<div class="memory-groups" role="tablist">${groups.map(([key, label, list]) => {
+        const total = list.reduce((sum, t) => sum + (Number(count(t)) || 0), 0);
+        return `<button type="button" role="tab" aria-selected="${group === key}" class="${group === key ? 'active' : ''}" data-memory-group="${key}">${label}${total ? ` <small>${total}</small>` : ''}</button>`;
+      }).join('')}</div>`
+      + `<div class="memory-tabs" role="tablist">${groups.find(([key]) => key === group) [2].map(key => `<button type="button" role="tab" aria-selected="${tab === key}" class="${tab === key ? 'active' : ''}" data-memory-tab="${key}">${tabLabel(key)}${count(key) ? ` <small>${count(key)}</small>` : ''}</button>`).join('')}</div>`
       + `<div class="memory-list" role="tabpanel">${listHtml()}</div>`
       + (tab === 'fact' || tab === 'rule' ? `<form class="memory-add"><input name="text" maxlength="400" autocomplete="off" placeholder="${tab === 'fact' ? 'Добавить факт, например «работает по утрам»' : 'Добавить правило, например «задачи писать коротко»'}" aria-label="Новая запись" ${off}>${tab === 'fact' ? categorySelect(filter === 'all' ? 'other' : filter) : ''}<button class="button" type="submit" ${off}>Добавить</button></form>` : '')
-      + `<footer class="memory-foot"><button type="button" class="button" data-memory-sleep ${off || (view?.available && view.enabled && !view.private ? '' : 'disabled')}>Уснуть сейчас</button><a class="button" href="/api/memory/export" download>Экспорт</a><button type="button" class="button quiet danger" data-memory-reset ${off}>Сбросить</button></footer>`;
+      + `<footer class="memory-foot"><button type="button" class="button" data-memory-sleep ${off || (view?.available && view.enabled && !view.private ? '' : 'disabled')}>Уснуть сейчас</button><a class="button" href="/api/memory/export" download>Экспорт</a></footer>`;
     for (const meter of panel.querySelectorAll             ('[data-strength]')) meter.style.setProperty('--strength', String(Math.max(0.04, Number(meter.dataset.strength))));
     for (const meter of panel.querySelectorAll             ('[data-progress]')) meter.style.setProperty('--progress', meter.dataset.progress );
     const list = panel.querySelector('.memory-list'); if (list) list.scrollTop = scroll;
@@ -403,10 +424,10 @@ export function mountMemory(host            ) {
   // The server thinks while the page sits in the background; look again when the user comes back.
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void request('').then(welcome).catch(() => {}); });
   setInterval(() => { if (panel.hidden && document.visibilityState === 'visible') void request('').then(welcome).catch(() => {}); }, 10 * 60_000);
-  function open(start      ) { if (start) { tab = start; editing = ''; } note.hidden = true; panel.hidden = false; render(); void refresh(); panel.querySelector             ('[data-memory-close]')?.focus(); sync(); }
+  function open(start      ) { if (start) { goTab(start); editing = ''; } note.hidden = true; panel.hidden = false; render(); void refresh(); panel.querySelector             ('[data-memory-close]')?.focus(); sync(); }
   function close() { if (panel.hidden) return; panel.hidden = true; editing = ''; clearTimeout(poll); sync(); document.querySelector             ('[data-memory-toggle]')?.focus(); }
   const sync = () => document.querySelector('[data-memory-toggle]')?.setAttribute('aria-expanded', String(!panel.hidden));
-  function select(id        ) { tab = 'map'; selected = id; editing = ''; render(); }
+  function select(id        ) { goTab('map'); selected = id; editing = ''; render(); }
 
   panel.addEventListener('click', async event => {
     const node = (event.target           ).closest             ('[data-node]');
@@ -415,14 +436,21 @@ export function mountMemory(host            ) {
     if (!target) return;
     const d = target.dataset;
     if (target.hasAttribute('data-memory-close')) return close();
-    if (d.memoryTab) { tab = d.memoryTab       ; editing = ''; render(); panel.querySelector('.memory-list') .scrollTop = 0; if (tab === 'thoughts') markSeen(); return; }
+    if (target.hasAttribute('data-memory-settings')) { settings = !settings; render(); return; }
+    // Picking a group opens its first view, unless the current one already belongs to it.
+    if (d.memoryGroup) {
+      const next = groups.find(([key]) => key === d.memoryGroup) ;
+      if (group !== next[0]) { group = next[0]; tab = next[2][0]; }
+      editing = ''; render(); panel.querySelector('.memory-list') .scrollTop = 0; if (tab === 'thoughts') markSeen(); return;
+    }
+    if (d.memoryTab) { goTab(d.memoryTab       ); editing = ''; render(); panel.querySelector('.memory-list') .scrollTop = 0; if (tab === 'thoughts') markSeen(); return; }
     if (d.memoryFilter) { filter = d.memoryFilter                    ; render(); return; }
     if (d.memorySelect) { select(d.memorySelect); return; }
     if (d.memoryEdit) { editing = d.memoryEdit; render(); panel.querySelector             ('.memory-edit textarea, .memory-edit input')?.focus(); return; }
     if (target.hasAttribute('data-memory-cancel')) { editing = ''; render(); return; }
     if (d.memoryNote) { close(); host.openNote(d.memoryNote); return; }
     if (d.memoryGoto) {
-      tab = d.tab       ; editing = ''; filter = 'all'; render();
+      goTab(d.tab       ); editing = ''; filter = 'all'; render();
       const row = panel.querySelector             ('#memory-' + CSS.escape(d.memoryGoto));
       row?.scrollIntoView({ block: 'nearest' }); row?.classList.add('flash');
       return;
