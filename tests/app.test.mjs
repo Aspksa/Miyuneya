@@ -116,6 +116,10 @@ test('cloud.ru assistant keeps the key on the server and proxies chat', async t 
     res.setHeader('Content-Type','application/json');
     if(req.headers.authorization!=='Bearer good-key-123'){res.statusCode=401;return res.end(JSON.stringify({error:{message:'bad key good-key-wrong'}}));}
     if(req.url==='/v1/models')return res.end(JSON.stringify({data:[{id:'zeta/model'},{id:'openai/gpt-oss-120b'},{id:'bad id'}]}));
+    if(req.url==='/v1/chat/completions' && seen.at(-1).body?.stream===false){
+      if(seen.at(-1).body?.model==='missing/model'){res.statusCode=404;return res.end(JSON.stringify({error:{message:'model missing'}}));}
+      return res.end(JSON.stringify({choices:[{message:{content:'готово'}}]}));
+    }
     if(seen.at(-1).body?.messages?.at(-1)?.content==='json'){return res.end(JSON.stringify({choices:[{message:{role:'assistant',content:'Целиком'}}]}));}
     res.writeHead(200,{'Content-Type':'text/event-stream'});
     for(const part of ['Привет,',' я лиса!',' <task>Купить корм</task>']){res.write(`data: ${JSON.stringify({choices:[{delta:{content:part}}]})}\n\n`);await new Promise(r=>setTimeout(r,5));}
@@ -136,6 +140,8 @@ test('cloud.ru assistant keeps the key on the server and proxies chat', async t 
   const notConnected=await json('/api/assistant/verify','POST',{});
   assert.equal(notConnected.status,200);
   assert.deepEqual(await notConnected.json(),{status:'not-configured',message:'Сначала сохраните API-ключ Cloud.ru.',model:'openai/gpt-oss-120b'});
+  const testWithoutKey=await (await json('/api/assistant/test','POST',{})).json();
+  assert.equal(testWithoutKey.status,'not-configured');
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'}]})).status,409);
   assert.equal((await json('/api/assistant','PUT',{apiKey:'short'})).status,400);
   assert.equal((await json('/api/assistant','PUT',{model:'плохая модель'})).status,400);
@@ -148,6 +154,9 @@ test('cloud.ru assistant keeps the key on the server and proxies chat', async t 
   assert.equal(verificationFailure.status,'error');
   assert.match(verificationFailure.message,/отклонил/);
   assert.doesNotMatch(JSON.stringify(verificationFailure),/good-key-wrong/);
+  const testedBadKey=await (await json('/api/assistant/test','POST',{})).json();
+  assert.equal(testedBadKey.status,'error');
+  assert.doesNotMatch(JSON.stringify(testedBadKey),/good-key-wrong/);
   const rejected=await json('/api/assistant/chat','POST',{messages:[{role:'user',content:'Привет'}]});
   assert.equal(rejected.status,502);const rejectedBody=await rejected.json();
   assert.match(rejectedBody.error,/не принял ключ/);assert.ok(!rejectedBody.error.includes('good-key-wrong'));
@@ -159,10 +168,20 @@ test('cloud.ru assistant keeps the key on the server and proxies chat', async t 
   assert.equal(accepted.model,'zeta/model');
   assert.doesNotMatch(JSON.stringify(accepted),/good-key-123/);
   assert.equal(seen.at(-1).path,'/v1/models'); // verification does not generate a paid completion
+  const working=await (await json('/api/assistant/test','POST',{})).json();
+  assert.equal(working.status,'working');
+  assert.equal(seen.at(-1).path,'/v1/chat/completions');
+  assert.equal(seen.at(-1).body.model,'zeta/model');
+  assert.equal(seen.at(-1).body.stream,false);
+  assert.equal(seen.at(-1).body.max_completion_tokens,96);
+  assert.doesNotMatch(JSON.stringify(working),/good-key-123/);
   await json('/api/assistant','PUT',{model:'missing/model'});
   const missing=await (await json('/api/assistant/verify','POST',{})).json();
   assert.equal(missing.status,'model-unavailable');
   assert.equal(missing.model,'missing/model');
+  const brokenModel=await (await json('/api/assistant/test','POST',{})).json();
+  assert.equal(brokenModel.status,'error');
+  assert.match(brokenModel.message,/не найдена|не поддерживает/);
   await json('/api/assistant','PUT',{model:'zeta/model'});
 
   assert.equal((await json('/api/assistant/chat','POST',{messages:[{role:'system',content:'x'}]})).status,400);

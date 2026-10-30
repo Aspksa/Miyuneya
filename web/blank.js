@@ -212,6 +212,7 @@
   const keyHint = document.getElementById('cloud-key-hint');
   const save = document.getElementById('cloud-save');
   const verifyButton = document.getElementById('cloud-verify');
+  const testButton = document.getElementById('cloud-test');
   const refresh = document.getElementById('cloud-refresh');
   const remove = document.getElementById('cloud-remove');
   let configured = false, busy = false, savedModel = '';
@@ -224,7 +225,7 @@
   }
   function setBusy(value) {
     busy = value;
-    for (const button of [save, verifyButton, refresh, remove]) button.disabled = value;
+    for (const button of [save, verifyButton, testButton, refresh, remove]) button.disabled = value;
     key.disabled = value;
     model.disabled = value;
   }
@@ -289,7 +290,7 @@
     try {
       const result = await request('/api/assistant/verify', { method: 'POST' });
       if (result.status === 'connected') {
-        status('connected', 'Подключено', result.message || 'Ключ принят и модель доступна.');
+        status('connected', 'Доступ к API подтверждён', result.message || 'Ключ принят и модель доступна в каталоге. Ответ модели ещё не проверялся.');
       } else if (result.status === 'model-unavailable') {
         status('model-unavailable', 'Модель недоступна', result.message || 'Выберите модель из доступного списка.');
       } else if (result.status === 'not-configured') {
@@ -299,6 +300,30 @@
       }
     } catch {
       status('error', 'Ошибка проверки', 'Не удалось обратиться к локальному серверу. Попробуйте снова.');
+    } finally { setBusy(false); }
+  }
+  async function testGeneration() {
+    if (!configured) {
+      status('not-configured', 'Не подключено', 'Сначала сохраните API-ключ Cloud.ru.');
+      return;
+    }
+    if (model.value.trim() !== savedModel) {
+      status('unchecked', 'Несохранённая модель', 'Сначала сохраните выбранную модель.');
+      return;
+    }
+    setBusy(true);
+    status('checking', 'Проверяем ответ модели…', 'Отправлен короткий запрос к Cloud.ru. Он может расходовать платные токены.');
+    try {
+      const result = await request('/api/assistant/test', { method: 'POST' });
+      if (result.status === 'working') {
+        status('working', 'Модель отвечает · работает', result.message || 'Подключение проверено реальным запросом.');
+      } else if (result.status === 'not-configured') {
+        status('not-configured', 'Не подключено', result.message || 'Ключ не сохранён.');
+      } else {
+        status('error', 'Модель не ответила', result.message || 'Проверьте тип модели и доступ к Cloud.ru.');
+      }
+    } catch {
+      status('error', 'Не удалось проверить модель', 'Не удалось связаться с локальным сервером.');
     } finally { setBusy(false); }
   }
   form.addEventListener('submit', async event => {
@@ -335,6 +360,7 @@
       'Проверить действительность ключа можно кнопкой «Проверить подключение».');
   }
   verifyButton.addEventListener('click', () => { if (!busy) void verify(); });
+  testButton.addEventListener('click', () => { if (!busy) void testGeneration(); });
   refresh.addEventListener('click', () => { if (!busy) void loadModels(); });
   model.addEventListener('input', () => {
     if (!busy && configured) status('unchecked', 'Несохранённый выбор модели', 'Нажмите «Сохранить» перед проверкой.');

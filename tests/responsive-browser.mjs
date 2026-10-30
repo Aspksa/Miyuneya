@@ -104,6 +104,13 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90�
   assert.equal(await evalJS('document.getElementById("cloud-key").value'),'');
   assert.equal(await evalJS('document.getElementById("cloud-panel") !== null'),true);
   assert.equal(await evalJS('document.getElementById("cloud-model").value'),'openai/gpt-oss-120b');
+  const icons=await evalJS(`(()=>({
+    total:document.querySelectorAll('svg.setting-icon use').length,
+    noIcon:[...document.querySelectorAll('.setting-group legend,.setting-row-name,.setting-check-name,.cloud-label-name,.cloud-actions button,.cloud-forget,.reset-button')].filter(el=>!el.querySelector('svg use')).map(el=>el.textContent.trim())
+  }))()`);
+  assert.ok(icons.total>=24,'Expected vector icons for each setting');
+  assert.deepEqual(icons.noIcon,[],'All settings and action buttons must have a vector icon');
+
   // Browser-level integration: simulate the already-covered local API, prove
   // that saving a key does NOT claim connection before verification.
   await evalJS('new Promise(resolve => setTimeout(resolve, 30))');
@@ -126,6 +133,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90�
           message:state.key==='good-key-123' && state.model==='zeta/model'?'Модель доступна':'Модель отсутствует'
         })};
       }
+      if(path==='/api/assistant/test')return {ok:true,json:async()=>({status:'working',message:'Генерация подтверждена'})};
       if(path==='/api/assistant/models')return {ok:true,json:async()=>({models:['zeta/model','other/model']})};
       return {ok:true,json:async()=>({appearance:null})};
     };
@@ -143,6 +151,10 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90�
   await evalJS('document.getElementById("cloud-verify").click()');
   await evalJS('new Promise(resolve => setTimeout(resolve, 40))');
   assert.equal(await evalJS('document.getElementById("cloud-status").dataset.state'),'connected');
+  await evalJS('document.getElementById("cloud-test").click()');
+  await evalJS('new Promise(resolve => setTimeout(resolve, 40))');
+  assert.equal(await evalJS('document.getElementById("cloud-status").dataset.state'),'working');
+
   await evalJS('document.getElementById("cloud-refresh").click()');
   await evalJS('new Promise(resolve => setTimeout(resolve, 40))');
   assert.equal(await evalJS('document.getElementById("cloud-model-list").options.length'),2);

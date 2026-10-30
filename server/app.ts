@@ -325,6 +325,34 @@ export async function createApp(root: string, instance: string, preview = false,
             return send(200, { status: 'error', message, model: assistant.model });
           }
         }
+        // A deliberate, potentially billable test: unlike /verify it actually
+        // sends a short completion request to the selected chat model.
+        if (route === '/test' && req.method === 'POST') {
+          if (!assistant.apiKey) return send(200, { status: 'not-configured', message: 'Сначала сохраните API-ключ Cloud.ru.' });
+          let call: Awaited<ReturnType<typeof cloud>> | undefined;
+          try {
+            call = await cloud('/chat/completions', {
+              method: 'POST',
+              body: JSON.stringify({
+                model: assistant.model, stream: false, max_completion_tokens: 96,
+                messages: [{ role: 'user', content: 'Ответь одним словом: готово' }]
+              })
+            }, 30_000);
+            const answer = await call.response.json();
+            const content = answer?.choices?.[0]?.message?.content;
+            if (typeof content !== 'string' || !content.trim()) {
+              return send(200, { status: 'error', message: 'Cloud.ru ответил, но модель не вернула текст. Проверьте, что выбрана LLM-модель.' });
+            }
+            return send(200, { status: 'working', message: 'Модель успешно ответила. Подключение и генерация работают.' });
+          } catch (e) {
+            const reason = (e as Error).message || '';
+            const message = /не принял ключ/.test(reason) ? 'Cloud.ru отклонил API-ключ.'
+              : /не нашёл модель/.test(reason) ? 'Выбранная модель не найдена или не поддерживает этот запрос.'
+              : (e as { status?: number }).status === 504 ? 'Cloud.ru не ответил вовремя. Проверьте интернет и повторите.'
+              : 'Не удалось получить ответ модели. Проверьте модель, доступ и лимиты Cloud.ru.';
+            return send(200, { status: 'error', message });
+          } finally { call?.release(); }
+        }
         if (route === '/models' && req.method === 'GET') {
           if (!assistant.apiKey) return send(409, { error: 'Сначала сохраните API-ключ cloud.ru.' });
           try {
