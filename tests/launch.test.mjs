@@ -13,7 +13,7 @@ import { emptyWorkspace } from '../src/model.ts';
 import { prepareUpdate } from '../scripts/update.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 
-test('Default homepage is empty and untitled; original workspace and APIs are preserved',async t=>{
+test('Default homepage has only the right settings rail; original workspace and APIs are preserved',async t=>{
   const root=await fixture(t);
   const child=nodeLaunch(root,{MIYUNEYA_OFFLINE:'1'});
   const pointer=await waitReady(root,child);
@@ -22,10 +22,20 @@ test('Default homepage is empty and untitled; original workspace and APIs are pr
   assert.equal(home.status,200);
   assert.match(home.headers.get('content-type'),/^text\/html/);
   const html=await home.text();
-  assert.equal(html,await readFile(join(root,'web','blank.html'),'utf8'));
+  assert.equal(html,await readFile(join(root,'dist','blank.html'),'utf8'));
   assert.match(html,/<title><\/title>/);
-  assert.match(html,/<body><\/body>/);
-  assert.doesNotMatch(html,/<(?:script|link|nav|main|section|header|footer)\b/i);
+  assert.match(html,/<main[^>]*><\/main>/);
+  assert.match(html,/<nav[^>]*class="right-rail"/);
+  assert.match(html,/<svg\b/);
+  assert.match(html,/id="settings-toggle"/);
+  assert.match(html,/id="settings-panel"[^>]*role="dialog"/);
+  assert.match(html,/name="appearance" value="light"/);
+  assert.match(html,/name="appearance" value="dark"/);
+  for (const filename of ['blank.css','blank.js']) {
+    const asset=await fetch(base+'/'+filename);
+    assert.equal(asset.status,200);
+    assert.equal(await asset.text(),await readFile(join(root,'web',filename),'utf8'));
+  }
   assert.doesNotMatch(html,/Miyuneya|Миюнэя/i);
   const head=await fetch(base+'/',{method:'HEAD'});
   assert.equal(head.status,200);
