@@ -138,6 +138,22 @@ test('System theme follows OS, reset restores all defaults',async()=>{
   assert.equal(b.page.dataset.theme,'light');
 });
 
+test('Custom background starts from the actual dark theme instead of forcing a light color',async()=>{
+  const backend={appearance:{...defaults,theme:'dark'}};
+  const app=mount(backend);
+  await tick();
+  assert.equal(app.page.dataset.theme,'dark');
+  assert.equal(app.field('background').value,'#12151b');
+  app.defaultBackground.checked=false;
+  app.defaultBackground.fire('change');
+  await tick();await tick();
+  assert.equal(backend.appearance.background,'#12151b');
+  app.defaultBackground.checked=true;
+  app.defaultBackground.fire('change');
+  await tick();await tick();
+  assert.equal(backend.appearance.background,'default');
+});
+
 test('Failed server save and blocked localStorage do not prevent preview',async()=>{
   const backend={appearance:{...defaults},fail:true};
   const a=mount(backend,new Map(),true);await tick();
