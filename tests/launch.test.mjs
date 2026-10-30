@@ -24,7 +24,10 @@ test('Default homepage has only the right settings rail; original workspace and 
   const html=await home.text();
   assert.equal(html,await readFile(join(root,'dist','blank.html'),'utf8'));
   assert.match(html,/<title><\/title>/);
-  assert.match(html,/<main[^>]*><\/main>/);
+  assert.match(html,/<main[^>]*id="work-area"[^>]*>/);
+  assert.match(html,/<section[^>]*id="brain-workspace"[^>]*hidden>/);
+  assert.match(html,/<a[^>]*id="brain-nav-link"[^>]*aria-label="Мозги Hayumeri"/);
+  assert.match(html,/<h1 id="brain-heading">Мозги Hayumeri<\/h1>/);
   assert.match(html,/<nav[^>]*class="right-rail"/);
   assert.match(html,/<svg\b/);
   assert.match(html,/id="settings-toggle"/);
