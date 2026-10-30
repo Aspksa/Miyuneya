@@ -196,7 +196,14 @@
   const panel = document.getElementById('cloud-panel');
   if (!panel) return; // Legacy UI tests do not mount the new settings pane.
 
-  const validModelId = new RegExp('^[A-Za-z0-9_.:@/-]{1,200}document.getElementById('cloud-model');
+  const validModelId = {
+    test(value) {
+      return typeof value === 'string' && value.length > 0 && value.length <= 200
+        && [...value].every(char => 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:@/-'.includes(char));
+    }
+  };
+  const key = document.getElementById('cloud-key');
+  const model = document.getElementById('cloud-model');
   const modelList = document.getElementById('cloud-model-list');
   const form = document.getElementById('cloud-form');
   const state = document.getElementById('cloud-status');
