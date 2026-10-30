@@ -1,5 +1,5 @@
 import { stripTypeScriptTypes } from 'node:module';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, mkdir, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -7,10 +7,11 @@ import { spawnSync } from 'node:child_process';
 import { atomicWrite, readJSON } from './runtime.mjs';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const assets=['index.html','style.css','fox.svg','favicon.svg',...[1,2,3,4].map(n=>`avatars/avatar${n}.png`)];
-const modules=['main','model','calendar','assistant','appearance','memory','disk'];
 export async function ensureBuild(root, check = false) {
   const pkg = await readJSON(join(root,'package.json'));
   if (Object.keys(pkg.dependencies || {}).length || Object.keys(pkg.devDependencies || {}).length || pkg.workspaces) throw new Error('Изменился набор зависимостей. Эта версия запуска поддерживает проект без внешних пакетов; установка не выполнена.');
+  const modules=(await readdir(join(root,'src'))).filter(name=>/^[a-zA-Z0-9_-]+\.ts$/.test(name)).map(name=>name.slice(0,-3)).sort();
+  if(!modules.includes('main')||modules.length>100)throw new Error('Не найден основной модуль или превышен предел модулей сборки.');
   const inputs={}; const outputs={};
   for (const name of modules) inputs[`src/${name}.ts`]=await readFile(join(root,'src',name+'.ts'));
   for (const name of assets) inputs[`web/${name}`]=await readFile(join(root,'web',name));

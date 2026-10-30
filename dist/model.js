@@ -1,4 +1,6 @@
 // Generated from src/model.ts by npm run build.
+import { validTaskGraph } from './productivity.js';
+
 
 
 // Avatar appearance travels with the workspace; its screen position stays in the browser.
@@ -27,6 +29,9 @@ export function validateWorkspace(value         )                     {
     if (!record(item) || !text(item.id, 100) || !item.id || ids.has(item.id) || !text(item.title, 200) || !item.title.trim()) return false;
     ids.add(item.id);
   }
+  if(value.automationApplied!==undefined && (!Array.isArray(value.automationApplied)||value.automationApplied.length>20000||!value.automationApplied.every(x=>text(x,150))))return false;
+  if(!value.tasks.every((t    )=>(t.parentId===undefined||text(t.parentId,100))&&(t.group===undefined||text(t.group,80))&&(t.dependsOn===undefined||Array.isArray(t.dependsOn)&&t.dependsOn.length<=50&&t.dependsOn.every(x=>text(x,100)))&&(t.attachments===undefined||Array.isArray(t.attachments)&&t.attachments.length<=50&&t.attachments.every(a=>record(a)&&['note','file'].includes(String(a.kind))&&text(a.id,100)))&&(t.repeat===undefined||record(t.repeat)&&['day','week','month'].includes(String(t.repeat.unit))&&Number.isInteger(t.repeat.interval)&&Number(t.repeat.interval)>=1&&Number(t.repeat.interval)<=365&&(t.repeat.anchorDay===undefined||Number.isInteger(t.repeat.anchorDay)&&Number(t.repeat.anchorDay)>=1&&Number(t.repeat.anchorDay)<=31))&&(t.repeatOf===undefined||text(t.repeatOf,100))&&(t.seriesId===undefined||text(t.seriesId,100))))return false;
+  if(!validTaskGraph(value.tasks          ))return false;
   return value.notes.every(n => record(n) && text(n.body, 100000) && date(n.updatedAt) && (n.pinned===undefined || typeof n.pinned==='boolean')) && value.tasks.every(t => record(t) && typeof t.done === 'boolean' && date(t.createdAt) && (t.details===undefined || text(t.details,10000)) && (t.dueDate===undefined || t.dueDate==='' || validLocalDate(t.dueDate)) && (t.priority===undefined || ['low','normal','high'].includes(String(t.priority))) && (t.updatedAt===undefined || date(t.updatedAt)) && (t.completedAt===undefined || date(t.completedAt)));
 }
 export function searchNotes(notes        , query        )         {
