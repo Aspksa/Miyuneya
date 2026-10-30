@@ -9,6 +9,9 @@
   const input = document.getElementById('kitsune-message');
   const log = document.getElementById('kitsune-log');
   const chatHeader = document.getElementById('kitsune-chat-header');
+  const minimizeButton = document.getElementById('kitsune-minimize');
+  const expandButton = document.getElementById('kitsune-expand');
+  const streamIndicator = document.getElementById('kitsune-stream-indicator');
   const sendButton = document.getElementById('kitsune-send');
   const stopButton = document.getElementById('kitsune-stop');
   const settingsBackdrop = document.getElementById('kitsune-settings-backdrop');
@@ -111,31 +114,68 @@
     const r=chat.getBoundingClientRect();
     const width=r.width||400,height=r.height||540;
     if(!chatPos){
-      chatPos={x:clamp((avatarPos?.x||32)+Math.min(config.size,160)+8,10,Math.max(10,innerWidth-width-10)),
-        y:clamp((avatarPos?.y||20)-80,10,Math.max(10,innerHeight-height-10))};
+      const railWidth=Math.min(76,innerWidth*.13);
+      const available=Math.max(10,innerWidth-width-railWidth-10);
+      const avatarCenter=(avatarPos?.x||32)+config.size/2;
+      const side=avatarCenter>innerWidth/2?(avatarPos?.x||32)-width-15:(avatarPos?.x||32)+config.size+15;
+      chatPos={x:clamp(side,10,available),
+        y:clamp((avatarPos?.y||20)-Math.max(24,height/4),10,Math.max(10,innerHeight-height-10))};
     }
     chatPos={x:clamp(chatPos.x,10,Math.max(10,innerWidth-width-10)),y:clamp(chatPos.y,10,Math.max(10,innerHeight-height-10))};
     chat.style.left=chatPos.x+'px';
     chat.style.top=chatPos.y+'px';
   }
-  function renderChat(){
-    log.replaceChildren();
-    for(const item of history){
-      const message=document.createElement('div');
-      message.className='kitsune-bubble '+item.role;
-      const name=document.createElement('strong');
-      name.textContent=item.role==='assistant'?'Миюнэя':'Вы';
-      const body=document.createElement('p');
-      body.textContent=item.content;
-      message.append(name,body);log.append(message);
+  // Reuse message elements while streaming: no full chat flicker on each token.
+  function formatMessage(body,value) {
+    body.replaceChildren();
+    const blocks=String(value).split(/(```[a-zA-Z0-9+#.-]*\\n[\\s\\S]*?```)/g);
+    const lexer=/\/\/[^\n]*|#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:const|let|var|function|async|await|export|import|return|type|interface|class|if|else|for|while|def|lambda|print|from|try|except|None|True|False|new|throw|public|private|fn|match|impl|struct)\b|\b\d+(?:\.\d+)?\b/g;
+    for(const block of blocks){
+      if(!block.startsWith('```') || !block.endsWith('```')) {
+        body.append(document.createTextNode(block));continue;
+      }
+      const first=block.indexOf('\n'),language=block.slice(3,first).trim().slice(0,25);
+      const text=block.slice(first+1,-3);
+      const pre=document.createElement('pre');pre.className='kitsune-code';
+      const header=document.createElement('span');header.className='kitsune-code-header';header.textContent=language||'Код';
+      const code=document.createElement('code');let pos=0;
+      for(const m of text.matchAll(lexer)){
+        if(m.index>pos)code.append(document.createTextNode(text.slice(pos,m.index)));
+        const piece=document.createElement('span'),t=m[0];
+        piece.className=/^(?:\/\/|#)/.test(t)?'kitsune-token-comment':/^(?:"|')/.test(t)?'kitsune-token-string':/^\d/.test(t)?'kitsune-token-number':'kitsune-token-keyword';
+        piece.textContent=t;code.append(piece);pos=m.index+t.length;
+      }
+      code.append(document.createTextNode(text.slice(pos)));pre.append(header,code);body.append(pre);
     }
+  }
+  function renderChat(){
+    for(let i=0;i<history.length;i++){
+      const item=history[i];
+      let bubble=log.children[i];
+      if(!bubble||bubble.dataset.role!==item.role){
+        // A cleared/edited conversation may invalidate existing nodes.
+        while(log.children.length>i)log.lastElementChild.remove();
+        bubble=document.createElement('div');bubble.className='kitsune-bubble '+item.role;
+        bubble.dataset.role=item.role;
+        const name=document.createElement('strong');name.textContent=item.role==='assistant'?'Миюнэя':'Вы';
+        const body=document.createElement('p');bubble.append(name,body);log.append(bubble);
+      }
+      const body=bubble.querySelector('p');
+      if(body.dataset.raw!==item.content){
+        formatMessage(body,item.content);
+        body.dataset.raw=item.content;
+      }
+    }
+    while(log.children.length>history.length)log.lastElementChild.remove();
     log.scrollTop=log.scrollHeight;
   }
   function openChat(){
+    chat.classList.remove('mini');
     chat.hidden=false;avatar.setAttribute('aria-expanded','true');
     placeChat();renderChat();input.focus();
   }
   function closeChat(){
+    chat.classList.remove('mini');
     chat.hidden=true;avatar.setAttribute('aria-expanded','false');
     avatar.focus({preventScroll:true});
   }
@@ -190,6 +230,17 @@
   });
   document.getElementById('kitsune-chat-close').addEventListener('click',closeChat);
   openSettings.addEventListener('click',openSettingsDialog);
+  minimizeButton?.addEventListener('click',()=>{
+    chat.classList.add('mini');
+    const maxX=Math.max(10,innerWidth-180),maxY=Math.max(10,innerHeight-60);
+    chatPos={x:clamp((avatarPos?.x||20)+Math.min(config.size,150)+8,10,maxX),
+      y:clamp((avatarPos?.y||20)+20,10,maxY)};
+    placeChat();
+    expandButton.focus();
+  });
+  expandButton?.addEventListener('click',()=>{
+    chat.classList.remove('mini');applySettings();placeChat();input.focus();
+  });
   settingsClose.addEventListener('click',closeSettingsDialog);
   settingsBackdrop.addEventListener('click',closeSettingsDialog);
   settings.addEventListener('keydown',event=>{
@@ -224,7 +275,7 @@
       const response=await fetch('/api/assistant',{cache:'no-store'});
       if(!response.ok)return;
       const status=await response.json();
-      if(Number.isSafeInteger(status.customAvatar)&&status.customAvatar>0)
+      if(Number.isSafeInteger(status.customAvatar)&&status.customAvatar>0 && !read('miyuneya.kitsune.selected.v1',null))
         image.src='/api/assistant/avatar?v='+status.customAvatar;
     }catch{}
   }
@@ -264,6 +315,26 @@
   });
   stopButton.addEventListener('click',()=>stream?.abort());
   window.addEventListener('resize',()=>{placeAvatar();placeChat();});
+  // Native CSS resize should survive next reload without snapping back.
+  let sizing=false;
+  if(window.ResizeObserver){
+    const observer=new ResizeObserver(entries=>{
+      if(sizing||chat.hidden||chat.classList.contains('mini'))return;
+      const rect=entries[0]?.contentRect;
+      if(!rect||rect.width<310||rect.height<200)return;
+      const width=Math.round(rect.width),height=Math.round(rect.height);
+      if(Math.abs(config.width-width)>12||Math.abs(config.height-height)>12){
+        config.width=clamp(Math.round(width/10)*10,320,800);
+        config.height=clamp(Math.round(height/10)*10,350,900);
+        widthInput.value=String(config.width);
+        heightInput.value=String(config.height);
+        widthValue.textContent=config.width+' px';heightValue.textContent=config.height+' px';
+        write(settingsKey,config);
+      }
+    });
+    observer.observe(chat);
+  }
+
   if(window.MutationObserver){
     const observer=new MutationObserver(()=>{avatar.classList.toggle('no-motion',!preferredMotion());});
     observer.observe(document.documentElement,{attributes:true,attributeFilter:['data-motion']});
@@ -277,6 +348,7 @@
     history.push({role:'user',content});input.value='';renderChat();saveHistory();setStatus('');
     const current=new AbortController();stream=current;
     sendButton.disabled=true;stopButton.hidden=false;avatar.classList.add('talking');
+    if(streamIndicator)streamIndicator.hidden=false;
     const reply={role:'assistant',content:''};history.push(reply);renderChat();
     let complete=false;
     try{
@@ -316,6 +388,7 @@
     }finally{
       stream=null;sendButton.disabled=false;stopButton.hidden=true;
       avatar.classList.remove('talking');
+      if(streamIndicator)streamIndicator.hidden=true;
     }
   }
   form.addEventListener('submit',event=>{event.preventDefault();void send();});
