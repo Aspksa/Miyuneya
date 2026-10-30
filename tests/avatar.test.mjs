@@ -42,3 +42,38 @@ test('No external client dependency and no key is copied into the avatar browser
   assert.doesNotMatch(js, /apiKey\s*[:=]/);
   assert.doesNotMatch(html, /<script[^>]+src="https?:\/\//);
 });
+
+test('Studio provides a complete local library with preview, alpha cropping and HiDPI variants',async()=>{
+  const studio=await readFile(new URL('web/avatar-studio.js',root),'utf8');
+  const legacy=await readFile(new URL('web/index.html',root),'utf8');
+  assert.doesNotThrow(()=>new Function(studio));
+  assert.match(studio,/indexedDB\.open\('miyuneya-avatar-library'/);
+  assert.match(studio,/function bounds\(/);
+  assert.match(studio,/getImageData\(/);
+  assert.match(studio,/\[192,384,768,1536\]/);
+  assert.match(studio,/imageSmoothingQuality='high'/);
+  assert.match(studio,/srcset/);
+  assert.match(studio,/showPreview\(/);
+  assert.match(studio,/crypto\.randomUUID/);
+  assert.match(studio,/const erase=/);
+  for(const htmlFile of [html,legacy]){
+    for(const id of ['kitsune-settings-tabs','kitsune-library-grid','kitsune-framing','kitsune-vertical','kitsune-gold-glow','kitsune-drag-ease','kitsune-minimize','kitsune-expand']) {
+      if(id==='kitsune-settings-tabs')assert.match(htmlFile,/class="kitsune-settings-tabs"/);
+      else assert.ok(htmlFile.includes('id="'+id+'"'),id);
+    }
+    assert.ok(htmlFile.includes('/avatar-studio.js'), 'Studio script missing in page');
+    assert.ok(htmlFile.includes('/avatar.css'), 'Avatar styles missing in page');
+    assert.ok(htmlFile.includes('id="kitsune-avatar"'), 'Avatar missing in page');
+  }
+});
+
+test('Streaming code formatter uses DOM text nodes instead of untrusted HTML',()=>{
+  assert.match(js,/function formatMessage\(/);
+  assert.match(js,/document\.createTextNode/);
+  assert.match(js,/kitsune-token-keyword/);
+  assert.match(js,/kitsune-bubble/);
+  assert.doesNotMatch(js,/innerHTML\s*=/);
+  assert.match(js,/ResizeObserver/);
+  assert.match(js,/classList\.add\('mini'\)/);
+  assert.match(js,/classList\.remove\('mini'\)/);
+});
