@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -54,7 +55,8 @@ async function connect(url) {
 }
 const viewports = [
   [320,568],[360,640],[375,812],[540,320],[700,480],[701,500],
-  [768,600],[1024,768],[1366,768],[1920,1080],[2560,1440],[3840,2160]
+  [768,600],[1024,768],[1366,768],[1920,1080],[2560,1440],[3840,2160],
+  [3440,1440],[3840,1080],[5120,2880]
 ];
 
 test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90–120%',{timeout:120000},async t=>{
@@ -131,6 +133,60 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90�
     }
   }
   }
+  // Capture real raster output as reviewable CI artifacts at monitor sizes
+  // and Windows-style DPR scaling. No screenshots are treated as design
+  // baselines until approved; tests assert geometry, text contrast and SVGs.
+  const folder=join(root,'artifacts','ui-screenshots');
+  await mkdir(folder,{recursive:true});
+  const samples=[
+    ['FullHD',1920,1080,1],
+    ['FullHD-125',1920,1080,1.25],
+    ['FullHD-150',1920,1080,1.5],
+    ['FullHD-200',1920,1080,2],
+    ['QHD',2560,1440,1],
+    ['4K',3840,2160,1],
+    ['5K',5120,2880,1]
+  ];
+  let screenshots=0;
+  for (const [name,width,height,dpr] of samples) {
+    await cd.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:dpr,mobile:false});
+    const themedHashes=[];
+    for (const theme of ['light','dark']) {
+      await evalJS(`(()=>{const c=document.querySelector('[data-setting="theme"][value="${theme}"]');c.checked=true;c.dispatchEvent(new Event('change',{bubbles:true}));return true;})()`);
+      const metrics=await evalJS(`(()=>{
+        const panel=document.getElementById('settings-panel');
+        const rail=document.querySelector('.right-rail');
+        const r=panel.getBoundingClientRect();
+        const cs=getComputedStyle(panel), title=getComputedStyle(document.getElementById('settings-heading'));
+        const sr=getComputedStyle(rail);
+        const rgb=v=>(v.match(/[\\d.]+/g)||[]).slice(0,3).map(Number);
+        const brightness=v=>{const x=rgb(v).map(c=>{c/=255;return c<=.04045?c/12.92:((c+.055)/1.055)**2.4;});return .2126*x[0]+.7152*x[1]+.0722*x[2];};
+        const [light,dark]=[brightness(title.color),brightness(cs.backgroundColor)].sort((a,b)=>b-a);
+        return {dpr:devicePixelRatio,width:innerWidth,height:innerHeight,scroll:document.documentElement.scrollWidth,
+          x:r.left,right:r.right,bottom:r.bottom,contrast:(light+.05)/(dark+.05),
+          svg:document.querySelectorAll('svg').length,bitmaps:document.querySelectorAll('img,canvas').length,
+          railWidth:rail.getBoundingClientRect().width};
+      })()`);
+      assert.equal(metrics.dpr,dpr,`Incorrect emulated DPR: ${name}`);
+      assert.equal(metrics.width,width);
+      assert.equal(metrics.height,height);
+      assert.ok(metrics.scroll<=width+1,`Horizontal overflow: ${name}/${theme}`);
+      assert.ok(metrics.x>=-1 && metrics.right<=width+1 && metrics.bottom<=height+1,
+        `Clipped settings: ${name}/${theme}`);
+      assert.ok(metrics.contrast>=4.5,`Low text contrast: ${name}/${theme} ${metrics.contrast}`);
+      assert.ok(metrics.svg>=3 && metrics.bitmaps===0,`Raster UI asset on blank homepage: ${name}`);
+      assert.ok(metrics.railWidth>=50 && metrics.railWidth<=117);
+      const capture=await cd.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false,fromSurface:true});
+      const bytes=Buffer.from(capture.data,'base64');
+      assert.ok(bytes.length>1000,`Empty screenshot: ${name}/${theme}`);
+      await writeFile(join(folder,`${name}-${theme}.png`),bytes);
+      themedHashes.push(createHash('sha256').update(bytes).digest('hex'));
+      screenshots++;
+    }
+    assert.notEqual(themedHashes[0],themedHashes[1],`Themes render identically: ${name}`);
+  }
+  await cd.send('Emulation.clearDeviceMetricsOverride');
+  console.log('HiDPI screenshots saved: '+screenshots+' (FullHD/125–200%, QHD, 4K, 5K).');
   await evalJS('document.getElementById("settings-close").click()');
   assert.equal(await evalJS('document.getElementById("settings-panel").hidden'),true);
   console.log('Chromium responsive geometry checks passed: '+checks+' viewports.');
