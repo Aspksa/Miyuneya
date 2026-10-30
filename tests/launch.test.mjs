@@ -29,8 +29,8 @@ test('Default homepage has only the right settings rail; original workspace and 
   assert.match(html,/<svg\b/);
   assert.match(html,/id="settings-toggle"/);
   assert.match(html,/id="settings-panel"[^>]*role="dialog"/);
-  assert.match(html,/name="appearance" value="light"/);
-  assert.match(html,/name="appearance" value="dark"/);
+  assert.match(html,/name="appearance" data-setting="theme" value="light"/);
+  assert.match(html,/name="appearance" data-setting="theme" value="dark"/);
   for (const filename of ['blank.css','blank.js']) {
     const asset=await fetch(base+'/'+filename);
     assert.equal(asset.status,200);
@@ -73,6 +73,36 @@ test('Theme settings survive a BAT-style server restart without altering notes',
   assert.equal((await (await fetch(`http://127.0.0.1:${two.port}/api/site/theme`)).json()).theme,'dark');
   const persisted=JSON.parse(await readFile(join(root,'data','workspace.json'),'utf8'));
   assert.deepEqual(persisted.data.notes,seed.notes);
+  await stop(root,second);
+});
+
+test('Appearance API persists all options, rejects invalid requests and preserves notes',async t=>{
+  const root=await fixture(t);
+  const first=nodeLaunch(root,{MIYUNEYA_OFFLINE:'1'});
+  const one=await waitReady(root,first);
+  const base=`http://127.0.0.1:${one.port}`;
+  const existing=emptyWorkspace();
+  existing.notes.push({id:'keep',title:'Важно',body:'Исходная заметка',updatedAt:new Date().toISOString()});
+  assert.equal((await fetch(base+'/api/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:0,data:existing})})).status,200);
+  const current=(await (await fetch(base+'/api/site/appearance')).json()).appearance;
+  assert.equal(current.theme,'light');
+  const desired={...current,theme:'auto',accent:'#599a94',railWidth:'wide',iconSize:'large',
+    railOpacity:80,font:'georgia',fontSize:'large',radius:'large',density:'compact',
+    motion:false,background:'#131827',scale:110,contrast:true};
+  const put=value=>fetch(base+'/api/site/appearance',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({appearance:value})});
+  assert.equal((await put({...desired,scale:999})).status,400);
+  assert.equal((await put({...desired,accent:'evil'})).status,400);
+  assert.equal((await put(desired)).status,200);
+  assert.deepEqual((await (await fetch(base+'/api/site/appearance')).json()).appearance,desired);
+  const currentData=await (await fetch(base+'/api/workspace')).json();
+  assert.equal(currentData.data.settings.theme,'auto');
+  assert.deepEqual(currentData.data.notes,existing.notes);
+  await stop(root,first);
+  const second=nodeLaunch(root,{MIYUNEYA_OFFLINE:'1'});
+  const two=await waitReady(root,second);
+  assert.deepEqual((await (await fetch(`http://127.0.0.1:${two.port}/api/site/appearance`)).json()).appearance,desired);
+  const persisted=JSON.parse(await readFile(join(root,'data','workspace.json'),'utf8'));
+  assert.deepEqual(persisted.data.notes,existing.notes);
   await stop(root,second);
 });
 

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "fingerprint": "d9430032b84cd99129cef2242180e74e04981196f4903a4dc2838c1ce83a5802",
+  "fingerprint": "6f409ba3c5220b2cd26e7614142a24a0c0ee273e35f83f6b76d4776dfd4a4fac",
   "outputs": {
     "appearance.js": "be3c7d9aa4c3a5303c1a3a03578fc7c02c75a47efa3964dfbadb717b0207dd1a",
     "assistant.js": "bb573bd724ba4354a6687742829c56ddc00a3c38abd0d571455136b84add31fc",
@@ -8,7 +8,7 @@
     "disk.js": "363f6199441b3f68b3a71b47e5cb35f569c18bf3d680db81f1ed86373c65dba6",
     "main.js": "b12087049a442beccb675586ecf176e9621a93fdce0bfc621c0d20a32b8580c8",
     "memory.js": "aad67d81b46a80e399ea5fb32807578b02d278d8e3edda3ace5d273665415579",
-    "model.js": "997568ba085a24162401be40410ae01afb4219c99fe5a1d7f3d144cd0d368afd",
+    "model.js": "952941601a90a7f3a307e48703caee55256670f0e54e0f9b4801b03262e82b93",
     "productivity.js": "b93316f1e70082ed09fefe041d4abbf9783e56dd93e713919bea5682e59c5c8a",
     "workbench.js": "54d842585a734509d006489d0a464e888c8ed3e217b79ceb0696d53d71b4fd04",
     "index.html": "a5a264c3d62fbf03cec3cb011a935948541be4147e26626a1f5f534bb1dd1346",
@@ -19,8 +19,8 @@
     "avatars/avatar2.png": "7d3113263f834ed76aa818d73edd59a81ed7e557dd8ebce14add1e6700bc23a0",
     "avatars/avatar3.png": "9eb46d2f5a6f54545690cacffbdb1a6256dcd40a8aee07461e8649a566dbc010",
     "avatars/avatar4.png": "f1767d080142d982f3267859ba11d857b4f355219395af520bcafa06c62df3d4",
-    "blank.html": "c48c11dd99c34817e3a2c5c74bfecbbf0db3b2b7c32b2609a7450c432d113308",
-    "blank.css": "4474268530d93d89367dbda30fb5892ee91d55286800f5b4e65fece11387222a",
-    "blank.js": "53f0cb70b0ad81de9eab119a724d9cf7ac1643d54891e3b6e6ccb7cc5efc45d6"
+    "blank.html": "a425098ad794e9e7cbd592f530f8a3f620f3e96d58cb85f19a2b9b411d8477bf",
+    "blank.css": "68b26cc2ad1da84d26399d31abbb1106ab1ef4bc0751f662bd0b2c27220a4dd8",
+    "blank.js": "f379b30e5dd94466c8883884aad3f4a86d86f6abb1503911227dd77333ef1bc6"
   }
 }

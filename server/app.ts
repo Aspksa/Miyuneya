@@ -7,7 +7,7 @@ import { openDisk } from './disk.ts';
 import { readFile, rm } from 'node:fs/promises';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import { join } from 'node:path';
-import { validateWorkspace, emptyWorkspace } from '../src/model.ts';
+import { validateWorkspace, emptyWorkspace, defaultAppearance, validAppearance } from '../src/model.ts';
 import type { Workspace } from '../src/model.ts';
 import { openMemory, parseCommand, parseReminder, validDialogId, validDate, transcript, parseJson, goalTree, COMPACT_PROMPT } from './memory.ts';
 import { complexity, exactCalcs, exactLines, readPlan, reasoningBlock, parseGoal, PLAN_PROMPT } from './logic.ts';
@@ -202,6 +202,29 @@ export async function createApp(root: string, instance: string, preview = false,
         return;
       }
       if (stopping) return send(503, { error: 'Сервер завершает работу' });
+      if (path === '/api/site/appearance') {
+        if (req.method === 'GET') return send(200, { appearance: { theme: state.data.settings.theme, ...defaultAppearance(), ...state.data.settings.appearance } });
+        if (req.method !== 'PUT') return send(405, { error: 'Метод не поддерживается' });
+        const input = await readJson(req, send, 6000);
+        if (input === undefined) return;
+        if (!validAppearance(input?.appearance)) return send(400, { error: 'Неверные параметры оформления.' });
+        const update = queue.then(async () => {
+          const current = { theme: state.data.settings.theme, ...defaultAppearance(), ...state.data.settings.appearance };
+          if (JSON.stringify(current) !== JSON.stringify(input.appearance)) {
+            const next = { revision: state.revision + 1, data: structuredClone(state.data) };
+            next.data.settings.theme = input.appearance.theme;
+            const { theme, ...appearance } = input.appearance;
+            next.data.settings.appearance = appearance;
+            if (!validateWorkspace(next.data)) throw new Error('Неверные настройки.');
+            await atomicWrite(dataFile, JSON.stringify(next, null, 2));
+            state = next;
+          }
+          send(200, { appearance: { theme: state.data.settings.theme, ...defaultAppearance(), ...state.data.settings.appearance } });
+        });
+        queue = update.catch(() => {});
+        await update;
+        return;
+      }
       if (path === '/api/site/theme') {
         if (req.method === 'GET') return send(200, { theme: state.data.settings.theme === 'dark' ? 'dark' : 'light' });
         if (req.method !== 'PUT') return send(405, { error: 'Метод не поддерживается' });

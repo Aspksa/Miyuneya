@@ -38,33 +38,69 @@
         </svg>
       </button>
     </header>
-    <fieldset class="appearance">
-      <legend>Оформление</legend>
-      <p>Выберите цветовую тему сайта.</p>
-      <div class="appearance-options">
-        <label class="appearance-option">
-          <input type="radio" name="appearance" value="light" checked>
-          <span class="appearance-preview light-preview" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
-              stroke-width="1.6" stroke-linecap="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="4"/>
-              <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/>
-            </svg>
-          </span>
-          <span class="appearance-label">Светлая</span>
-        </label>
-        <label class="appearance-option">
-          <input type="radio" name="appearance" value="dark">
-          <span class="appearance-preview dark-preview" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
-              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M20.2 15.1A8.5 8.5 0 0 1 8.9 3.8a8.5 8.5 0 1 0 11.3 11.3Z"/>
-            </svg>
-          </span>
-          <span class="appearance-label">Тёмная</span>
-        </label>
-      </div>
-    </fieldset>
+    <div class="settings-body">
+      <fieldset class="setting-group">
+        <legend>Цвета и темы</legend>
+        <p>Оформление рабочего пространства</p>
+        <div class="appearance-options" role="group" aria-label="Режим оформления">
+          <label class="appearance-option">
+            <input type="radio" name="appearance" data-setting="theme" value="light" checked>
+            <span class="appearance-preview light-preview" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42"/></svg>
+            </span>
+            <span class="appearance-label">Светлая</span>
+          </label>
+          <label class="appearance-option">
+            <input type="radio" name="appearance" data-setting="theme" value="dark">
+            <span class="appearance-preview dark-preview" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M20.2 15.1A8.5 8.5 0 0 1 8.9 3.8a8.5 8.5 0 1 0 11.3 11.3Z"/></svg>
+            </span>
+            <span class="appearance-label">Тёмная</span>
+          </label>
+          <label class="appearance-option">
+            <input type="radio" name="appearance" data-setting="theme" value="auto">
+            <span class="appearance-preview system-preview" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 22h8M12 18v4M12 5v12"/></svg>
+            </span>
+            <span class="appearance-label">Системная</span>
+          </label>
+        </div>
+        <span class="setting-label">Цвет акцента</span>
+        <div class="palette" role="group" aria-label="Готовые палитры">
+          <button type="button" class="palette-swatch" data-accent="#7775d7" style="--swatch:#7775d7" aria-label="Лавандовая" aria-pressed="true"></button>
+          <button type="button" class="palette-swatch" data-accent="#c88ca6" style="--swatch:#c88ca6" aria-label="Розовая" aria-pressed="false"></button>
+          <button type="button" class="palette-swatch" data-accent="#599a94" style="--swatch:#599a94" aria-label="Бирюзовая" aria-pressed="false"></button>
+          <button type="button" class="palette-swatch" data-accent="#d4a254" style="--swatch:#d4a254" aria-label="Золотая" aria-pressed="false"></button>
+          <button type="button" class="palette-swatch" data-accent="#648bc4" style="--swatch:#648bc4" aria-label="Голубая" aria-pressed="false"></button>
+          <button type="button" class="palette-swatch" data-accent="#80966a" style="--swatch:#80966a" aria-label="Зелёная" aria-pressed="false"></button>
+        </div>
+        <label class="setting-row"><span>Свой цвет акцента</span><input type="color" data-setting="accent" value="#7775d7" aria-label="Свой цвет акцента"></label>
+        <label class="setting-row"><span>Цвет фона</span><input type="color" data-setting="background" value="#f8f9fc" aria-label="Цвет фона"></label>
+        <label class="setting-check"><input type="checkbox" id="default-background" checked><span>Фон по умолчанию для темы</span></label>
+      </fieldset>
+      <fieldset class="setting-group">
+        <legend>Правая панель</legend>
+        <label class="setting-row"><span>Ширина</span><select data-setting="railWidth"><option value="narrow">Узкая</option><option value="regular" selected>Стандартная</option><option value="wide">Широкая</option></select></label>
+        <label class="setting-row"><span>Размер значка</span><select data-setting="iconSize"><option value="small">Маленький</option><option value="regular" selected>Стандартный</option><option value="large">Большой</option></select></label>
+        <label class="setting-row"><span>Прозрачность <output id="opacity-value">100%</output></span><input type="range" data-setting="railOpacity" min="75" max="100" step="5" value="100"></label>
+      </fieldset>
+      <fieldset class="setting-group">
+        <legend>Шрифты и элементы</legend>
+        <label class="setting-row"><span>Шрифт</span><select data-setting="font"><option value="system">Системный</option><option value="segoe">Segoe UI</option><option value="arial">Arial</option><option value="georgia">Georgia</option></select></label>
+        <label class="setting-row"><span>Размер текста</span><select data-setting="fontSize"><option value="small">Маленький</option><option value="regular" selected>Стандартный</option><option value="large">Большой</option></select></label>
+        <label class="setting-row"><span>Скругление</span><select data-setting="radius"><option value="small">Небольшое</option><option value="regular" selected>Стандартное</option><option value="large">Мягкое</option></select></label>
+        <label class="setting-row"><span>Плотность</span><select data-setting="density"><option value="compact">Компактно</option><option value="comfortable" selected>Просторно</option></select></label>
+        <label class="setting-row"><span>Масштаб</span><select data-setting="scale"><option value="90">90%</option><option value="100" selected>100%</option><option value="110">110%</option><option value="120">120%</option></select></label>
+      </fieldset>
+      <fieldset class="setting-group">
+        <legend>Доступность и эффекты</legend>
+        <label class="setting-check"><input type="checkbox" data-setting="motion" checked><span>Плавные анимации</span></label>
+        <p class="setting-hint">При системном ограничении движения анимации отключаются автоматически.</p>
+        <label class="setting-check"><input type="checkbox" data-setting="contrast"><span>Высокая контрастность</span></label>
+      </fieldset>
+      <button class="reset-button" type="button" id="appearance-reset">Сбросить оформление</button>
+      <p class="save-caption">Изменения сохраняются автоматически.</p>
+    </div>
     <p id="theme-status" class="theme-status" role="status" aria-live="polite" hidden></p>
   </section>
 </body>
