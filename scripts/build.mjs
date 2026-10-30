@@ -37,6 +37,7 @@ export async function ensureBuild(root, check = false) {
   if (check) {
     if (cached?.fingerprint !== fingerprint) {
       console.error('Сборка: fingerprint', { expected: fingerprint, found: cached?.fingerprint });
+      console.error('Сборка: actual input hashes', Object.entries(inputs).map(([name,bytes]) => [name,hash(bytes)]));
     } else {
       for (const name of [...assets,...modules.map(name => name+'.js')]) {
         try {
