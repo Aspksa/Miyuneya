@@ -191,3 +191,95 @@ button:focus-visible, input:focus-visible + .appearance-preview {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; }
 }
+
+/* Configurable appearance: keeps the page itself free of application modules. */
+:root {
+  --rail-width: 76px;
+  --icon-box: 50px;
+  --icon-art: 25px;
+  --rail-opacity: 100%;
+  --ui-radius: 16px;
+  --ui-font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ui-font-size: 15px;
+  --ui-scale: 1;
+  --density-gap: 24px;
+}
+body {
+  font-family: var(--ui-font);
+  font-size: var(--ui-font-size);
+  background: var(--custom-page, var(--page));
+}
+.right-rail {
+  width: var(--rail-width);
+  background: color-mix(in srgb, var(--rail) var(--rail-opacity), transparent);
+  zoom: var(--ui-scale);
+}
+.settings-toggle { width: var(--icon-box); height: var(--icon-box); border-radius: var(--ui-radius); }
+.settings-toggle svg { width: var(--icon-art); height: var(--icon-art); }
+.settings-panel {
+  right: calc(var(--rail-width) + 15px);
+  width: min(420px, calc(100vw - var(--rail-width) - 30px));
+  border-radius: calc(var(--ui-radius) + 6px);
+  zoom: var(--ui-scale);
+}
+.settings-header { margin-bottom: var(--density-gap); }
+.settings-body { display: grid; gap: var(--density-gap); }
+.setting-group { min-width: 0; border: 0; border-top: 1px solid var(--line); padding: 20px 0 0; margin: 0; }
+.setting-group legend { padding: 0 10px 0 0; color: var(--text); font-size: 15px; font-weight: 670; }
+.setting-group > p { margin: 0 0 16px; color: var(--secondary); font-size: 13px; }
+.setting-label { display: block; margin: 20px 0 10px; font-size: 13px; font-weight: 620; }
+.appearance-options { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.appearance-preview { height: 73px; }
+.appearance-label { font-size: 12px; }
+.system-preview { background: linear-gradient(90deg, #f1f3f9 50%, #282d3d 50%); color: #7775d7; }
+.palette { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.palette-swatch {
+  width: 31px; height: 31px; flex: 0 0 31px; border-radius: 50%;
+  background: var(--swatch); border: 3px solid var(--panel);
+  box-shadow: 0 0 0 1px var(--line);
+}
+.palette-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }
+.setting-row {
+  display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;
+  gap: 12px; min-height: 43px; margin-top: 8px; font-size: 13px;
+}
+.setting-row > span { flex: 1 1 120px; }
+.setting-row output { font-weight: 620; font-variant-numeric: tabular-nums; color: var(--secondary); }
+.setting-row select {
+  color: var(--text); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 11px; padding: 8px 10px; max-width: 185px;
+}
+.setting-row input[type="color"] {
+  width: 48px; height: 36px; padding: 3px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--panel); cursor: pointer;
+}
+.setting-row input[type="range"] { accent-color: var(--accent); width: min(180px, 100%); }
+.setting-check { display: flex; align-items: center; gap: 10px; margin-top: 14px; font-size: 13px; cursor: pointer; }
+.setting-check input { accent-color: var(--accent); width: 17px; height: 17px; }
+.setting-hint { margin: 4px 0 0 27px !important; font-size: 12px !important; }
+.reset-button {
+  border: 1px solid var(--line); border-radius: var(--ui-radius); padding: 11px 15px;
+  background: var(--panel); color: var(--text); font-weight: 600;
+}
+.reset-button:hover { background: var(--icon-hover); }
+.save-caption { font-size: 12px; text-align: center; color: var(--secondary); margin: -14px 0 0; }
+:root[data-contrast="true"][data-theme="light"] {
+  --text: #000000; --secondary: #30343d; --line: #606674; --accent-wash: #e1e7fc;
+}
+:root[data-contrast="true"][data-theme="dark"] {
+  --text: #ffffff; --secondary: #e0e4ee; --line: #aab4c5; --rail: #0d1015; --panel: #10141a;
+}
+:root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after {
+  transition: none !important; animation: none !important;
+}
+@media (max-width: 540px) {
+  .right-rail { width: min(var(--rail-width), 74px); }
+  .settings-panel {
+    right: calc(min(var(--rail-width), 74px) + 10px);
+    width: calc(100vw - min(var(--rail-width), 74px) - 20px);
+  }
+  .appearance-preview { height: 60px; }
+  .appearance-options { gap: 6px; }
+  .setting-row select { max-width: 160px; }
+  .setting-group { padding-top: 16px; }
+}
