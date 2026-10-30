@@ -37,12 +37,14 @@ export async function openWorkflows(dataDir:string,options:Options){
       await commit({...state,revision:state.revision+1,rules:structuredClone(rules)});return view();});},
     async uploaded(file:{id:string;name:string;folder:string|null}){return enqueue(async()=>{
       const rules=state.rules.filter(r=>r.enabled&&(!r.extension||file.name.toLowerCase().endsWith('.'+r.extension.replace(/^\./,'').toLowerCase()))&&file.name.toLocaleLowerCase('ru').includes(r.contains.toLocaleLowerCase('ru'))&&(r.sourceFolder===undefined||r.sourceFolder===file.folder));
-      for(const rule of rules){const id=rule.id+'-'+file.id;if(state.jobs.some(j=>j.id===id))continue;
-        if(state.jobs.filter(j=>j.status==='pending'||j.status==='failed').length>=500)throw new Error('Очередь автоматизации заполнена.');
-        const jobs=[...state.jobs,{id,file:file.id,name:file.name,rule:structuredClone(rule),status:'pending' as const,at:new Date().toISOString()}];
-        while(jobs.length>1000){const at=jobs.findIndex(j=>j.status==='done'||j.status==='cancelled');if(at<0)throw new Error('Очередь заполнена.');jobs.splice(at,1);}
-        await commit({...state,revision:state.revision+1,jobs});await process(state.jobs.find(j=>j.id===id)!);
-      }
+      const added=rules.filter(rule=>!state.jobs.some(j=>j.id===rule.id+'-'+file.id)).map(rule=>({id:rule.id+'-'+file.id,file:file.id,name:file.name,rule:structuredClone(rule),status:'pending' as const,at:new Date().toISOString()}));
+      if(!added.length)return;
+      if(state.jobs.filter(j=>j.status==='pending'||j.status==='failed').length+added.length>500)throw new Error('Очередь автоматизации заполнена.');
+      const jobs=[...state.jobs,...added];
+      while(jobs.length>1000){const at=jobs.findIndex(j=>j.status==='done'||j.status==='cancelled');if(at<0)throw new Error('Очередь заполнена.');jobs.splice(at,1);}
+      // Every matching rule must survive interruption, including rules not started yet.
+      await commit({...state,revision:state.revision+1,jobs});
+      for(const job of added)await process(job);
     });},
     async retry(id:string){return enqueue(async()=>{const job=state.jobs.find(j=>j.id===id);if(!job||job.status!=='failed')throw new Error('Задание не требует повтора.');await update(id,{status:'pending',error:undefined});await process(state.jobs.find(j=>j.id===id)!);return view();});},
     async resume(){return enqueue(async()=>{for(const job of [...state.jobs].filter(j=>j.status==='pending'))await process(job);});},

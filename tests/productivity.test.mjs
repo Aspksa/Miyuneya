@@ -6,7 +6,8 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, own } from './helpers/lifecycle.mjs';
 import { emptyWorkspace, validateWorkspace } from '../src/model.ts';
-import { reconcileTasks,repeatDate,matchesTask,taskBlockers } from '../src/productivity.ts';
+import { reconcileTasks,repeatDate,matchesTask,taskBlockers,editedRepeat,mergeCanonicalTasks } from '../src/productivity.ts';
+import { openWorkflows } from '../server/workflows.ts';
 import { createApp } from '../server/app.ts';
 const at='2026-10-30T00:00:00.000Z';
 const task=(id,fields={})=>({id,title:'Задача '+id,done:false,createdAt:at,...fields});
@@ -42,6 +43,43 @@ test('Completion blocks unfinished prerequisites; reopening a child reopens its 
   assert.deepEqual(taskBlockers(before.tasks,before.tasks[0]).map(t=>t.id),['b']);
   const next=structuredClone(before);next.tasks[0].done=true;assert.throws(()=>reconcileTasks(before,next,()=>''),/Сначала/);
   before.tasks[0].done=true;before.tasks[1].done=true;const reopened=structuredClone(before);reopened.tasks[1].done=false;reconcileTasks(before,reopened,()=>'',new Date());assert.equal(reopened.tasks[0].done,false);
+});
+
+test('Editing a clamped monthly occurrence retains its anchor unless its schedule changes',()=>{
+  const february=task('february',{dueDate:'2027-02-28',repeat:{unit:'month',interval:1,anchorDay:31}});
+  const renamed={...february,title:'Новое название',repeat:editedRepeat(february,'2027-02-28','month',1)};
+  assert.equal(renamed.repeat.anchorDay,31);
+  const before=emptyWorkspace();before.tasks=[renamed];const next=structuredClone(before);next.tasks[0].done=true;
+  reconcileTasks(before,next,()=>'march',new Date(2027,1,28,12));assert.equal(next.tasks[1].dueDate,'2027-03-31');
+  assert.equal(editedRepeat(february,'2027-02-27','month',1).anchorDay,27);
+  assert.equal(editedRepeat(february,'2027-02-28','month',2).anchorDay,28);
+  assert.equal(editedRepeat(february,'2027-02-28','week',1).unit,'week');
+  assert.equal(editedRepeat(february,'2027-02-28','',1),undefined);
+});
+
+test('Concurrent saves merge canonical ancestor changes and retain local additions and field edits',async t=>{
+  const a=await app(t);let state=(await a.request('/api/workspace')).data;
+  state.data.tasks=[task('parent',{done:true,completedAt:at}),task('child',{done:true,parentId:'parent',completedAt:at})];
+  state=(await a.request('/api/workspace','PUT',state)).data;
+  const sent=structuredClone(state.data);sent.tasks[1].done=false;delete sent.tasks[1].completedAt;
+  const local=structuredClone(sent);local.tasks[0].title='Локальное название';local.notes.push({id:'assistant-note',title:'Добавлено помощницей',body:'Не терять',updatedAt:at});local.tasks.push(task('assistant-task'));
+  const response=await a.request('/api/workspace','PUT',{revision:state.revision,data:sent});assert.equal(response.status,200);
+  local.tasks=mergeCanonicalTasks(sent.tasks,local.tasks,response.data.data.tasks);
+  assert.equal(local.tasks[0].done,false);assert.equal(local.tasks[0].completedAt,undefined);assert.equal(local.tasks[0].title,'Локальное название');
+  const saved=await a.request('/api/workspace','PUT',{revision:response.data.revision,data:local});assert.equal(saved.status,200);assert.equal(saved.data.data.notes[0].id,'assistant-note');assert.ok(saved.data.data.tasks.some(t=>t.id==='assistant-task'));
+  const generated=task('next',{repeatOf:'parent'});const merged=mergeCanonicalTasks(sent.tasks,local.tasks.filter(t=>t.id!=='child'),[...response.data.data.tasks,generated]);
+  assert.ok(!merged.some(t=>t.id==='child'),'local deletions remain deleted');assert.equal(merged.filter(t=>t.id==='next').length,1);
+  assert.equal(mergeCanonicalTasks(sent.tasks,merged,[...response.data.data.tasks,generated]).filter(t=>t.id==='next').length,1);
+});
+
+test('Oversized recurring expansion returns 413 without changing disk state or preventing the next edit',async t=>{
+  const a=await app(t);let state=(await a.request('/api/workspace')).data;
+  state.data.tasks=[task('large',{dueDate:'2027-01-31',repeat:{unit:'month',interval:1}}),...Array.from({length:120},(_,i)=>task('child'+i,{parentId:'large',done:true,details:'я'.repeat(5000)}))];
+  assert.ok(Buffer.byteLength(JSON.stringify(state))<2_000_000);state=(await a.request('/api/workspace','PUT',state)).data;
+  const path=join(a.root,'data','workspace.json'),unchanged=await readFile(path,'utf8');const completion=structuredClone(state);completion.data.tasks[0].done=true;
+  const rejected=await a.request('/api/workspace','PUT',completion);assert.equal(rejected.status,413);assert.match(rejected.data.error,/Повторение/);
+  assert.equal(await readFile(path,'utf8'),unchanged);assert.deepEqual((await a.request('/api/workspace')).data,state);
+  state.data.settings.name='После отказа';const saved=await a.request('/api/workspace','PUT',state);assert.equal(saved.status,200);assert.equal(saved.data.data.tasks.length,121);
 });
 
 test('Saved task conditions use local calendar dates and groups in both time zones',()=>{
@@ -94,6 +132,31 @@ test('Workflow failure keeps the original upload, records the cause and supports
   rules=(await a.request('/api/workflows')).data;assert.equal(rules.jobs[0].status,'failed');assert.match(rules.jobs[0].error,/UTF-8/);assert.equal((await a.request('/api/workspace')).data.data.notes.length,0);
   const retry=await a.request('/api/workflows','POST',{id:rules.jobs[0].id});assert.equal(retry.data.jobs[0].status,'failed');assert.equal((await a.request('/api/disk')).data.files.length,1);
   assert.equal((await a.request('/api/workflows','PUT',{revision:0,rules:[]})).status,409);
+});
+
+test('All matching workflow jobs are durable before the first action and recover after interruption',async t=>{
+  const root=await fixture(t),dataDir=join(root,'data');const entered=Promise.withResolvers(),release=Promise.withResolvers();let first=true;
+  const rules=['first','second'].map(id=>({id,name:id,enabled:true,extension:'txt',contains:'',noteTitle:'{name}',noteBody:'',tasks:[],group:''}));
+  const file={id:'document',name:'Работа.txt',folder:null};const applied=[];
+  const options={file:()=>file,folders:()=>[],text:async()=>'',route:async()=>{},apply:async id=>{applied.push(id);if(first){first=false;entered.resolve();await release.promise;}}};
+  const workflows=await openWorkflows(dataDir,options);await workflows.configure(0,rules);
+  const processing=workflows.uploaded(file);let snapshot;
+  try{await entered.promise;snapshot=await readFile(join(dataDir,'workflows.json'),'utf8');const jobs=JSON.parse(snapshot).jobs;
+    assert.deepEqual(jobs.map(j=>j.id),['first-document','second-document']);assert.ok(jobs.every(j=>j.status==='pending'));assert.deepEqual(applied,['first-document']);
+  }finally{release.resolve();await processing;await workflows.shutdown();}
+  // Restore the exact on-disk snapshot visible at the interrupted action boundary.
+  await writeFile(join(dataDir,'workflows.json'),snapshot);applied.length=0;
+  const recovered=await openWorkflows(dataDir,options);await recovered.resume();assert.deepEqual(applied,['first-document','second-document']);
+  assert.ok(recovered.view().jobs.every(j=>j.status==='done'));await recovered.uploaded(file);assert.equal(applied.length,2,'repeated upload callback must not recreate either job');await recovered.shutdown();
+});
+
+test('Workflow capacity rejects the whole new matching batch before applying any rule',async t=>{
+  const root=await fixture(t),dataDir=join(root,'data');const rules=['one','two'].map(id=>({id,name:id,enabled:true,extension:'txt',contains:'',noteTitle:'{name}',noteBody:'',tasks:[],group:''}));let calls=0;
+  const options={file:()=>({name:'file.txt',folder:null}),folders:()=>[],text:async()=>'',route:async()=>{},apply:async()=>{calls++;}};
+  const initial=await openWorkflows(dataDir,options);await initial.configure(0,rules);await initial.shutdown();
+  const path=join(dataDir,'workflows.json'),state=JSON.parse(await readFile(path,'utf8'));state.jobs=Array.from({length:499},(_,i)=>({id:'old-'+i,file:'old-'+i,name:'old.txt',rule:rules[0],status:'pending',at}));await writeFile(path,JSON.stringify(state));
+  const workflows=await openWorkflows(dataDir,options);const before=await readFile(path,'utf8');await assert.rejects(workflows.uploaded({id:'new',name:'new.txt',folder:null}),/заполнена/);
+  assert.equal(calls,0);assert.equal(await readFile(path,'utf8'),before);assert.equal(workflows.view().jobs.length,499);await workflows.shutdown();
 });
 
 test('Disabled rules do not process files and a corrupt workflow file cannot block notes or originals',async t=>{

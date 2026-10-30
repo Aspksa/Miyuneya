@@ -1,5 +1,5 @@
 import { mountWorkbench } from './workbench.js';
-import { matchesTask,taskBlockers } from './productivity.js';
+import { matchesTask,taskBlockers,editedRepeat,mergeCanonicalTasks } from './productivity.js';
 import type { ViewFilter } from './productivity.js';
 import { createDisk } from './disk.js';
 import { emptyWorkspace, validateWorkspace, combineEntries, defaultLook, validLocalDate } from './model.js';
@@ -114,7 +114,7 @@ function appearanceCard() {
     + `</section>`;
 }
 function settings() {
-  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div>${appearanceCard()}<section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. JSON-копия содержит заметки, задачи и настройки. Документы хранятся отдельно в data/disk: для их резервной копии скопируйте эту папку при остановленном приложении.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}${workbench.automationCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.5.0</span><h2>Место для вашего мира</h2><p>Личное пространство для заметок, задач и документов. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Доступны заметки, задачи, диск документов, настройки и помощница с чатом через cloud.ru и собственной памятью: значок мозга вверху справа.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
+  return `<div class="page-heading"><div><span class="eyebrow">УДОБНО ИМЕННО ВАМ</span><h1>Настройки пространства</h1></div></div><p class="page-description">Немного личного — и всё на своих местах.</p><div class="settings-layout"><div>${appearanceCard()}<section class="settings-card"><h2>Ваши данные</h2><p>Заметки, задачи и настройки сохраняются в папке data рядом с проектом. JSON-копия содержит заметки, задачи и настройки. Документы хранятся отдельно в data/disk: для их резервной копии скопируйте эту папку при остановленном приложении.</p><button class="button" data-export>${icon('export')}Экспортировать</button> <label class="button file-label">Восстановить копию<input type="file" id="import-file" accept=".json,application/json"></label></section>${aiCard()}${workbench.automationCard()}</div><aside><section class="settings-card"><span class="version">MIYUNEYA / 0.5.1</span><h2>Место для вашего мира</h2><p>Личное пространство для заметок, задач и документов. Работает на вашем компьютере и доступна без интернета после подготовки Node.js.</p><div class="tech-list"><span>TypeScript</span><span>Node.js</span><span>HTML</span><span>CSS</span></div></section><section class="settings-card"><h2>Дальше — вместе</h2><p>Доступны заметки, задачи, диск документов, настройки и помощница с чатом через cloud.ru и собственной памятью: значок мозга вверху справа.</p><a class="text-link" href="https://github.com/Aspksa/Miyuneya" target="_blank" rel="noopener noreferrer">Репозиторий проекта ${icon('arrow')}</a></section></aside></div>`;
 }
 function render(focus = false) {
   applyTheme();
@@ -141,7 +141,7 @@ async function flush(): Promise<boolean> {
       const response=await fetch('/api/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,data})});
       const result=await response.json();if(!response.ok)throw new Error(result.error || 'Не удалось сохранить данные.');
       revision=result.revision;saveError='';
-      if(JSON.stringify(data)===sent)data=result.data;else{const sentIds=new Set(JSON.parse(sent).tasks.map(t=>t.id));for(const task of result.data.tasks)if(!sentIds.has(task.id)&&!data.tasks.some(t=>t.id===task.id))data.tasks.push(task);}
+      if(JSON.stringify(data)===sent)data=result.data;else data.tasks=mergeCanonicalTasks(JSON.parse(sent).tasks,data.tasks,result.data.tasks);
       committedData=JSON.stringify(result.data);if(before&&before!==committedData&&!restoring)workbench.recordUndo(before,revision);
     }
     return true;
@@ -319,7 +319,7 @@ document.querySelector('#editor-form')!.addEventListener('submit', async event=>
     if(unit&&parentId)return toast('Повторение задаётся для основной задачи. Её подзадачи будут скопированы автоматически.');
     if(unit&&(!Number.isInteger(interval)||interval<1||interval>365))return toast('Интервал повторения — целое число от 1 до 365.');
     const attachments=[...document.querySelector<HTMLSelectElement>('#task-materials')!.selectedOptions].map(o=>{const split=o.value.indexOf(':');const kind=o.value.slice(0,split),id=o.value.slice(split+1);return{kind:kind as 'note'|'file',id};});
-    const fields={title,details:body.slice(0,10000),dueDate,priority,parentId,dependsOn,group:document.querySelector<HTMLInputElement>('#task-group')!.value.trim(),attachments,repeat:unit?{unit,interval,anchorDay:dueDate?Number(dueDate.slice(-2)):undefined}:undefined,updatedAt:new Date().toISOString()};
+    const fields={title,details:body.slice(0,10000),dueDate,priority,parentId,dependsOn,group:document.querySelector<HTMLInputElement>('#task-group')!.value.trim(),attachments,repeat:editedRepeat(existing,dueDate,unit,interval),updatedAt:new Date().toISOString()};
     const candidate=structuredClone(data);const changed=existing?candidate.tasks.find(t=>t.id===existing.id):null;if(changed)Object.assign(changed,fields);else candidate.tasks.push({id:newId(),done:false,createdAt:new Date().toISOString(),...fields});
     if(!validateWorkspace(candidate))return toast('Проверьте зависимости и родителя: циклы и отсутствующие задачи недопустимы.');data=candidate;
   }

@@ -500,6 +500,7 @@ export async function createApp(root: string, instance: string, preview = false,
           if (input.revision !== state.revision) return send(409, { error: 'Данные изменены в другой вкладке. Экспортируйте свою копию и обновите страницу.' });
           try{reconcileTasks(state.data,input.data,()=>randomUUID().replaceAll('-',''));}catch(e){return send(409,{error:e.message});}
           const next = { revision: state.revision + 1, data: input.data };
+          if(Buffer.byteLength(JSON.stringify(next))>2_000_000)return send(413,{error:'Повторение превышает размер пространства 2 МБ. Изменения не сохранены: экспортируйте записи и освободите место.'});
           await atomicWrite(dataFile, JSON.stringify(next, null, 2));
           state = next;
           send(200, state);
