@@ -16,7 +16,7 @@ const chrome = browsers.find(exe => {
 });
 
 async function debuggerPort(profile) {
-  for (let n=0;n<100;n++) {
+  for (let n=0;n<300;n++) {
     try {
       const data=await readFile(join(profile,'DevToolsActivePort'),'utf8');
       const port=Number(data.split('\n')[0]);
@@ -67,14 +67,16 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
     '--no-proxy-server','--no-first-run','--no-default-browser-check',
     '--remote-allow-origins=*','--remote-debugging-port=0',
     '--user-data-dir='+profile,'about:blank'
-  ],{stdio:'ignore'});
+  ],{stdio:['ignore','ignore','pipe']});
+  let browserErrors='';
+  browser.stderr?.on('data',chunk=>{browserErrors=(browserErrors+String(chunk)).slice(-2400);});
   let cd;
   t.after(async()=>{
     try{cd?.close();}catch{}
     try{browser.kill('SIGKILL');}catch{}
     await rm(profile,{recursive:true,force:true,maxRetries:4,retryDelay:150});
   });
-  const port=await debuggerPort(profile);
+  const port=await debuggerPort(profile).catch(e=>{throw new Error(e.message+'; Chromium stderr: '+browserErrors);});
   const targets=await (await fetch('http://127.0.0.1:'+port+'/json/list')).json();
   const page=targets.find(target=>target.type==='page');
   assert.ok(page?.webSocketDebuggerUrl,'Missing Chrome page target.');
