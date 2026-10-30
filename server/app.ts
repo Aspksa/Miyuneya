@@ -202,6 +202,25 @@ export async function createApp(root: string, instance: string, preview = false,
         return;
       }
       if (stopping) return send(503, { error: 'Сервер завершает работу' });
+      if (path === '/api/site/theme') {
+        if (req.method === 'GET') return send(200, { theme: state.data.settings.theme === 'dark' ? 'dark' : 'light' });
+        if (req.method !== 'PUT') return send(405, { error: 'Метод не поддерживается' });
+        const input = await readJson(req, send, 1000);
+        if (input === undefined) return;
+        if (!input || (input.theme !== 'light' && input.theme !== 'dark')) return send(400, { error: 'Выберите светлую или тёмную тему.' });
+        const update = queue.then(async () => {
+          if (state.data.settings.theme !== input.theme) {
+            const next = { revision: state.revision + 1, data: structuredClone(state.data) };
+            next.data.settings.theme = input.theme;
+            await atomicWrite(dataFile, JSON.stringify(next, null, 2));
+            state = next;
+          }
+          send(200, { theme: input.theme });
+        });
+        queue = update.catch(() => {});
+        await update;
+        return;
+      }
       if(path==='/api/disk' || path.startsWith('/api/disk/')) {memory.touch();if(diskError)return send(503,{error:'Индекс диска повреждён. Документы сохранены; восстановите data/disk/index.json из копии.'});return await disk.handle(req,res,new URL(req.url,origin));}
       if(path==='/api/workflows'){
         if(!workflows)return send(503,{error:workflowError || 'Автоматизации недоступны.'});
