@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "fingerprint": "0e817f226e32fb4850838afb8e856e38b48e0ff6f46741c1554de17827359822",
+  "fingerprint": "bd8c23a173766e083451af9a0524465659f7b7318310db7bf7f35625ed23d0eb",
   "outputs": {
     "appearance.js": "be3c7d9aa4c3a5303c1a3a03578fc7c02c75a47efa3964dfbadb717b0207dd1a",
     "assistant.js": "bb573bd724ba4354a6687742829c56ddc00a3c38abd0d571455136b84add31fc",
@@ -21,6 +21,6 @@
     "avatars/avatar4.png": "f1767d080142d982f3267859ba11d857b4f355219395af520bcafa06c62df3d4",
     "blank.html": "46adc4d066ac647693c3f885dd856fe14bc7d495ad8d609a9c3bcb777e61bbee",
     "blank.css": "bebf823876ff92ac06d99342846cb2109e874692b71a6c5d47daa8584a774576",
-    "blank.js": "a19c89f143d2feb7042e63bcd47b7c6babd8a44e529c0bc6741019d8a507e9fc"
+    "blank.js": "ecb25ad83db082c8202d15a729d58748f0573778d1f0bc1f8c66b8ef27e63301"
   }
 }
