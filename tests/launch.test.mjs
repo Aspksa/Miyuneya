@@ -39,6 +39,12 @@ test('Default homepage is empty and untitled; original workspace and APIs are pr
   assert.equal((await workspace.json()).revision,0);
 });
 
+test('A missing blank homepage fails the preflight check with a specific cause',async t=>{
+  const root=await fixture(t);
+  await rm(join(root,'web','blank.html'));
+  await assert.rejects(ensureBuild(root),/web\/blank\.html/);
+});
+
 test('BAT is ASCII without BOM, CRLF, delayed expansion off and has one entry point', async()=>{
   const bytes=await readFile(new URL('../Miyuneya.bat',import.meta.url));
   assert.ok([...bytes].every(b=>b<128));assert.equal(bytes.toString().replaceAll('\r\n','').includes('\n'),false);
