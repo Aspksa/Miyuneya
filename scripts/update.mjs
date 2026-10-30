@@ -33,7 +33,7 @@ export async function prepareUpdate(root,source) {
     for(const entry of manifest.files) await atomicWrite(join(temporary,entry.path),await readFile(join(folder,entry.path)));
     await atomicWrite(join(temporary,'update.json'),JSON.stringify(manifest));await verify(temporary);
     // Directory rename refuses to replace an already prepared update.
-    await rename(temporary,join(area,'pending'));
+    await retryFile(()=>rename(temporary,join(area,'pending')));
   } catch(e){await removeTree(temporary);throw e;}
 }
 export async function updateManager(root,logger) {
@@ -82,7 +82,8 @@ export async function updateManager(root,logger) {
     applied:true, rollback,
     async commit() {
       // Move pending out of the active path first. If interrupted, the journal still triggers rollback.
-      await rename(pending,join(area,'installed-'+randomUUID()));
+      const installed=join(area,'installed-'+randomUUID());
+      await retryFile(()=>rename(pending,installed));
       await removeTree(transaction);
       await logger.log('update','first-health-passed');
     }
