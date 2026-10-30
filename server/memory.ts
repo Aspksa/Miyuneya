@@ -300,7 +300,7 @@ export function ask(memory: Memory, kind: Question['kind'], text: unknown, extra
   return question;
 }
 // Gaps the memory can see by itself: someone or something mentioned but never explained.
-export function findGaps(memory: Memory, now = new Date().toISOString()) {
+export function findGaps(memory: Memory, now = Date.now()) {
   for (const entity of memory.entities) {
     if (entity.about || memory.questions.length >= LIMITS.questions) continue;
     ask(memory, 'gap', `Вы упоминали «${entity.name}». ${entity.type === 'person' ? 'Кто это' : 'Что это'} для вас?`, { entity: entity.id }, now);
@@ -311,7 +311,6 @@ export function answer(memory: Memory, id: string, text: unknown, now = new Date
   const question = memory.questions.find(q => q.id === id);
   const value = clip(text);
   if (!question || !value) return null;
-  const entity = memory.entities.find(e => e.id === question.entity);
   let fact = value;
   if (entity) { if (!entity.about) entity.about = clip(value, 300); entity.seen = now; fact = `${entity.name}: ${value}`; }
   const conflicting = memory.items.filter(i => question.facts.includes(i.id));
@@ -344,7 +343,7 @@ export function promise(memory: Memory, text: unknown, due: unknown, episode: st
 }
 export const openPromises = (memory: Memory) => memory.promises.filter(p => !p.done);
 export function keep(memory: Memory, id: unknown, now = new Date().toISOString()) {
-  const entry = memory.promises.find(p => p.id === id && !p.done);
+  const entry = memory.promises.find(p => p.id === id);
   if (!entry) return false;
   entry.done = now;
   journal(memory, 'promise', `Выполнила обещание: ${entry.text}`, now);
@@ -608,7 +607,7 @@ export const THINK_PROMPT = SOURCE_PROMPT + '\n' + `Ты — Миюнэя, ли�
 Виды мыслей (kind): hypothesis — догадка о пользователе, которую стоит проверить («Кажется, вечером ему легче думать о планах»); idea — что ты могла бы предложить или подготовить для него; reflection — вывод о том, как прошли ваши разговоры и что у тебя получается хуже; skill — чему тебе стоит научиться.
 Пиши 1–4 мысли, каждая — 1–2 тёплых предложения по-русски, конкретно и по материалам ниже, со ссылками на id записей (links). Не повторяй прошлые размышления и то, что уже записано в фактах. Не выдумывай фактов: догадки называй догадками.
 questions — до двух вопросов, только если они правда важны и их ещё нет среди открытых. conflicts — противоречащие факты, если заметила. skills — до двух правил, только если они следуют из самооценок и слабых мест разговоров.
-Тренировка логики. Сделай 1–2 проверяемых прогноза (predictions) по данным о пользователе: что он скорее сделает, спросит или как пойдёт его дело, — с уверенностью в процентах и сроком проверки due через 1–14 дней. kind — тип рассуждения: pattern (закономерность), cause (причина и следствие), habit (привычка), plan (по его планам), analogy (по похожему случаю). Опирайся на типы с высокой точностью из статистики ниже, а слабые тренируй осторожно, с меньшей уверенностью.
+Тренировка логики. Сделай 1–2 проверяемых прогноза (predictions) по данным о пользователе: что он скорее сделает, спросит или как пойдёт его дело, — с уверенностью в процентах и сроком проверки due через 1–14 дней. kind — тип рассуждения: pattern (закономерность), cause (причина и следствие), habit (привычка), plan (по планам), analogy (по похожему случаю). Опирайся на типы с высокой точностью из статистики ниже, а слабые тренируй осторожно, с меньшей уверенностью.
 checks — проверь прошлые прогнозы, срок которых прошёл, по разговорам и фактам после них: right — сбылся, wrong — нет. Если данных нет, не проверяй. Если ошиблась, в fix сформулируй правило, как рассуждать в следующий раз, с учётом журнала ошибок.
 causes — причинно-следственные связи из жизни пользователя, которые видны по нескольким эпизодам или фактам, со ссылками evidence.
 Если думать пока не о чем, верни пустые массивы.`;
@@ -699,10 +698,29 @@ function applyGraph(memory: Memory, result: any, resolve: (ref: unknown) => stri
   for (const entry of list(result.entities)) upsertEntity(memory, entry.name, entry.type, entry.about, now);
   for (const entry of list(result.relations)) { const from = resolve(entry.from), to = resolve(entry.to); if (from && to) addEdge(memory, from, to, entry.type, now); }
 }
-// A lesson may paraphrase feedback, but it still needs an exact user quote containing a correction or instruction.
+// A lesson may paraphrase feedback, but the quote must concern that lesson, not merely contain a broad keyword such as «нужно».
 const FEEDBACK = /(?:^|[^\p{L}])(?:не\s+(?:так|то|надо|нужно|нравится)|хватит|перестань|слишком|лучше|надо|нужно|всегда|никогда|отвеч\p{L}*|пиш\p{L}*|сделай|делай|говори|формулируй|короче|подробнее|длиннее|убери|добавь|измени|исправь)(?:[^\p{L}]|$)/iu;
+const GENERIC_FEEDBACK=new Set(['отве','пиши','сдел','дела','гово','форм','надо','нужн','всег','нико','лучш']);
+function lessonRelation(text:string,quote:string) {
+  if(!text||!compatible(text,quote))return false;
+  const stems=(value:string)=>new Set([...tokens(value)].map(t=>t.slice(0,4)).filter(t=>!GENERIC_FEEDBACK.has(t)));
+  const expected=stems(text),actual=stems(quote);
+  return [...expected].some(t=>actual.has(t));
+}
 function lessonEvidence(value: unknown, sources: Source[], weak: string, lesson: string) {
-  return evidence(value,sources).filter(e=>e.role==='user'&&(FEEDBACK.test(e.quote)||[weak,lesson].some(text=>text&&compatible(text,e.quote)&&similarity(text,e.quote)>=0.3)));
+  return evidence(value,sources).filter(e=>{
+    if(e.role!=='user')return false;
+    const paraphrase=[weak,lesson].some(text=>text&&compatible(text,e.quote)&&similarity(text,e.quote)>=0.3);
+    const related=[weak,lesson].some(text=>lessonRelation(text,e.quote));
+    return related&&(paraphrase||FEEDBACK.test(e.quote));
+  });
+}
+// A quoted fragment inherits negation and numbers from its sentence; «любит чай» inside «Не любит чай» is not confirmation.
+function evidenceContext(sources:Source[],proof:Evidence) {
+  const source=sources.find(s=>s.source===proof.source&&s.version===proof.version);
+  if(!source)return '';
+  const at=source.text.indexOf(proof.quote),before=source.text.slice(0,at),after=source.text.slice(at+proof.quote.length);
+  return (before.split(/[.!?…;\n]/u).pop() || '')+proof.quote+(after.split(/[.!?…;\n]/u)[0] || '');
 }
 // Applies the post-dialog reflection: an episode, entities, new or confirmed facts and rules, relations and weakened mistakes.
 export function applyReflection(memory: Memory, result: any, dialog: Dialog, known: Set<string>, now = new Date().toISOString(), sources:Source[] = dialogSources(dialog)) {
@@ -729,13 +747,15 @@ export function applyReflection(memory: Memory, result: any, dialog: Dialog, kno
     for (const name of Array.isArray(entry.about) ? entry.about.slice(0, 5) : []) { const target = resolve(name); if (target) addEdge(memory, added.item.id, target, 'about', now); }
   }
   for (const entry of list(result.relations)) { const from = resolve(entry.from), to = resolve(entry.to); if (from && to && addEdge(memory, from, to, entry.type, now)) changes++; }
+  const confirmed=new Set<string>();
   for (const entry of Array.isArray(result.confirm) ? result.confirm.slice(0,30) : []) {
     const found=item(typeof entry==='string'?entry:entry?.id);
-    if(!found||found.status==='superseded'||found.status==='contested')continue;
+    if(!found||found.status==='superseded'||found.status==='contested'||confirmed.has(found.id))continue;
     // Legacy id-only confirmations required the whole message to be the fact. New confirmations cite the exact supporting fragment.
-    if(typeof entry==='string') { if(sources.some(s=>s.role==='user'&&canonical(s.text)===canonical(found.text))){reinforce(found,now,0.2);changes++;} continue; }
-    const proof=evidence(entry.evidence,sources).filter(e=>e.role==='user'&&compatible(found.text,e.quote)&&similarity(found.text,e.quote)>=0.3);
-    if(proof.length&&upsert(memory,found.kind,found.text,{same:found.id,evidence:proof,now}))changes++;
+    if(typeof entry==='string') { if(sources.some(s=>s.role==='user'&&canonical(s.text)===canonical(found.text))){reinforce(found,now,0.2);confirmed.add(found.id);changes++;} continue; }
+    const proof=evidence(entry.evidence,sources).filter(e=>e.role==='user'&&compatible(found.text,e.quote)&&similarity(found.text,e.quote)>=0.3&&compatible(found.text,evidenceContext(sources,e)));
+    // One reflection can reinforce a record only once, even if the model repeats its id or evidence.
+    if(proof.length&&upsert(memory,found.kind,found.text,{same:found.id,evidence:proof,now})){confirmed.add(found.id);changes++;}
   }
   for (const id of ids(result.weaken)) { const found = item(id); if (found && !found.pinned && found.source!=='user') { found.status='contested'; changes++; } }
   // Self-review alone is only a candidate. An exact user correction makes the lesson applicable to future answers.
