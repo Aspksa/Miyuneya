@@ -254,5 +254,47 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90�
   console.log('HiDPI screenshots saved: '+screenshots+' (FullHD/125–200%, QHD, 4K, 5K).');
   await evalJS('document.getElementById("settings-close").click()');
   assert.equal(await evalJS('document.getElementById("settings-panel").hidden'),true);
-  console.log('Chromium responsive geometry checks passed: '+checks+' viewports.');
+
+  // Rebuild the real DOM to test a delayed settings response. Previously the
+  // initial GET could erase a key the user had typed before it completed.
+  await cd.send('Page.setDocumentContent',{frameId:frame.frameTree.frame.id,html:documentHTML});
+  await evalJS(`(() => {
+    window.__resolveCloudLoad = null;
+    window.fetch = (path,options={}) => {
+      if (path==='/api/assistant' && !options.method)
+        return new Promise(resolve => { window.__resolveCloudLoad=resolve; });
+      if (path==='/api/site/appearance')
+        return Promise.resolve({ok:true,json:async()=>({appearance:null})});
+      if (path==='/api/assistant' && options.method==='PUT') {
+        const body=JSON.parse(options.body);
+        return Promise.resolve({ok:true,json:async()=>({configured:!!body.apiKey,keyHint:'••••'+body.apiKey.slice(-4),model:body.model})});
+      }
+      return Promise.resolve({ok:false,json:async()=>({error:'not mocked'})});
+    };
+    return true;
+  })()`);
+  await evalJS(script);
+  await evalJS(`(() => {
+    const key=document.getElementById('cloud-key');
+    key.value='typed-while-loading-key';
+    key.dispatchEvent(new Event('input',{bubbles:true}));
+    const model=document.getElementById('cloud-model');
+    model.value='new/model';
+    model.dispatchEvent(new Event('input',{bubbles:true}));
+    window.__resolveCloudLoad({ok:true,json:async()=>({
+      configured:false,keyHint:'',model:'openai/gpt-oss-120b'
+    })});
+    return true;
+  })()`);
+  await evalJS('new Promise(resolve=>setTimeout(resolve,30))');
+  assert.equal(await evalJS('document.getElementById("cloud-key").value'),'typed-while-loading-key');
+  assert.equal(await evalJS('document.getElementById("cloud-model").value'),'new/model');
+  assert.equal(await evalJS('document.getElementById("cloud-status").dataset.state'),'unchecked');
+  await evalJS('document.getElementById("cloud-form").dispatchEvent(new Event("submit",{cancelable:true}))');
+  await evalJS('new Promise(resolve=>setTimeout(resolve,30))');
+  assert.equal(await evalJS('document.getElementById("cloud-key").value'),'');
+  assert.equal(await evalJS('document.getElementById("cloud-model").value'),'new/model');
+  assert.ok((await evalJS('document.getElementById("cloud-key-hint").textContent')).includes('••••-key'));
+
+  console.log('Chromium responsive geometry checks passed: '+checks+' viewports; late Cloud.ru GET preserves draft.');
 });
