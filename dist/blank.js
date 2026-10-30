@@ -401,3 +401,22 @@
 
   void load();
 })();
+
+// Hayumeri brain hub: a local, empty section that opens from the top-right
+// animated SVG. Hash routing works without external services or new dependencies.
+(() => {
+  'use strict';
+  const link = document.getElementById('brain-nav-link');
+  const hub = document.getElementById('brain-workspace');
+  const area = document.getElementById('work-area');
+  if (!link || !hub || !area || !window.location || typeof window.addEventListener !== 'function') return;
+  function renderBrainLocation() {
+    const active = window.location.hash === '#brains';
+    hub.hidden = !active;
+    link.setAttribute('aria-current', active ? 'page' : 'false');
+    area.setAttribute('aria-label', active ? 'Мозги Hayumeri' : 'Пустая рабочая область');
+    document.title = active ? 'Мозги Hayumeri' : '';
+  }
+  window.addEventListener('hashchange', renderBrainLocation);
+  renderBrainLocation();
+})();
