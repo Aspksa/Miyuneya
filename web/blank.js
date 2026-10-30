@@ -196,6 +196,164 @@
   const panel = document.getElementById('cloud-panel');
   if (!panel) return; // Legacy UI tests do not mount the new settings pane.
 
+  const validModelId = new RegExp('^[A-Za-z0-9_.:@/-]{1,200}
+  const model = document.getElementById('cloud-model');
+  const modelList = document.getElementById('cloud-model-list');
+  const form = document.getElementById('cloud-form');
+  const state = document.getElementById('cloud-status');
+  const stateText = document.getElementById('cloud-state-text');
+  const stateInfo = document.getElementById('cloud-status-info');
+  const keyHint = document.getElementById('cloud-key-hint');
+  const save = document.getElementById('cloud-save');
+  const verifyButton = document.getElementById('cloud-verify');
+  const refresh = document.getElementById('cloud-refresh');
+  const remove = document.getElementById('cloud-remove');
+  let configured = false, busy = false, savedModel = '';
+  let requestId = 0;
+
+  function status(code, title, description) {
+    state.dataset.state = code;
+    stateText.textContent = title;
+    stateInfo.textContent = description;
+  }
+  function setBusy(value) {
+    busy = value;
+    for (const button of [save, verifyButton, refresh, remove]) button.disabled = value;
+    key.disabled = value;
+    model.disabled = value;
+  }
+  function updateConfig(data) {
+    configured = data?.configured === true;
+    savedModel = typeof data?.model === 'string' ? data.model : '';
+    model.value = savedModel || 'openai/gpt-oss-120b';
+    remove.hidden = !configured;
+    key.value = ''; // Never echo or persist the original secret in the browser.
+    keyHint.textContent = configured
+      ? 'Сохранённый ключ: ' + (data.keyHint || '••••') + '. Оставьте поле пустым, чтобы сохранить текущий ключ.'
+      : 'Ключ не сохранён. После сохранения он останется только на локальном сервере.';
+    status(configured ? 'unchecked' : 'not-configured', configured ? 'Ключ сохранён · не проверено' : 'Не подключено',
+      configured ? 'Нажмите «Проверить подключение», чтобы проверить доступ к API и выбранной модели.' : 'Введите API-ключ и сохраните настройки.');
+  }
+  async function request(path, options) {
+    const response = await fetch(path, { cache: 'no-store', ...options });
+    const data = await response.json();
+    if (!response.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'Запрос не выполнен.');
+    return data;
+  }
+  async function load() {
+    const current = ++requestId;
+    try {
+      const data = await request('/api/assistant');
+      if (current === requestId) updateConfig(data);
+    } catch {
+      if (current === requestId) status('error', 'Ошибка', 'Не удалось прочитать настройки локального сервера.');
+    }
+  }
+  async function loadModels() {
+    if (!configured) {
+      status('not-configured','Нет сохранённого ключа','Сначала сохраните API-ключ, чтобы запросить модели.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const data = await request('/api/assistant/models');
+      const valid = Array.isArray(data.models) ? data.models.filter(name => typeof name === 'string' && validModelId.test(name)) : [];
+      modelList.replaceChildren();
+      for (const name of [...new Set(valid)].slice(0, 250)) {
+        const option = document.createElement('option');
+        option.value = name;
+        modelList.append(option);
+      }
+      status('unchecked', 'Модели загружены', 'Доступно моделей: ' + valid.length + '. Выберите модель и нажмите «Сохранить».');
+    } catch {
+      status('error', 'Ошибка списка моделей', 'Не удалось загрузить список моделей. Проверьте ключ и интернет.');
+    } finally { setBusy(false); }
+  }
+  async function verify() {
+    if (!configured) {
+      status('not-configured', 'Не подключено', 'Сначала сохраните API-ключ Cloud.ru.');
+      return;
+    }
+    if (model.value.trim() !== savedModel) {
+      status('unchecked', 'Модель не сохранена', 'Сначала сохраните выбранную модель.');
+      return;
+    }
+    setBusy(true);
+    status('checking', 'Проверяем Cloud.ru…', 'Выполняется запрос к списку моделей с сохранённым ключом.');
+    try {
+      const result = await request('/api/assistant/verify', { method: 'POST' });
+      if (result.status === 'connected') {
+        status('connected', 'Подключено', result.message || 'Ключ принят и модель доступна.');
+      } else if (result.status === 'model-unavailable') {
+        status('model-unavailable', 'Модель недоступна', result.message || 'Выберите модель из доступного списка.');
+      } else if (result.status === 'not-configured') {
+        status('not-configured', 'Не подключено', result.message || 'Ключ не сохранён.');
+      } else {
+        status('error', 'Ошибка подключения', result.message || 'Cloud.ru не подтвердил доступ.');
+      }
+    } catch {
+      status('error', 'Ошибка проверки', 'Не удалось обратиться к локальному серверу. Попробуйте снова.');
+    } finally { setBusy(false); }
+  }
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (busy) return;
+    const selectedModel = model.value.trim();
+    if (!validModelId.test(selectedModel)) {
+      status('error', 'Неверная модель', 'Введите корректный идентификатор модели.');
+      return;
+    }
+    const input = { model: selectedModel };
+    // Sending an empty password would delete or replace an existing key: never do so.
+    if (key.value !== '') input.apiKey = key.value;
+    if (!configured && !input.apiKey) {
+      status('not-configured', 'Не подключено', 'Введите API-ключ Cloud.ru.');
+      return;
+    }
+    setBusy(true);
+    status('checking', 'Сохраняем настройки…', 'Ключ отправляется только на локальный сервер.');
+    try {
+      const data = await request('/api/assistant', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input)
+      });
+      updateConfig(data);
+      await verifyAfterSave();
+    } catch {
+      status('error', 'Не удалось сохранить', 'Проверьте формат ключа и права записи в папку проекта.');
+    } finally { setBusy(false); }
+  });
+  async function verifyAfterSave() {
+    // A successful local save alone must not show a green "Connected" indicator.
+    status('unchecked', 'Ключ сохранён · проверка не выполнена',
+      'Проверить действительность ключа можно кнопкой «Проверить подключение».');
+  }
+  verifyButton.addEventListener('click', () => { if (!busy) void verify(); });
+  refresh.addEventListener('click', () => { if (!busy) void loadModels(); });
+  model.addEventListener('input', () => {
+    if (!busy && configured) status('unchecked', 'Несохранённый выбор модели', 'Нажмите «Сохранить» перед проверкой.');
+  });
+  key.addEventListener('input', () => {
+    if (!busy) status('unchecked', 'Несохранённый API-ключ', 'Нажмите «Сохранить». Проверка применяется только к сохранённому ключу.');
+  });
+  remove.addEventListener('click', async () => {
+    if (busy || !configured) return;
+    setBusy(true);
+    try {
+      const data = await request('/api/assistant', {
+        method: 'PUT', headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ apiKey: null })
+      });
+      modelList.replaceChildren();
+      updateConfig(data);
+    } catch {
+      status('error', 'Не удалось удалить ключ', 'Проверьте доступ к папке проекта.');
+    } finally { setBusy(false); }
+  });
+
+  void load();
+})();
+);
   const key = document.getElementById('cloud-key');
   const model = document.getElementById('cloud-model');
   const modelList = document.getElementById('cloud-model-list');
@@ -257,7 +415,7 @@
     setBusy(true);
     try {
       const data = await request('/api/assistant/models');
-      const valid = Array.isArray(data.models) ? data.models.filter(name => typeof name === 'string' && /^[A-Za-z0-9_.:@/-]{1,200}$/.test(name)) : [];
+      const valid = Array.isArray(data.models) ? data.models.filter(name => typeof name === 'string' && validModelId.test(name)) : [];
       modelList.replaceChildren();
       for (const name of [...new Set(valid)].slice(0, 250)) {
         const option = document.createElement('option');
@@ -299,7 +457,7 @@
     event.preventDefault();
     if (busy) return;
     const selectedModel = model.value.trim();
-    if (!/^[A-Za-z0-9_.:@/-]{1,200}$/.test(selectedModel)) {
+    if (!validModelId.test(selectedModel)) {
       status('error', 'Неверная модель', 'Введите корректный идентификатор модели.');
       return;
     }
