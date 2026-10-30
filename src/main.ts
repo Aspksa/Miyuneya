@@ -20,6 +20,7 @@ const icons: Record<string, string> = {
   settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/>',
   search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  star: '<path d="m12 4.3 2.3 4.9 5.2.7-3.8 3.7.9 5.3-4.6-2.5-4.6 2.5.9-5.3L4.5 9.9l5.2-.7Z"/>',
   arrow: '<path d="M4 12h16m-5-5 5 5-5 5"/>',
   menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1 1m12 12 1 1M5 19l1-1M18 6l1-1"/>',
@@ -79,7 +80,7 @@ function empty(title: string, description: string, kind: 'note' | 'task', label:
   return `<div class="empty">${icon(kind === 'note' ? 'notes' : 'tasks')}<h3>${title}</h3><p>${description}</p><button class="button quiet" data-new="${kind}">${icon('plus')}${label}</button></div>`;
 }
 function noteRow(n: Workspace['notes'][number]) {
-  return `<div class="task-row note-entry">${icon('notes')}<button class="note-open" data-edit="${escape(n.id)}"><b>${escape(n.title)}</b>${n.body?`<p>${escape(n.body.slice(0,220))}</p>`:''}</button><button class="icon-button note-pin ${n.pinned?'pinned':''}" data-pin-note="${escape(n.id)}" aria-label="${n.pinned?'Открепить':'Закрепить'} заметку" aria-pressed="${!!n.pinned}">☆</button><small>${shortDate(n.updatedAt)}</small><button class="icon-button" data-delete-note="${escape(n.id)}" aria-label="Удалить заметку ${escape(n.title)}">×</button></div>`;
+  return `<div class="task-row note-entry">${icon('notes')}<button class="note-open" data-edit="${escape(n.id)}"><b>${escape(n.title)}</b>${n.body?`<p>${escape(n.body.slice(0,220))}</p>`:''}</button><button class="icon-button note-pin ${n.pinned?'pinned':''}" data-pin-note="${escape(n.id)}" aria-label="${n.pinned?'Открепить':'Закрепить'} заметку" aria-pressed="${!!n.pinned}">${icon('star')}</button><small>${shortDate(n.updatedAt)}</small><button class="icon-button" data-delete-note="${escape(n.id)}" aria-label="Удалить заметку ${escape(n.title)}">×</button></div>`;
 }
 function taskRow(t: Workspace['tasks'][number]) {
   const overdue=!t.done && t.dueDate && t.dueDate<localDateKey();
