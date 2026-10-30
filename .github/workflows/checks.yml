@@ -30,9 +30,17 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm test
       - run: npm run check
-      - name: Проверка адаптации в Chromium — 320 px до 4K
+      - name: Проверка HiDPI в Chromium — 320 px до 5K, скриншоты
         if: matrix.os == 'ubuntu-latest'
         run: node --test tests/responsive-browser.mjs
+      - name: Снимки интерфейса для визуальной проверки
+        if: ${{ always() && matrix.os == 'ubuntu-latest' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: miyuneya-hidpi-screenshots
+          path: artifacts/ui-screenshots/*.png
+          if-no-files-found: warn
+          retention-days: 14
       - run: npm run diagnose
   windows-bootstrap:
     name: Windows — официальная загрузка и автономный повтор
