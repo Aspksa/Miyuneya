@@ -45,7 +45,7 @@ export function reviewAnswer(draft: string, result: any, sources: Source[], need
   if (!claims.length && needsEvidence) return { status: 'uncertain', reasons: ['Нет проверенных утверждений о пользователе.'], checked: 0 };
   let uncovered=draft;
   for(const c of claims)if(typeof c?.text==='string')uncovered=uncovered.replace(c.text,'');
-  if(needsEvidence && uncovered.replace(/[^\p{L}\p{N}]/gu,'').length>60)return {status:'uncertain',reasons:['Проверены не все части ответа.'],checked:claims.length};
+  if(needsEvidence && uncovered.replace(/[^\p{L}\p{N}]/gu,'').length>0)return {status:'uncertain',reasons:['Проверены не все части ответа.'],checked:claims.length};
   const bad = claims.filter((c: any) => !c || typeof c.text !== 'string' || !draft.includes(c.text) || c.verdict !== 'supported' || !evidence(c.evidence, sources).some(e => compatible(c.text, e.quote)));
   return { status: bad.length ? 'blocked' : 'supported', reasons: bad.length ? ['Не все утверждения подтверждены проверяемыми цитатами.'] : [], checked: claims.length };
 }

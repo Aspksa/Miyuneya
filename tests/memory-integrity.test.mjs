@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { removeTemp } from './helpers/lifecycle.mjs';
-import { emptyMemory, openMemory, upsert, addCause, predict, check, applyThinking, applyReflection, normalizeMemory, sleepBatch, changedNotes, forget, memoryContext } from '../server/memory.ts';
+import { emptyMemory, openMemory, upsert, addCause, predict, check, applyThinking, applyReflection, applySleep, normalizeMemory, sleepBatch, changedNotes, forget, memoryContext } from '../server/memory.ts';
 import { compatible, strictDate, evidence, reviewAnswer, memoryResult, digest } from '../server/integrity.ts';
 import { today, expired } from '../server/recall.ts';
 import { logic } from '../server/growth.ts';
@@ -44,6 +44,27 @@ test('Evidence accepts exact source/version/quote and rejects fabricated quotes 
   applyReflection(m,{facts:[{text:'Пользователь работает архитектором',evidence:[{source:'dialog-source-0',quote:'Пользователь работает архитектором.'}]}]},dialog,new Set(),at);
   assert.equal(m.items[0].evidence[0].role,'user');assert.equal(m.items[0].status,'active');
   assert.equal(normalizeMemory(JSON.parse(JSON.stringify(m))).items[0].evidence.length,1);
+});
+
+test('Unrelated quotes, model weakening and sleep merges cannot silently rewrite user-confirmed facts',()=>{
+  const m=emptyMemory(),old=upsert(m,'fact','Пользователь любит кофе',{source:'user',pinned:true}).item;
+  const other=upsert(m,'fact','Пользователь любит чай',{source:'user'}).item;
+  const dialog={id:'dialog-correction',messages:[{role:'user',content:'Пользователь любит кофе'}],summary:'',signals:[],updatedAt:at,failures:0};
+  applyReflection(m,{facts:[{text:'Пользователь не любит кофе',conflicts:old.id,evidence:[{source:'dialog-correction-0',quote:'Пользователь любит кофе'}]}],weaken:[old.id]},dialog,new Set(),at);
+  assert.equal(old.pinned,true);assert.equal(old.status,'active','an unverified candidate cannot demote a user-confirmed fact');
+  assert.equal(m.history?.length||0,0,'an unsupported correction cannot replace the old version');
+  applySleep(m,{merge:[{ids:[old.id,other.id],text:'Пользователь любит крепкие напитки'}]});
+  assert.ok(m.items.includes(old));assert.ok(m.items.includes(other));
+});
+
+test('Pinning is explicit confirmation and chat started before a privacy change is not recorded',async t=>{
+  const {m}=await store(t);const rule=upsert(m.data,'rule','Задачи формулировать коротко',{source:'thought'}).item;
+  assert.doesNotMatch(await m.context('задачи'),/\n- Задачи формулировать коротко/);
+  await m.edit(rule.id,{pinned:true});assert.match(await m.context('задачи'),/\n- Задачи формулировать коротко/);
+  assert.equal(rule.evidence[0].role,'user');
+  const generation=m.generation;await m.settings({private:true});await m.settings({private:false});
+  await m.record('dialog-old-chat',[{role:'user',content:'Личная информация из старого запроса'}],'',generation);
+  assert.equal(m.data.dialogs.length,0);
 });
 
 test('Malformed JSON/schema never acknowledges notes or discards dialogs, including after three failures',async t=>{
@@ -123,6 +144,7 @@ test('Answer verification fails closed on unknown, changed versions, contradicti
   assert.notEqual(reviewAnswer('Пользователь не любит чай.',{claims:[{...result.claims[0],text:'Пользователь не любит чай.'}]},[source],true).status,'supported');
   assert.notEqual(reviewAnswer(draft,null,[source],true).status,'supported');
   assert.notEqual(reviewAnswer(draft+' Выдуманное утверждение.'.repeat(20),result,[source],true).status,'supported');
+  assert.notEqual(reviewAnswer(draft+' Он врач.',result,[source],true).status,'supported');
 });
 
 test('HTTP checks the complete personal answer before emitting it and refuses unsupported claims',async t=>{

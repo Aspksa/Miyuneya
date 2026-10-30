@@ -215,7 +215,7 @@ export function upsert(memory: Memory, kind: MemoryKind, text: string, options: 
   const conflict = memory.items.find(i=>i.kind===kind && i.status!=='superseded' && !compatible(i.text,value) && similarity(i.text,value)>=0.6);
   if (conflict) {
     if (options.source==='user') { conflict.status='superseded'; revision(memory,conflict,value,'явное изменение пользователем',options.evidence || [],now); }
-    else { conflict.status='contested'; item.status='contested'; ask(memory,'conflict','Какая из этих записей верна сейчас?',{facts:[conflict.id,item.id]},now); }
+    else { if(conflict.source!=='user'&&!conflict.pinned)conflict.status='contested'; item.status='contested'; ask(memory,'conflict','Какая из этих записей верна сейчас?',{facts:[conflict.id,item.id]},now); }
   }
   memory.items.push(item);
   journal(memory, kind === 'rule' ? 'rule' : 'learned', `${kind === 'rule' ? 'Новое правило' : 'Узнала'}: ${value}`, now);
@@ -714,7 +714,7 @@ export function applyReflection(memory: Memory, result: any, dialog: Dialog, kno
   for (const entry of list(result.entities)) if (upsertEntity(memory, entry.name, entry.type, entry.about, now)) changes++;
   for (const kind of ['fact', 'rule'] as const) for (const entry of list(kind === 'fact' ? result.facts : result.rules)) {
     const old = item(entry.conflicts);
-    const proof=evidence(entry.evidence,sources);
+    const proof=evidence(entry.evidence,sources).filter(e=>compatible(clip(entry.text),e.quote)&&similarity(clip(entry.text),e.quote)>=0.3);
     if (old && old.kind === kind && proof.length && canonical(old.text)!==canonical(clip(entry.text))) { weaken(memory,old,now,0.4); revision(memory,old,clip(entry.text),'исправление со ссылкой на источник',proof,now); old.status='superseded'; }
     const added = upsert(memory, kind, entry.text, { same: typeof entry.same === 'string' ? entry.same : undefined, links: [...valid(entry.links), ...(episode ? [episode.id] : [])], weight: kind === 'rule' ? 0.6 : 0.5, now, category: entry.category, until: entry.until, origin: episode?.id ?? null, evidence:proof });
     if (!added) continue;
@@ -722,8 +722,8 @@ export function applyReflection(memory: Memory, result: any, dialog: Dialog, kno
     for (const name of Array.isArray(entry.about) ? entry.about.slice(0, 5) : []) { const target = resolve(name); if (target) addEdge(memory, added.item.id, target, 'about', now); }
   }
   for (const entry of list(result.relations)) { const from = resolve(entry.from), to = resolve(entry.to); if (from && to && addEdge(memory, from, to, entry.type, now)) changes++; }
-  for (const id of ids(result.confirm)) { const found = item(id); if (found && sources.some(s=>s.role==='user'&&canonical(s.text).includes(canonical(found.text)))) { reinforce(found, now, 0.2); changes++; } }
-  for (const id of ids(result.weaken)) { const found = item(id); if (found) { weaken(memory, found, now, 0.6); changes++; } }
+  for (const id of ids(result.confirm)) { const found = item(id); if (found && sources.some(s=>s.role==='user'&&canonical(s.text)===canonical(found.text))) { reinforce(found, now, 0.2); changes++; } }
+  for (const id of ids(result.weaken)) { const found = item(id); if (found && !found.pinned && found.source!=='user') { found.status='contested'; changes++; } }
   // Self-review: a repeatable weak spot becomes a procedural rule, so the next answers avoid it.
   const review = result.review && typeof result.review === 'object' ? result.review : null;
   if (review && score(review.score)) {
@@ -757,7 +757,7 @@ export function applySleep(memory: Memory, result: any, now = Date.now(), known:
     for (const merge of list(result.merge)) {
       const group = ids(merge.ids).map(find).filter((i): i is MemoryItem => !!i);
       const text = clip(merge.text);
-      if (group.length < 2 || !text || group.some(i => i.pinned || i.kind !== group[0].kind || !compatible(i.text,group[0].text) || !compatible(i.text,text) || i.status==='contested' || i.status==='superseded')) continue;
+      if (group.length < 2 || !text || group.some(i => i.status==='active'&&canonical(i.text)!==canonical(text) || i.pinned || i.kind !== group[0].kind || !compatible(i.text,group[0].text) || !compatible(i.text,text) || i.status==='contested' || i.status==='superseded')) continue;
       const merged: MemoryItem = { id: newId(), kind: group[0].kind, text, weight: Math.min(1, Math.max(...group.map(i => i.weight)) + 0.1), hits: group.reduce((n, i) => n + i.hits, 0),
         created: group.map(i => i.created).sort()[0], seen: at, pinned: group.some(i => i.pinned), source: 'sleep', status:group.every(i=>i.status==='active')?'active':'inferred', evidence:group.flatMap(i=>i.evidence || []).slice(0,8), links: [...new Set(group.flatMap(i => i.links))].slice(0, 20),
         category: group.find(i => i.category !== 'other')?.category ?? 'other', until: group.map(i => i.until).filter(Boolean).sort().at(-1) ?? null, origin: group.find(i => i.origin)?.origin ?? null };
@@ -1200,7 +1200,7 @@ export async function openMemory(dataDir: string, options: Options) {
       const at = new Date().toISOString();
       if (item) {
         if (change.text !== undefined && clip(change.text) && clip(change.text) !== item.text) { epoch++; revision(memory,item,clip(change.text),'исправлено пользователем',[],at); journal(memory, 'edited', `Исправлено вами: ${item.text} → ${clip(change.text)}`, at); item.status='active'; item.evidence=[{source:'manual-'+item.id,version:digest(clip(change.text)),quote:clip(change.text),at,role:'user'}]; item.text = clip(change.text); item.seen = at; item.source = 'user'; }
-        if (change.pinned !== undefined) { item.pinned = change.pinned; if (change.pinned) item.weight = 1; item.seen = at; }
+        if (change.pinned !== undefined) { item.pinned = change.pinned; if (change.pinned) { item.weight = 1; item.status='active'; item.source='user'; item.evidence=[{source:'manual-'+item.id,version:digest(item.text),quote:item.text,at,role:'user'}]; } item.seen = at; }
         if (change.category !== undefined) item.category = category(change.category);
         if (change.until !== undefined) item.until = validDate(change.until) ? change.until : null;
       }
