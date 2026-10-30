@@ -425,7 +425,7 @@ export function stepDone(memory: Memory, goal: Goal, stepId: string, done: boole
   return true;
 }
 export function goalTree(goal: Goal) {
-  const depth = (s: Step): number => { const parent = goal.steps.find(x => x.parent === parent); return parent ? 1 + depth(parent) : 0; };
+  const depth = (s: Step): number => { const parent = goal.steps.find(x => x.id === s.parent); return parent ? 1 + depth(parent) : 0; };
   const name = (id: string) => goal.steps.find(x => x.id === id)?.text;
   const lines: string[] = [];
   const walk = (parent: string | null) => { for (const s of goal.steps.filter(x => x.parent === parent)) { lines.push(`${'  '.repeat(depth(s))}- ${s.done ? '[готово] ' : ''}${s.text}${s.after.length ? ` (после: ${s.after.map(name).filter(Boolean).join('; ')})` : ''}`); walk(s.id); } };
@@ -881,7 +881,7 @@ export function applyThinking(memory: Memory, result: any, now = Date.now(), kno
     const pair = [...new Set(ids(entry.ids).filter(id => memory.items.some(i => i.id === id && i.kind === 'fact')))];
     if (pair.length >= 2) ask(memory, 'conflict', entry.question, { facts: pair }, at);
   }
-  for (const entry of list(result.skills).slice(0, 2)) upsert(memory, 'rule', entry.text, { source: 'thought', weight: 0.4, now, origin: null });
+  for (const entry of list(result.skills).slice(0, 2)) upsert(memory, 'rule', entry.text, { source: 'thought', weight: 0.4, now: at });
   // Logic training: check what is due first, then make new predictions.
   for (const entry of list(result.checks).slice(0, 6)) check(memory, entry.id, entry.outcome, entry.note, entry.fix, at, evidence(entry.evidence,sources));
   for (const entry of list(result.predictions).slice(0, 2)) predict(memory, entry, at);
@@ -1181,7 +1181,7 @@ export async function openMemory(dataDir: string, options: Options) {
     async plan(title: string) {
       const generation=epoch;accept(generation);
       const recall = memoryContext(memory, title, titles(), Date.now(), { latest: title });
-      const input = [`Сегодня ${new Date().toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`, `Цель пользователя: ${clip(title, 200)}`, recall || 'О пользователе пока ничего не известно.'].join('\n\n');
+      const input = [`Сегодня ${new Date().toLocaleString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`, `Цель пользователя: ${clip(title, 200)}`,recall || 'О пользователе пока ничего не известно.'].join('\n\n');
       const result = parseJson(await options.ask(GOAL_PROMPT, input, 60_000, true));
       accept(generation);
       const goal = addGoal(memory, clip(result?.title, 200) || title, result?.steps);
@@ -1242,7 +1242,7 @@ export async function openMemory(dataDir: string, options: Options) {
       }
       if (episode) {
         if (change.topic !== undefined && clip(change.topic, 200)) episode.topic = clip(change.topic, 200);
-        if (change.outcome !== undefined && clip(change.outcome, 600)) episode.outcome = clip(change.outcome, 600);
+        if (change.outcome !== undefined) episode.outcome = clip(change.outcome, 600);
       }
       if (entity) {
         if (change.name !== undefined && clip(change.name, 80)) entity.name = clip(change.name, 80);
