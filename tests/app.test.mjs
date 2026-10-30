@@ -35,7 +35,7 @@ test('Notes and tasks share one list', () => {
 test('HTTP storage, revision conflicts, restart, allowlist and origin checks', async t => {
   const root=await mkdtemp(join(tmpdir(),'Miyuneya данные '));
   await mkdir(join(root,'dist')); await writeFile(join(root,'dist','index.html'),'<html lang="ru">Miyuneya</html>');
-  await mkdir(join(root,'web')); await writeFile(join(root,'web','blank.html'),'<html lang="ru"><head><title></title></head><body></body></html>');
+  await writeFile(join(root,'dist','blank.html'),'<html lang="ru"><head><title></title></head><body></body></html>');
   let server;
   t.after(async()=>{await server?.shutdown();await removeTemp(root);});
   async function start(){server=await createApp(root,'test');server.listen(0,'127.0.0.1');await once(server,'listening');return `http://127.0.0.1:${server.address().port}`;}
