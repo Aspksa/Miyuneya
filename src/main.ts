@@ -4,7 +4,7 @@ import type { ViewFilter } from './productivity.js';
 import { createDisk } from './disk.js';
 import { emptyWorkspace, validateWorkspace, combineEntries, defaultLook, validLocalDate } from './model.js';
 import { formatNoteDate, formatDueDate, localDateKey } from './calendar.js';
-import { mountAssistant, avatarSrc } from './assistant.js';
+import { avatarSrc } from './assistant.js';
 import { mountMemory, brainIcon } from './memory.js';
 import type { MemoryView } from './memory.js';
 import { accents, radii, scales, accentName, loadAppearance, saveAppearance, applyAppearance, defaultAppearance } from './appearance.js';
@@ -56,7 +56,7 @@ const disk = createDisk({render:()=>{if(page!=='settings')render();},toast,addNo
 let appearance: Appearance = loadAppearance();
 let aiModels: string[] | null = null;
 let aiBusy = false;
-let assistant: ReturnType<typeof mountAssistant> | undefined;
+let assistant: { draft(text: string): void; refresh(): void } | undefined;
 let memoryMode = { enabled: true, private: false };
 const pageNames: Record<Page,string> = { notes:'Заметки и задачи', disk:'Диск', settings:'Настройки' };
 // Old #home and #tasks links land on the shared list.
@@ -361,7 +361,21 @@ try { ai=await aiRequest('/api/assistant'); } catch {}
 render();
 void disk.load().then(()=>workbench.reopen());
 if(page==='settings')void workbench.loadWorkflows();
-assistant=mountAssistant({ look, update:updateLook, status:()=>ai, setStatus:value=>{ai=value;if(page==='settings')render();}, toast, addTask, addNote, remove:removeEntry, memory:()=>memoryMode, memoryChanged:()=>void memoryPanel.refresh() });
+// The shared movable kitsune (loaded by index.html on this route) owns the
+// avatar and chat. Do not mount the legacy widget a second time. Keep the
+// draft/refresh bridge used by the disk and other workspace modules.
+assistant={
+  draft(text) {
+    const bubble=document.getElementById('kitsune-avatar') as HTMLButtonElement | null;
+    const panel=document.getElementById('kitsune-chat') as HTMLElement | null;
+    const field=document.getElementById('kitsune-message') as HTMLTextAreaElement | null;
+    if(!bubble||!panel||!field) { toast('Чат пока недоступен. Перезагрузите страницу.'); return; }
+    if(panel.hidden)bubble.click();
+    field.value=text.slice(0,20000);
+    field.focus();
+  },
+  refresh() { /* Shared avatar reads local settings directly. */ }
+};
 void memoryPanel.load();
 if(page==='settings' && ai.configured) void loadModels(false);
 if(location.hash==='#diary') openDiary();
