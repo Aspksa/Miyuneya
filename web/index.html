@@ -8,6 +8,9 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <title>Miyuneya — личное пространство</title>
+  <link rel="stylesheet" href="/avatar.css">
+  <script src="/avatar.js" defer></script>
+  <script src="/avatar-studio.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#content">Перейти к содержимому</a>
@@ -16,5 +19,121 @@
   <dialog id="editor"><form id="editor-form"><div class="dialog-top"><span class="eyebrow">ВАШЕ ПРОСТРАНСТВО</span><button type="button" class="icon-button" id="close-editor" aria-label="Закрыть">×</button></div><h2 id="editor-heading">Новая заметка</h2><input id="entry-title" required maxlength="200" aria-label="Название" placeholder="Название"><textarea id="entry-body" maxlength="100000" aria-label="Текст заметки" placeholder="Здесь может начаться что-то важное…" rows="10"></textarea><div id="task-fields" hidden><div class="form-grid"><label class="field">Срок<input type="date" id="task-due"></label><label class="field">Приоритет<select id="task-priority"><option value="normal">Обычный</option><option value="high">Высокий</option><option value="low">Низкий</option></select></label><label class="field">Группа<input id="task-group" maxlength="80" placeholder="Например, Работа"></label><label class="field">Родительская задача<select id="task-parent"></select></label><label class="field">Повторение<select id="task-repeat"><option value="">Не повторять</option><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select></label><label class="field">Каждые<input type="number" id="task-interval" value="1" min="1" max="365"></label></div><label class="field">Зависимости<select id="task-depends" multiple size="4"></select><small>Выберите задачи, которые нужно завершить раньше. Ctrl/⌘ — несколько.</small></label><label class="field">Связанные материалы<select id="task-materials" multiple size="4"></select><small>Заметки и документы диска. Ctrl/⌘ — несколько.</small></label></div><div class="dialog-actions"><button type="button" class="button quiet" id="cancel-editor">Отмена</button><button class="button primary" type="submit">Сохранить</button></div></form></dialog>
   <dialog id="confirm"><form method="dialog"><h2 id="confirm-title">Удалить запись?</h2><p>Удаление записи можно отменить кнопкой «Отменить действие» до следующего изменения. Для ключей и восстановления копии правила отличаются.</p><div class="dialog-actions"><button class="button quiet" value="cancel">Отмена</button><button class="button danger" value="delete">Удалить</button></div></form></dialog>
   <script src="/main.js" type="module"></script>
+
+  <svg class="kitsune-icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"><symbol id="kitsune-portrait" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r="2"/><path d="m4 18 5-5 3 3 4-5 4 7"/></symbol><symbol id="kitsune-chat" viewBox="0 0 24 24"><path d="M4 4h16v13H9l-5 4z"/></symbol><symbol id="kitsune-spark" viewBox="0 0 24 24"><path d="m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/></symbol><symbol id="kitsune-library" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16m4-11h5m-5 5h5"/></symbol><symbol id="kitsune-move" viewBox="0 0 24 24"><path d="M12 2v20M2 12h20m-14-6 4-4 4 4m-8 12 4 4 4-4"/></symbol><symbol id="kitsune-eye" viewBox="0 0 24 24"><path d="M2 12q10-15 20 0-10 15-20 0Z"/><circle cx="12" cy="12" r="3"/></symbol><symbol id="kitsune-size" viewBox="0 0 24 24"><path d="M4 9V4h5m6 0h5v5M4 15v5h5m11-5v5h-5"/></symbol><symbol id="kitsune-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></symbol><symbol id="kitsune-font" viewBox="0 0 24 24"><path d="M4 4h16M12 4v16m-5 0h10"/></symbol><symbol id="kitsune-crop" viewBox="0 0 24 24"><path d="M7 2v14a3 3 0 0 0 3 3h12M2 7h14a3 3 0 0 1 3 3v12"/></symbol></svg>
+  <!-- Movable kitsune with independent local chat and centered configuration. -->
+  <button id="kitsune-avatar" class="kitsune-avatar" type="button"
+    aria-label="Аватар Миюнэи: левый щелчок открывает чат, правый — настройки"
+    title="Чат: левый щелчок · настройки: правый щелчок"
+    aria-haspopup="dialog" aria-controls="kitsune-chat" aria-expanded="false">
+    <img src="/avatars/hayumeri-kitsune.avif" alt="" draggable="false" width="420" height="420" decoding="async">
+  </button>
+
+  <section id="kitsune-chat" class="kitsune-chat" role="dialog"
+    aria-label="Чат с Миюнэей" aria-modal="false" hidden>
+    <header class="kitsune-chat-header" id="kitsune-chat-header">
+      <span class="kitsune-chat-title">✦ Миюнэя <small>Чат Cloud.ru</small></span>
+      <div class="kitsune-chat-tools">
+        <button type="button" id="kitsune-clear" title="Очистить историю">Очистить</button>
+        <button type="button" id="kitsune-chat-settings" aria-label="Настройки аватара и чата" title="Настройки аватара и чата">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.2 2.2m8.4 8.4 2.2 2.2M18.4 5.6l-2.2 2.2m-8.4 8.4-2.2 2.2"/><circle cx="12" cy="12" r="4"/></svg>
+        </button>
+        <button type="button" id="kitsune-minimize" aria-label="Свернуть чат в пузырь" title="Свернуть">▁</button>
+        <button type="button" id="kitsune-expand" aria-label="Развернуть чат" title="Развернуть" hidden>▣</button>
+        <button type="button" id="kitsune-chat-close" aria-label="Закрыть чат">×</button>
+      </div>
+    </header>
+    <p id="kitsune-stream-indicator" class="kitsune-stream-indicator" role="status" hidden>Миюнэя отвечает…</p>
+    <div id="kitsune-log" class="kitsune-log" aria-live="polite" aria-relevant="additions text"></div>
+    <p id="kitsune-chat-status" class="kitsune-chat-status" role="status" hidden></p>
+    <form id="kitsune-chat-form" class="kitsune-chat-form">
+      <textarea id="kitsune-message" rows="2" maxlength="20000"
+        placeholder="Напишите сообщение… Enter — отправить, Shift+Enter — новая строка"
+        aria-label="Сообщение для Миюнэи"></textarea>
+      <div class="kitsune-send-row">
+        <button type="button" id="kitsune-stop" hidden>Остановить</button>
+        <button type="submit" id="kitsune-send">Отправить</button>
+      </div>
+    </form>
+  </section>
+
+  <button type="button" id="kitsune-settings-backdrop" class="kitsune-settings-backdrop"
+    aria-label="Закрыть настройки аватара" hidden></button>
+  <section id="kitsune-settings" class="kitsune-settings" role="dialog"
+    aria-modal="true" aria-labelledby="kitsune-settings-title" hidden>
+    <header class="kitsune-settings-header">
+      <div>
+        <span class="kitsune-settings-eyebrow">МИЮНЭЯ</span>
+        <h2 id="kitsune-settings-title">Настройки аватара и чата</h2>
+      </div>
+      <button id="kitsune-settings-close" type="button" aria-label="Закрыть настройки">×</button>
+    </header>
+<nav class="kitsune-settings-tabs" aria-label="Настройки аватара и чата"><button type="button" class="kitsune-tab" data-kitsune-tab="avatar" aria-selected="true"><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-portrait"></use></svg><span>Аватар</span></button><button type="button" class="kitsune-tab" data-kitsune-tab="chat" aria-selected="false"><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-chat"></use></svg><span>Чат</span></button><button type="button" class="kitsune-tab" data-kitsune-tab="effects" aria-selected="false"><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-spark"></use></svg><span>Эффекты</span></button><button type="button" class="kitsune-tab" data-kitsune-tab="library" aria-selected="false"><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-library"></use></svg><span>Библиотека</span></button></nav>
+    <div class="kitsune-settings-content">
+      <fieldset data-kitsune-panel="avatar">
+        <legend><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-portrait"></use></svg> Аватар</legend>
+        <label class="kitsune-upload" for="kitsune-image-upload">
+          <span>Заменить изображение аватара</span>
+          <input id="kitsune-image-upload" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+        </label>
+        <button id="kitsune-image-restore" class="kitsune-restore" type="button">Вернуть исходную кицунэ</button>
+        <p class="kitsune-help">Фотография сохраняется локально на сервере в исходном разрешении (PNG/JPEG/WebP/GIF, до 15 МБ).</p>
+        <label class="kitsune-control" for="kitsune-avatar-size">
+          <span>Размер аватара</span><output id="kitsune-size-output">180 px</output>
+          <input id="kitsune-avatar-size" type="range" min="100" max="300" step="10" value="180">
+        </label>
+        <label class="kitsune-control" for="kitsune-avatar-opacity">
+          <span>Прозрачность</span><output id="kitsune-opacity-output">100%</output>
+          <input id="kitsune-avatar-opacity" type="range" min="50" max="100" step="5" value="100">
+        </label>
+        <label class="kitsune-control" for="kitsune-framing"><span><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-crop"></use></svg> Масштаб внутри рамки</span><output id="kitsune-framing-output">100%</output><input id="kitsune-framing" type="range" min="100" max="180" step="5" value="100"></label>
+        <label class="kitsune-control" for="kitsune-vertical"><span><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-move"></use></svg> Вертикальная позиция</span><output id="kitsune-vertical-output">50%</output><input id="kitsune-vertical" type="range" min="0" max="100" step="5" value="50"></label>
+        <label class="kitsune-check"><input type="checkbox" id="kitsune-auto-trim" checked> Автообрезка прозрачных полей новых изображений</label>
+        <p id="kitsune-image-diagnostic" class="kitsune-help" role="status">Для 4K рекомендуется загрузить оригинал.</p>
+        <label class="kitsune-check" for="kitsune-glow">
+          <input id="kitsune-glow" type="checkbox" checked> Подсветка и мягкая тень
+        </label>
+        <label class="kitsune-check" for="kitsune-animations">
+          <input id="kitsune-animations" type="checkbox" checked> Плавная анимация аватара
+        </label>
+        <p id="kitsune-settings-message" class="kitsune-help" role="status" aria-live="polite" hidden></p>
+      </fieldset>
+      <fieldset data-kitsune-panel="chat" hidden>
+        <legend><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-chat"></use></svg> Чат</legend>
+        <label class="kitsune-control" for="kitsune-chat-width">
+          <span>Ширина чата</span><output id="kitsune-chat-width-output">410 px</output>
+          <input id="kitsune-chat-width" type="range" min="320" max="800" step="10" value="410">
+        </label>
+        <label class="kitsune-control" for="kitsune-chat-height">
+          <span>Высота чата</span><output id="kitsune-chat-height-output">550 px</output>
+          <input id="kitsune-chat-height" type="range" min="350" max="900" step="10" value="550">
+        </label>
+        <label class="kitsune-control" for="kitsune-chat-font">
+          <span>Размер текста</span>
+          <select id="kitsune-chat-font">
+            <option value="13">Компактный</option>
+            <option value="15" selected>Обычный</option>
+            <option value="17">Крупный</option>
+            <option value="20">Очень крупный</option>
+          </select>
+        </label>
+        <p class="kitsune-help">Чат перемещается за верхнюю панель; его размер можно изменять за нижний правый угол. История хранится в этом браузере. Для ответов используется ключ Cloud.ru из настроек проекта.</p>
+      </fieldset>
+      <fieldset data-kitsune-panel="effects" hidden><legend><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-spark"></use></svg> Эффекты</legend>
+        <label class="kitsune-check"><input type="checkbox" id="kitsune-gold-glow" checked> <svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-sun"></use></svg> Мягкое золотое свечение</label>
+        <label class="kitsune-check"><input type="checkbox" id="kitsune-drag-ease" checked> <svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-move"></use></svg> Плавная реакция на перетаскивание</label>
+        <p class="kitsune-help">Параметры уменьшают анимацию по системным настройкам.</p></fieldset>
+      <fieldset data-kitsune-panel="library" hidden><legend><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-library"></use></svg> Библиотека образов</legend>
+        <div id="kitsune-library-grid" class="kitsune-library-grid" aria-label="Библиотека аватаров"></div>
+        <label class="kitsune-library-upload"><svg class="kitsune-ui-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#kitsune-portrait"></use></svg> Добавить изображение<input type="file" id="kitsune-library-upload" accept="image/png,image/jpeg,image/webp,image/gif"></label>
+        <p id="kitsune-library-message" class="kitsune-help" role="status">Выберите миниатюру для переключения образа.</p>
+        <p class="kitsune-help">Библиотека сохраняется локально в этом браузере, независимо от Cloud.ru.</p>
+      </fieldset>
+      <p class="kitsune-help">Перетащите аватар левой кнопкой мыши. Короткий левый щелчок открывает чат, правый — эти настройки. На сенсорном экране откройте настройки через значок в заголовке чата.</p>
+    </div>
+    <footer class="kitsune-settings-footer">
+      <button id="kitsune-settings-reset" type="button">Сбросить расположение и оформление</button>
+    </footer>
+  </section>
 </body>
 </html>
