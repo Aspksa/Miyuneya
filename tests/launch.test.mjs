@@ -98,6 +98,17 @@ test('Update rejects attempts to write user data and commits only after real hea
   assert.ok((await readdir(join(root,'.runtime','updates'))).some(n=>n.startsWith('installed-')));
 });
 
+test('A second staged update cannot overwrite the first pending update',async t=>{
+  const root=await fixture(t);
+  const first=await candidate(root,{'web/style.css':'/* first staged version */'});
+  await prepareUpdate(root,first);
+  const pending=join(root,'.runtime','updates','pending','web','style.css');
+  const original=await readFile(pending,'utf8');
+  const second=await candidate(root,{'web/style.css':'/* second staged version */'});
+  await assert.rejects(prepareUpdate(root,second));
+  assert.equal(await readFile(pending,'utf8'),original);
+});
+
 test('Diagnostics never persist keys, environment values or note bodies',async t=>{
   const root=await fixture(t);const secret='TEST_ONLY_SECRET_NOT_A_REAL_KEY';
   const stored={revision:1,data:emptyWorkspace()};stored.data.notes.push({id:'private',title:'Приватно',body:secret,updatedAt:'2026-10-29T00:00:00.000Z'});
