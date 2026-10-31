@@ -75,7 +75,7 @@
   // The browser copy is retained as a recovery source until server migration succeeds.
   let chatState={revision:0,conversations:[],selectedId:null};
   let remoteChats=false, saveQueue=Promise.resolve(), preferenceQueue=Promise.resolve();
-  let userChangedSettings=false;
+  let userChangedSettings=false, userTouchedChats=false;
   const conversationId=()=>crypto.randomUUID?.()||'chat-'+Date.now()+'-'+Math.floor(Math.random()*1e6);
   const firstTitle=messages=>(messages.find(m=>m.role==='user')?.content||'Новый разговор').slice(0,90);
   function activeConversation(){return chatState.conversations.find(row=>row.id===chatState.selectedId);}
@@ -119,7 +119,7 @@
     save:savePersistentPreference
   };
   const historyButton=document.createElement('button');
-  historyButton.type='button';historyButton.textContent='История';
+  historyButton.type='button';historyButton.id='kitsune-history';historyButton.textContent='◷';historyButton.setAttribute('aria-label','История диалогов');
   historyButton.title='Предыдущие разговоры';historyButton.setAttribute('aria-expanded','false');
   const historyPanel=document.createElement('div');historyPanel.className='kitsune-history-panel';historyPanel.hidden=true;
   const searchHistory=document.createElement('input');searchHistory.type='search';searchHistory.placeholder='Поиск по разговорам';
@@ -169,7 +169,7 @@
   searchHistory.oninput=renderConversationList;
   newButton.onclick=()=>{
     if(stream){setStatus('Остановите ответ перед созданием диалога.');return;}
-    chatState.selectedId=null;history=[];renderChat();saveHistory();
+    userTouchedChats=true;chatState.selectedId=null;history=[];renderChat();saveHistory();
     historyPanel.hidden=true;historyButton.setAttribute('aria-expanded','false');
     input.focus();
   };
@@ -177,7 +177,9 @@
     try{
       const response=await fetch('/api/assistant/conversations',{cache:'no-store'});
       if(!response.ok)throw Error('Сервер недоступен');
-      chatState=await response.json();
+      const storedState=await response.json();
+      if(userTouchedChats){setStatus('Диалог изменён во время загрузки истории. Текущие сообщения сохранены в браузере. Перезагрузите страницу после отправки ответа.');return;}
+      chatState=storedState;
       const legacy=history.map(m=>({...m}));
       const stored=read('miyuneya.kitsune.migrated.v2',false);
       remoteChats=true;
@@ -458,7 +460,7 @@
 
   clearChat.addEventListener('click',()=>{
     if(stream)stream.abort();
-    history=[];saveHistory();renderChat();setStatus('Сообщения текущего разговора очищены.');
+    userTouchedChats=true;history=[];saveHistory();renderChat();setStatus('Сообщения текущего разговора очищены.');
   });
   stopButton.addEventListener('click',()=>stream?.abort());
   window.addEventListener('resize',()=>{placeAvatar();placeChat();});
@@ -497,6 +499,7 @@
   async function send(){
     const content=input.value.trim();
     if(!content||stream)return;
+    userTouchedChats=true;
     if(content.length>20000){setStatus('Слишком длинное сообщение — максимум 20 000 символов.');return;}
     const outgoing=[...history,{role:'user',content}].slice(-40).map(m=>({role:m.role,content:m.content}));
     history.push({role:'user',content});input.value='';renderChat();saveHistory();setStatus('');
