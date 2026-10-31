@@ -419,3 +419,9 @@
   .kitsune-tab {white-space:normal;overflow-wrap:anywhere;line-height:1.2;}
   .kitsune-preview-actions {flex-wrap:wrap;}
 }
+
+/* The avatar modal title wraps on phones: a fixed tab offset can overlap it.
+   Keep the header sticky, let the tab bar scroll naturally on narrow screens. */
+@media (max-width: 700px) {
+  .kitsune-settings-tabs { position: relative; top: auto; }
+}
