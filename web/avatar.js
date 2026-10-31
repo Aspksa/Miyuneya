@@ -152,7 +152,14 @@
   searchTyposInput.checked=true;searchTypos.append(searchTyposInput,' Учитывать опечатки');
   const searchOptions=document.createElement('div');searchOptions.className='kitsune-search-options';
   searchOptions.append(searchMode,searchSort,searchTypos);
-  historyPanel.append(searchHistory,searchOptions,newButton,archiveToggle,historyList,moreChats);
+  const historyDate=document.createElement('input');historyDate.type='date';
+  historyDate.className='kitsune-history-date';historyDate.setAttribute('aria-label','Перейти к дате в открытом разговоре');
+  historyDate.title='Найти первое сообщение выбранного дня или позже';
+  const jumpDate=document.createElement('button');jumpDate.type='button';jumpDate.textContent='К дате';
+  jumpDate.title='Перейти к дате в открытом разговоре';
+  const dateOptions=document.createElement('div');dateOptions.className='kitsune-search-options';
+  dateOptions.append(historyDate,jumpDate);
+  historyPanel.append(searchHistory,searchOptions,dateOptions,newButton,archiveToggle,historyList,moreChats);
   chatTools.insertBefore(historyButton,clearChat);
   chat.querySelector('.kitsune-chat-header').after(historyPanel);
   const moreMessages=document.createElement('button');moreMessages.type='button';
@@ -171,6 +178,32 @@
     nextBefore=page.nextBefore;
     updateOlderButton();saveHistory();renderChat();renderConversationList();
   }
+  async function jumpToMessage(id,options){
+    if(stream)throw Error('Сначала завершите или остановите ответ.');
+    await saveQueue;
+    const params=new URLSearchParams(options);
+    const result=await requestArchive(base+'/'+encodeURIComponent(id)+'/locate?'+params);
+    // The source message might be hidden behind a much larger history.
+    await requestArchive(base+'/selection',jsonOptions('PATCH',{id}));
+    chatState.selectedId=id;activeMeta=result.conversation;
+    history=result.messages;nextBefore=result.nextBefore;
+    updateOlderButton();saveHistory();
+    openChat();renderConversationList();closeHistory();
+    const target=[...log.querySelectorAll('.kitsune-message')].find(node=>
+      node.dataset.messageId===result.targetMessageId);
+    if(target){
+      target.scrollIntoView({block:'center',behavior:'smooth'});
+      target.classList.add('kitsune-target-message');
+      setTimeout(()=>target.classList.remove('kitsune-target-message'),2600);
+    }
+    setStatus('Переход к сохранённому сообщению.');
+  }
+  jumpDate.onclick=()=>{
+    if(!historyDate.value){setStatus('Выберите дату.');return;}
+    if(!chatState.selectedId){setStatus('Сначала откройте разговор.');return;}
+    void jumpToMessage(chatState.selectedId,{date:historyDate.value})
+      .catch(e=>setStatus('Переход по дате: '+e.message));
+  };
   async function fetchConversationList(){
     const ticket=++listRequest;
     const query=new URLSearchParams({offset:'0',limit:'60',q:searchHistory.value,
@@ -228,6 +261,14 @@
       if(row.matchSnippet && searchHistory.value.trim()){
         const snippet=document.createElement('div');snippet.className='kitsune-history-snippet';
         snippet.textContent=row.matchSnippet;wrapper.append(snippet);
+        if(row.matchedMessageId){
+          const jump=document.createElement('button');jump.type='button';
+          jump.className='kitsune-search-jump';jump.textContent='К найденному сообщению';
+          jump.setAttribute('aria-label','Открыть найденный фрагмент разговора');
+          jump.onclick=()=>void jumpToMessage(row.id,{messageId:row.matchedMessageId})
+            .catch(e=>setStatus('Переход к результату: '+e.message));
+          wrapper.append(jump);
+        }
       }
       historyList.append(wrapper);
     }
@@ -431,6 +472,8 @@
         const name=document.createElement('strong');name.textContent=item.role==='assistant'?'Миюнэя':'Вы';
         const body=document.createElement('p');bubble.append(name,body);log.append(bubble);
       }
+      if(item.id)bubble.dataset.messageId=item.id;
+      else delete bubble.dataset.messageId;
       const name=bubble.querySelector('strong');
       name.textContent=item.role==='assistant'?(item.complete===false?'Миюнэя · ответ прерван':'Миюнэя'):'Вы';
       const body=bubble.querySelector('p');
