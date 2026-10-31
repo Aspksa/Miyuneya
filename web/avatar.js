@@ -406,6 +406,8 @@
         const name=document.createElement('strong');name.textContent=item.role==='assistant'?'Миюнэя':'Вы';
         const body=document.createElement('p');bubble.append(name,body);log.append(bubble);
       }
+      const name=bubble.querySelector('strong');
+      name.textContent=item.role==='assistant'?(item.complete===false?'Миюнэя · ответ прерван':'Миюнэя'):'Вы';
       const body=bubble.querySelector('p');
       if(body.dataset.raw!==item.content){
         formatMessage(body,item.content);
