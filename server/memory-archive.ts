@@ -89,7 +89,7 @@ export async function openMemoryArchive(dataDir: string) {
     // Bounded read-only archive pages for autonomous analysis; no bulk loading.
     function page(offset=0,limit=48) {
       const total=(coldCount.get() as {total:number}).total;
-      const start=Math.max(0,Math.min(total,Math.trunc(Number.isFinite(offset)?offset:0)));
+      const start=total>0 ? Math.max(0,Math.trunc(Number.isFinite(offset)?offset:0))%total : 0;
       const take=Math.max(1,Math.min(80,Math.trunc(Number.isFinite(limit)?limit:48)));
       return {total,offset:start,items:(pageRows.all(take,start) as {kind:Kind;id:string;payload:string}[])
         .map(row=>JSON.parse(row.payload) as MemoryItem)};
