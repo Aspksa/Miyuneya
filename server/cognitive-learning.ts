@@ -109,7 +109,7 @@ export function openCognitiveLearning(dataDir:string,resolve:(id:string)=>Memory
     }
     function focus(){
       if(closed)return [];
-      return (open.all(80) as {id:string;kind:StudyKind;priority:number;description:string;refs:string[];signature:string}[])
+      return (open.all(80) as {id:string;kind:StudyKind;priority:number;description:string;refs:string;signature:string}[])
         .map(row=>({...row,refs:refs(JSON.parse(row.refs))}))
         .filter(row=>valid(row.refs)&&row.signature===hash(JSON.stringify(row.refs.map(id=>version(resolve(id)!)))))
         .slice(0,5).map(row=>({kind:row.kind,priority:row.priority,description:row.description,refs:row.refs}));
