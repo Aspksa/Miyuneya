@@ -10,7 +10,7 @@ function live(pid:number){
 export async function acquireDatabaseWriter(file:string){
   const token=randomUUID();
   const lockPath=file+'.writer.lock';
-  for(let attempt=0;attempt<5;attempt++){
+  for(let attempt=0;attempt<16;attempt++){
     try{
       const handle=await open(lockPath,'wx',0o600);
       try{
