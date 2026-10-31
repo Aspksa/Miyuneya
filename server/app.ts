@@ -1,4 +1,5 @@
 import { openWorkflows } from './workflows.ts';
+import { openChats } from './chats.ts';
 import { createHash } from 'node:crypto';
 import { reconcileTasks } from '../src/productivity.ts';
 import { randomUUID } from 'node:crypto';
@@ -64,6 +65,7 @@ export function workspaceContext(data: Workspace, now = new Date(), budget = 30_
 
 export async function createApp(root: string, instance: string, preview = false, options: { launchId?: string; onShutdown?: () => void; cloudUrl?: string; memoryIdleMs?: number; memoryTickMs?: number; memoryThinkIdleMs?: number } = {}) {
   const dataDir = join(root, 'data');
+  const chats = await openChats(dataDir);
   const dataFile = join(dataDir, 'workspace.json');
   // The cloud.ru key lives apart from workspace.json so it never reaches the browser or a backup.
   const assistantFile = join(dataDir, 'assistant.json');
@@ -203,6 +205,14 @@ export async function createApp(root: string, instance: string, preview = false,
         return;
       }
       if (stopping) return send(503, { error: 'Сервер завершает работу' });
+      if (path === '/api/chats') {
+        if (req.method === 'GET') return send(200,chats.snapshot());
+        if (req.method !== 'PUT') return send(405,{error:'Метод не поддерживается'});
+        const input=await readJson(req,send,2_000_000);
+        if(input===undefined)return;
+        try{return send(200,await chats.replace(input));}
+        catch(e){const code=(e as {status?:number}).status||500;return send(code,{error:code===500?'Не удалось сохранить историю. Проверьте папку data/chats.':(e as Error).message});}
+      }
       if (path === '/api/site/appearance') {
         if (req.method === 'GET') return send(200, { appearance: { theme: state.data.settings.theme, ...defaultAppearance(), ...state.data.settings.appearance } });
         if (req.method !== 'PUT') return send(405, { error: 'Метод не поддерживается' });
@@ -635,6 +645,7 @@ export async function createApp(root: string, instance: string, preview = false,
         if (server.listening) await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()));
         await Promise.all([...active]);
         await memory.shutdown();
+        await chats.shutdown();
         await workflows?.shutdown();
         await disk?.shutdown();
         await queue;
