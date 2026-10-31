@@ -1232,7 +1232,7 @@ export async function openMemory(dataDir: string, options: Options) {
       if (entry && change.text !== undefined && clip(change.text, 2000)) entry.text = clip(change.text, 2000);
       await changed(); return true;
     },
-    async remove(id: string) { epoch++;
+    async remove(id: string) { epoch++; await cognitiveDaemon.clear();
       const target=memory.items.find(i=>i.id===id); if(target){forget(memory,target.text);await changed();archive.erase(id);return true;}
       if (id === 'understanding') { if (!memory.understanding) return false; memory.understanding = null; await changed(); return true; }
       const count = () => memory.items.length + memory.episodes.length + memory.entities.length + memory.diary.length + memory.topics.length + memory.questions.length + memory.reminders.length + memory.promises.length + memory.thoughts.length
