@@ -323,13 +323,13 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   })()`);
   await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:headerBefore.x,y:headerBefore.y});
   await cd.send('Input.dispatchMouseEvent',{type:'mousePressed',x:headerBefore.x,y:headerBefore.y,button:'left',clickCount:1});
-  await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:headerBefore.x+26,y:headerBefore.y+16,button:'left',buttons:1});
-  await cd.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:headerBefore.x+26,y:headerBefore.y+16,button:'left',clickCount:1});
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:headerBefore.x-26,y:headerBefore.y+16,button:'left',buttons:1});
+  await cd.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:headerBefore.x-26,y:headerBefore.y+16,button:'left',clickCount:1});
   const chatAfter=await evalJS(`(()=>{
     const r=document.getElementById('kitsune-chat').getBoundingClientRect();
     return {left:r.left,top:r.top};
   })()`);
-  assert.ok(chatAfter.left>=headerBefore.left+15,'Chat moves by dragging the header: '+JSON.stringify({headerBefore,chatAfter}));
+  assert.ok(chatAfter.left<=headerBefore.left-15,'Chat moves left within viewport limits: '+JSON.stringify({headerBefore,chatAfter}));
   await evalJS(`(()=>{
     const control=document.getElementById('kitsune-chat-mode-quick');
     control.value='dock';control.dispatchEvent(new Event('change',{bubbles:true}));
