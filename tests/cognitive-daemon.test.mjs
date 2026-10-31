@@ -48,15 +48,14 @@ test('Unverified knowledge is not used as independent confirmation',()=>{
   const bad=upsert(memory,'fact','Поездка в Японию точно подтверждена',{source:'dialog'}).item;
   bad.status='active';bad.evidence=[];
   const result=analyzeCognitive(memory);
-  assert.equal(result.metrics.verified,memory.items.length-2);
+  assert.equal(result.metrics.verified,memory.items.filter(x=>x.status==='active' && x.source==='user').length);
 });
 
 test('Independent process has durable queue, survives restart and pauses immediately for privacy',async t=>{
   const dir=await mkdtemp(join(tmpdir(),'Miyuneya автономная память '));
-  t.after(()=>removeTemp(dir));
   const {memory}=sample();
   let daemon=await openCognitiveDaemon(dir,()=>memory);
-  t.after(async()=>{await daemon?.shutdown();});
+  t.after(async()=>{await daemon?.shutdown();await removeTemp(dir);});
   let done=await settled(()=>daemon.overview(),r=>r.runs>=1&&!r.pending);
   assert.ok(done.result);
   assert.ok(done.result.metrics.reviewed>=4);
@@ -84,10 +83,9 @@ test('Independent process has durable queue, survives restart and pauses immedia
 
 test('Batched updates keep only newest fingerprint without changing source memory',async t=>{
   const dir=await mkdtemp(join(tmpdir(),'Miyuneya очередь когнитивная '));
-  t.after(()=>removeTemp(dir));
   const {memory}=sample(),original=memory.items[0].text;
   let daemon=await openCognitiveDaemon(dir,()=>memory);
-  t.after(async()=>daemon.shutdown());
+  t.after(async()=>{await daemon.shutdown();await removeTemp(dir);});
   for(let i=0;i<8;i++){
     upsert(memory,'fact','Дополнительное направление исследования номер '+i+' для Японии',{source:'user'});
     daemon.enqueue();
