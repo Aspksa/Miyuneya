@@ -27,7 +27,16 @@ export type EntityView = { id: string; name: string; type: 'person' | 'project' 
 export type EdgeView = { from: string; to: string; type: 'related' | 'part_of' | 'blocks' | 'after' | 'decided_in' | 'about' };
 export type DiaryView = { id: string; date: string; text: string };
 export type JournalView = { at: string; kind: string; text: string };
-export type MemoryView = { history?:{id:string;before:string;after:string;at:string;reason:string}[]; noteProgress?:Record<string,{offset:number}>; enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | 'think' | null; lastSleep: string | null; pending: number; newEpisodes: number;
+export type CognitiveView = {
+  enabled:boolean;
+  summary:{active:number;withEvidence:number;inferred:number;contested:number;expired:number;associations:number};
+  associations:{id:string;kind:'direct'|'episode'|'topic'|'entity';state:'recorded'|'candidate';
+    left:{id:string;text:string};right:{id:string;text:string};source:{id:string;title:string};observedAt:string}[];
+  uncertainties:{id:string;text:string;reason:'inferred'|'contested';updated:string}[];
+  questions:{id:string;kind:'gap'|'conflict';text:string;facts:string[]}[];
+  generatedAt:string;
+};
+export type MemoryView = { cognitive?:CognitiveView; history?:{id:string;before:string;after:string;at:string;reason:string}[]; noteProgress?:Record<string,{offset:number}>; enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | 'think' | null; lastSleep: string | null; pending: number; newEpisodes: number;
   search: 'meaning' | 'words'; searchError: string; indexed: number;
   items: MemoryItemView[]; episodes: EpisodeView[]; entities: EntityView[]; edges: EdgeView[]; diary: DiaryView[]; journal: JournalView[];
   topics: TopicView[]; understanding: { text: string; updated: string } | null; questions: QuestionView[]; growth: GrowthView; reminders: ReminderView[]; promises: PromiseView[]; thoughts: ThoughtView[]; thinking: ThinkingView;
@@ -39,17 +48,17 @@ export type MemoryHost = {
   openNote(id: string): void;
   changed(view: MemoryView): void;
 };
-export type Tab = 'growth' | 'plans' | 'thoughts' | 'logic' | 'fact' | 'rule' | 'episode' | 'timeline' | 'map' | 'diary' | 'journal';
+export type Tab = 'growth' | 'plans' | 'thoughts' | 'logic' | 'cognitive' | 'fact' | 'rule' | 'episode' | 'timeline' | 'map' | 'diary' | 'journal';
 type Request = RequestInit & { json?: unknown };
 
 export const brainIcon = '<path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill"/><path d="M12 5.4C11.3 4.1 9.6 3.6 8.4 4.3 7 3.9 5.5 5 5.5 6.6 4.1 7.2 3.6 8.9 4.3 10.2c-1 1-.9 2.8.3 3.6-.3 1.6.8 3.1 2.4 3.2.4 1.6 2.2 2.5 3.7 1.8.4.5.8.7 1.3.7Z" class="fill" transform="matrix(-1 0 0 1 24 0)"/><path d="M12 5.4v14.1M12 9.2c-1.3 0-2.2-.8-2.3-2M9.6 12.3c-1.4-.4-2.8.2-3.4 1.4M12 15.6c-1.2 0-2.2-.7-2.5-1.8M12 9.2c1.3 0 2.2-.8 2.3-2M14.4 12.3c1.4-.4 2.8.2 3.4 1.4M12 15.6c1.2 0 2.2-.7 2.5-1.8M6.7 8.9c.6.5 1.4.7 2.1.5M17.3 8.9c-.6.5-1.4.7-2.1.5" class="accent-stroke"/>';
-const tabs: [Tab, string][] = [['growth', 'Рост'], ['plans', 'Дела'], ['thoughts', 'Размышления'], ['logic', 'Логика'], ['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['timeline', 'Хронология'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
+const tabs: [Tab, string][] = [['growth', 'Рост'], ['plans', 'Дела'], ['thoughts', 'Размышления'], ['logic', 'Логика'], ['cognitive', 'Когнитивная'], ['fact', 'Факты'], ['rule', 'Правила'], ['episode', 'Эпизоды'], ['timeline', 'Хронология'], ['map', 'Карта'], ['diary', 'Дневник'], ['journal', 'Журнал']];
 // Eleven tabs never fitted the panel and scrolled sideways with nothing to say more were there.
 // They are the same eleven views, gathered into four groups by what you came to the memory for.
 export type Group = 'now' | 'known' | 'history' | 'growth';
 export const groups: [Group, string, Tab[]][] = [
   ['now', 'Сейчас', ['thoughts', 'plans']],
-  ['known', 'Знания', ['fact', 'rule', 'episode', 'map']],
+  ['known', 'Знания', ['cognitive', 'fact', 'rule', 'episode', 'map']],
   ['history', 'История', ['timeline', 'diary', 'journal']],
   ['growth', 'Рост', ['growth', 'logic']],
 ];
@@ -134,6 +143,7 @@ export function mountMemory(host: MemoryHost) {
   let group: Group = 'growth';
   let settings = false;
   let filter: Category | 'all' = 'all';
+  let cognitiveQuery='';
   let editing = '';
   // Whoever sets the tab — a link from the chat, a reopen, the map — the group follows it.
   const goTab = (next: Tab) => { tab = next; group = groupOf(next); };
@@ -352,9 +362,50 @@ export function mountMemory(host: MemoryHost) {
       : node.kind === 'task' ? '' : `<button type="button" class="chat-link" data-memory-goto="${escape(node.id)}" data-tab="${node.kind}">Открыть запись</button>`;
     return `<div class="map-detail"><b>${escape(node.label)}</b>${node.text && node.text !== node.label ? `<p>${escape(node.text)}</p>` : ''}${edit}${links ? `<ul>${links}</ul>` : ''}<div class="memory-actions">${actions}</div></div>`;
   }
+  function cognitiveHtml(v: MemoryView){
+    const c=v.cognitive;
+    if(!c)return '<p class="memory-empty">Когнитивная память пока не готова. Проверьте версию локального сервера.</p>';
+    const counts=[
+      ['Записанных фактов',c.summary.active],
+      ['Со ссылками на источники',c.summary.withEvidence],
+      ['Контекстных связей',c.summary.associations],
+      ['Непроверенных',c.summary.inferred+c.summary.contested]
+    ];
+    const cards=counts.map(([name,value])=>
+      '<div class="cognitive-metric"><strong>'+value+'</strong><span>'+name+'</span></div>').join('');
+    const kind: Record<CognitiveView['associations'][number]['kind'],string>={
+      direct:'Прямая связь в графе',episode:'Общий эпизод',entity:'Общий объект',topic:'Общая тема'
+    };
+    const rows=c.associations.slice(0,96).map(a=>{
+      const text=[a.left.text,a.right.text,a.source.title].join(' ').toLocaleLowerCase('ru');
+      const hidden=cognitiveQuery&&!text.includes(cognitiveQuery.toLocaleLowerCase('ru'))?' hidden':'';
+      const status=a.state==='recorded'?'Из записанных фактов':'Требует подтверждения';
+      return '<article class="cognitive-pair" data-cognitive-row'+hidden+'>'+
+        '<span class="cognitive-kind">'+escape(kind[a.kind])+' · '+status+'</span>'+
+        '<div class="cognitive-pair-body">'+
+        '<button type="button" class="memory-link" data-memory-goto="'+escape(a.left.id)+'" data-tab="fact">'+escape(a.left.text)+'</button>'+
+        '<span aria-hidden="true" class="cognitive-arrow">↔</span>'+
+        '<button type="button" class="memory-link" data-memory-goto="'+escape(a.right.id)+'" data-tab="fact">'+escape(a.right.text)+'</button>'+
+        '</div><small>'+escape(a.source.title)+'</small></article>';
+    }).join('');
+    const warnings=c.uncertainties.map(u=>'<div class="cognitive-uncertain"><span>'+
+      (u.reason==='contested'?'Противоречие':'Предположение')+
+      '</span><button type="button" class="memory-link" data-memory-goto="'+escape(u.id)+'" data-tab="fact">'+escape(u.text)+'</button></div>').join('');
+    const questions=c.questions.map(q=>'<p class="cognitive-question">'+escape(q.kind==='conflict'?'Уточнить противоречие: ':'Не хватает данных: ')+escape(q.text)+'</p>').join('');
+    return '<div class="cognitive-overview"><h3>Когнитивная память</h3>'+
+      '<p class="memory-note">Сопоставляет уже сохранённые факты, эпизоды, темы и граф связей. '+
+      'Новые выводы не объявляются истиной автоматически. Совместное упоминание не доказывает причинность.</p>'+
+      '<div class="cognitive-metrics">'+cards+'</div>'+
+      (c.summary.expired?'<p class="memory-note">Неактуальных или заменённых записей: '+c.summary.expired+'. Они не участвуют в контекстном поиске.</p>':'')+
+      '<label class="cognitive-filter">Найти связь <input type="search" data-cognitive-search maxlength="120" placeholder="Тема, факт или эпизод" value="'+escape(cognitiveQuery)+'"></label>'+
+      '<section class="cognitive-results" aria-label="Связи между записями">'+(rows||'<p class="memory-empty">Пока нет связанных записей. После изучения разговоров и документов здесь появятся связи с источниками.</p>')+'</section>'+
+      (warnings?'<h3>Нужно перепроверить</h3>'+warnings:'')+
+      (questions?'<h3>Открытые вопросы</h3>'+questions:'')+'</div>';
+  }
   function listHtml() {
     if (!view) return '<p class="memory-empty">Загружаю память…</p>';
     if (tab === 'growth') return growthHtml(view);
+    if (tab === 'cognitive') return cognitiveHtml(view);
     if (tab === 'plans') return plansHtml(view);
     if (tab === 'thoughts') return thoughtsHtml(view);
     if (tab === 'logic') return logicHtml(view);
@@ -377,7 +428,7 @@ export function mountMemory(host: MemoryHost) {
   }
   function render() {
     if (panel.hidden) return;
-    const count = (t: Tab) => !view || t === 'journal' || t === 'map' || t === 'growth' || t === 'timeline' ? '' : String((t === 'thoughts' ? view.thoughts.filter(x => !x.seen).length : t === 'plans' ? view.promises.filter(p => !p.done).length + view.reminders.filter(x => !x.fired).length + view.goals.filter(g => !g.done).length : t === 'logic' ? view.predictions.filter(p => !p.outcome).length : t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length) || '');
+    const count = (t: Tab) => !view || t === 'journal' || t === 'map' || t === 'growth' || t === 'timeline' ? '' : String((t === 'thoughts' ? view.thoughts.filter(x => !x.seen).length : t === 'plans' ? view.promises.filter(p => !p.done).length + view.reminders.filter(x => !x.fired).length + view.goals.filter(g => !g.done).length : t === 'logic' ? view.predictions.filter(p => !p.outcome).length : t === 'cognitive' ? (view.cognitive?.summary.associations || 0) : t === 'episode' ? view.episodes.length : t === 'diary' ? view.diary.length : view.items.filter(i => i.kind === t).length) || '');
     const scroll = panel.querySelector('.memory-list')?.scrollTop || 0;
     const off = !view || busy ? 'disabled' : '';
     panel.classList.toggle('wide', tab === 'map');
@@ -469,6 +520,13 @@ export function mountMemory(host: MemoryHost) {
     const node = (event.target as Element).closest<SVGGElement>('[data-node]');
     if (node && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); selected = node.dataset.node!; render(); panel.querySelector<SVGGElement>(`[data-node="${CSS.escape(selected)}"]`)?.focus(); return; }
     if (event.key === 'Escape' && !(event.target as HTMLElement).closest('.memory-edit')) { event.stopPropagation(); close(); }
+  });
+  panel.addEventListener('input',event=>{
+    const target=event.target as HTMLInputElement;
+    if(!target.hasAttribute('data-cognitive-search'))return;
+    cognitiveQuery=target.value.slice(0,120);
+    for(const row of panel.querySelectorAll<HTMLElement>('[data-cognitive-row]'))
+      row.hidden=!!cognitiveQuery&&!row.textContent!.toLocaleLowerCase('ru').includes(cognitiveQuery.toLocaleLowerCase('ru'));
   });
   panel.addEventListener('change', event => {
     const input = event.target as HTMLInputElement;
