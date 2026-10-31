@@ -7,6 +7,7 @@ import { atomicWrite } from '../scripts/runtime.mjs';
 import type { Memory, MemoryItem } from './memory.ts';
 import { openCognitiveJobs } from './cognitive-jobs.ts';
 import { openCognitiveNotebook } from './cognitive-notebook.ts';
+import { openCognitiveLearning } from './cognitive-learning.ts';
 import { suggestCognitiveInquiries, type CognitiveInquiry } from './cognitive-curiosity.ts';
 
 type Insight = {
@@ -54,7 +55,8 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
   isIdle:()=>boolean=()=>true,
   sweepMs=60_000,
   lookupSource?:(id:string)=>MemoryItem|undefined,
-  proposeQuestion?:(candidate:CognitiveInquiry)=>Promise<string|null>) {
+  proposeQuestion?:(candidate:CognitiveInquiry)=>Promise<string|null>,
+  getRelatedArchive?:(id:string)=>MemoryItem[]) {
   const file=join(dataDir,'cognitive-daemon.json');
   let state:State=blank();
   try {
@@ -69,7 +71,9 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     }
   }
   const jobs=openCognitiveJobs(dataDir);
-  const notebook=openCognitiveNotebook(dataDir,lookupSource||((id)=>getMemory().items.find(x=>x.id===id)));
+  const source=lookupSource||((id:string)=>getMemory().items.find(x=>x.id===id));
+  const notebook=openCognitiveNotebook(dataDir,source);
+  const learning=openCognitiveLearning(dataDir,source);
   let child:ChildProcess|null=null;
   let pendingSnapshot:ReturnType<typeof snapshot>|null=null;
   let timer:ReturnType<typeof setTimeout>|null=null;
@@ -146,7 +150,12 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     const token=generation;
     const base=snapshot(getMemory());
     const page=task.kind==='archive' ? getArchivePage?.(state.archiveOffset,48) : null;
-    const data=page ? {...base,archive:page.items.map(x=>({id:x.id,kind:x.kind,text:x.text,
+    // The highest-priority unresolved study subject gets first access to
+    // relevant historical records, without external searches or paid models.
+    const priority=task.kind==='archive'?learning.focus()[0]:undefined;
+    const related=priority&&getRelatedArchive?getRelatedArchive(priority.refs[0]).slice(0,20):[];
+    const archiveItems=page?[...new Map([...related,...page.items].map(x=>[x.id,x])).values()].slice(0,80):[];
+    const data=page ? {...base,archive:archiveItems.map(x=>({id:x.id,kind:x.kind,text:x.text,
       status:x.status,until:x.until,category:x.category,source:x.source,
       evidence:x.evidence?.slice(0,6).map(e=>({source:e.source,quote:e.quote,role:e.role})),
       links:x.links.slice(0,30)}))} : base;
@@ -162,8 +171,10 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
       if(checksum(base)!==checksum(snapshot(getMemory()))){
         jobs.finish(task);enqueue();return;
       }
-      if(task.kind!=='evaluation'&&result.growth)
+      if(task.kind!=='evaluation'&&result.growth){
         notebook.learn(result.growth,task.kind+':'+task.fingerprint);
+        learning.update(result.growth);
+      }
       notebook.reconcile();
       // Curiosity is a question, never a new fact. At most one question per
       // day, and only from currently supported records. Questions only appear
@@ -249,6 +260,7 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     await exited();
     jobs.clear();
     notebook.clear();
+    learning.clear();
     pendingSnapshot=null;
     state=blank();
     await save();
@@ -264,6 +276,7 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     lastError:state.lastError,result:enabled()?state.result:null,
     notebook:enabled()?notebook.overview():null,
     curiosity:enabled()?notebook.curiosityOverview():null,
+    learning:enabled()?learning.overview():null,
   });
   const strategy=()=>enabled() && !jobs.overview().queued ? state.result?.strategy||'lexical' : 'lexical';
   // On startup a pending fingerprint is replayed by re-snapshotting live data.
@@ -279,9 +292,12 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     // A not-yet-completed request remains in SQLite for recovery on next startup.
     await writes;
     notebook.close();
+    learning.close();
     jobs.close();
   }
   const context=(query:string)=>enabled()?notebook.context(query):'';
   const settleQuestion=(id:string,status:'answered'|'dismissed')=>notebook.settleInquiry(id,status);
-  return {enqueue,clear,modeChanged,overview,strategy,context,settleQuestion,shutdown};
+  const recordAnswerQuality=(id:string,status:'supported'|'blocked'|'uncertain'|'unverified')=>enabled()?learning.recordAnswer(id,status):false;
+  const recordUndo=(id:string)=>enabled()?learning.feedback(id):false;
+  return {enqueue,clear,modeChanged,overview,strategy,context,settleQuestion,recordAnswerQuality,recordUndo,shutdown};
 }
