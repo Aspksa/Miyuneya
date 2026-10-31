@@ -21,7 +21,7 @@ const checksum=(value:unknown)=>createHash('sha256').update(JSON.stringify(value
 function snapshot(memory:Memory){
   return {
     items:memory.items.slice(-600).map(x=>({id:x.id,kind:x.kind,text:x.text,status:x.status,
-      until:x.until,links:x.links.slice(0,30)})),
+      until:x.until,source:x.source,evidence:x.evidence?.slice(0,6).map(e=>({source:e.source,quote:e.quote})),links:x.links.slice(0,30)})),
     edges:memory.edges.slice(-1500).map(x=>({from:x.from,to:x.to,type:x.type})),
   };
 }
@@ -107,7 +107,7 @@ export async function openCognitiveDaemon(dataDir:string, getMemory:()=>Memory) 
     if(state.pending!==fingerprint){state.pending=fingerprint;await save();}
     try{
       const result=await send(fingerprint,data);
-      if(token!==generation || !enabled())return;
+      if(token!==generation || !enabled() || state.pending!==fingerprint)return;
       state={...state,completed:fingerprint,pending:null,runs:state.runs+1,
         failures:0,lastError:'',result};
       await save();
