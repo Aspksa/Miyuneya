@@ -524,3 +524,16 @@
   font-size:.73em; line-height:1.35; overflow-wrap:anywhere; }
 .kitsune-external-path { width:100%; min-width:0; padding:6px 8px; border:1px solid var(--line);
   border-radius:8px; background:var(--panel); color:var(--text); font:inherit; font-size:.83em; }
+
+/* Date/message navigation stays inside the existing floating chat. */
+.kitsune-history-date { min-width:0; max-width:135px; padding:4px 6px; border-radius:7px;
+  border:1px solid rgba(110,110,135,.35); background:var(--panel, #fff);
+  color:var(--text, #292638); font:inherit; font-size:.83em; }
+.kitsune-search-jump { width:100%; font-size:.77em; text-align:left; padding:5px 9px;
+  background:transparent; border:0; color:var(--accent, #7775d7); cursor:pointer; }
+.kitsune-search-jump:hover,.kitsune-search-jump:focus-visible { text-decoration:underline; }
+.kitsune-target-message { outline:2px solid var(--accent, #7775d7); outline-offset:2px;
+  transition:outline-color 0.45s ease; }
+@media (prefers-reduced-motion: reduce) {
+ .kitsune-target-message { scroll-behavior:auto; transition:none; }
+}
