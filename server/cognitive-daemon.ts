@@ -54,13 +54,25 @@ export async function openCognitiveDaemon(dataDir:string, getMemory:()=>Memory) 
   let timer:ReturnType<typeof setTimeout>|null=null;
   let running=false,closed=false,generation=0;
   let writes=Promise.resolve();
+  const exiting:Promise<void>[]=[];
   let lastActivity=Date.now(),nextRetry=0;
   const enabled=()=>{const m=getMemory();return !closed && m.settings.enabled && !m.settings.private;};
   const save=()=>{const copy=structuredClone(state);const operation=writes.then(()=>atomicWrite(file,JSON.stringify(copy)));
     writes=operation.catch(()=>{});return operation;};
   const terminate=()=>{
-    if(child){child.removeAllListeners('message');child.removeAllListeners('error');child.kill();child=null;}
+    if(!child)return;
+    const proc=child;child=null;
+    // Windows locks a child's current working directory until the process
+    // has actually exited. Wait for that exit before cleanup of temporary data.
+    const waited=new Promise<void>(resolve=>{
+      if(proc.exitCode!==null || proc.signalCode!==null){resolve();return;}
+      const timeout=setTimeout(resolve,3000);
+      proc.once('exit',()=>{clearTimeout(timeout);resolve();});
+    });
+    exiting.push(waited);
+    proc.kill();
   };
+  const exited=async()=>{await Promise.all(exiting.splice(0));};
   const schedule=(delay=300)=>{
     if(closed||!state.pending||!enabled())return;
     if(timer)clearTimeout(timer);
@@ -71,8 +83,9 @@ export async function openCognitiveDaemon(dataDir:string, getMemory:()=>Memory) 
     if(!child){
       child=fork(childFile,[],{cwd:dataDir,execArgv:[],windowsHide:true,
         stdio:['ignore','ignore','ignore','ipc']});
-      child.on('exit',()=>{child=null;});
-      child.on('error',()=>{child=null;});
+      const started=child;
+      child.on('exit',()=>{if(child===started)child=null;});
+      child.on('error',()=>{if(child===started)child=null;});
     }
     const proc=child;
     if(!proc?.connected)throw Error('Фоновый процесс недоступен');
@@ -137,6 +150,7 @@ export async function openCognitiveDaemon(dataDir:string, getMemory:()=>Memory) 
     generation++;
     if(timer){clearTimeout(timer);timer=null;}
     terminate();
+    await exited();
     pendingSnapshot=null;
     state=blank();
     await save();
@@ -160,6 +174,7 @@ export async function openCognitiveDaemon(dataDir:string, getMemory:()=>Memory) 
     generation++;
     if(timer)clearTimeout(timer);
     terminate();
+    await exited();
     // A not-yet-completed request remains in the file for replay on next startup.
     await writes;
   }
