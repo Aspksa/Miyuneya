@@ -680,54 +680,81 @@
     (settingsReturnFocus?.isConnected?settingsReturnFocus:avatar).focus({preventScroll:true});
   }
 
+  function snapAvatar(){
+    if(!config.snap)return;
+    const width=avatar.getBoundingClientRect().width;
+    const left=12,right=Math.max(12,innerWidth-width-12);
+    avatarPos={x:(avatarPos.x+width/2<innerWidth/2?left:right),y:avatarPos.y};
+    placeAvatar();
+  }
+  function saveAvatarPosition(){
+    write(positionKey(),avatarPos);
+    if(positionScreen==='desktop')write(avatarKey,avatarPos); // Legacy fallback for earlier versions.
+  }
   function draggable(target,handle,getPosition,setPosition,onSave){
-    let pointer=null;
+    let pointer=null,holdTimer=null;
+    function cancelHold(){if(holdTimer){clearTimeout(holdTimer);holdTimer=null;}}
     handle.addEventListener('pointerdown',event=>{
-      if(event.button!==0 || (handle!==avatar && event.target.closest('button,input,textarea,select')))return;
-      pointer={id:event.pointerId,x:event.clientX,y:event.clientY,pos:{...getPosition()},moved:false};
+      if(event.button!==0 || (handle===chatHeader && config.chatMode!=='floating') ||
+        (handle!==avatar && event.target.closest('button,input,textarea,select')))return;
+      pointer={id:event.pointerId,x:event.clientX,y:event.clientY,pos:{...getPosition()},moved:false,longPress:false};
       handle.setPointerCapture?.(event.pointerId);
+      if(handle===avatar && event.pointerType==='touch'){
+        holdTimer=setTimeout(()=>{
+          if(!pointer||pointer.moved)return;
+          pointer.longPress=true;
+          suppressClick=true;
+          openSettingsDialog();
+        },620);
+      }
     });
     handle.addEventListener('pointermove',event=>{
-      if(!pointer || event.pointerId!==pointer.id)return;
+      if(!pointer || event.pointerId!==pointer.id || pointer.longPress)return;
       const dx=event.clientX-pointer.x,dy=event.clientY-pointer.y;
-      if(!pointer.moved && Math.hypot(dx,dy)<6)return;
-      pointer.moved=true;
+      if(!pointer.moved && Math.hypot(dx,dy)<7)return;
+      pointer.moved=true;cancelHold();
       setPosition({x:pointer.pos.x+dx,y:pointer.pos.y+dy});
     });
     function end(event){
+      cancelHold();
       if(!pointer||event.pointerId!==pointer.id)return;
-      const moved=pointer.moved;pointer=null;
-      if(handle===avatar) {
-        // Cancelled drags and pointer-capture loss must not eat a later click.
-        suppressClick=moved && event.type==='pointerup';
-        if(suppressClick) setTimeout(()=>{suppressClick=false;},0);
+      const {moved,longPress}=pointer;pointer=null;
+      if(handle===avatar){
+        suppressClick=(moved||longPress) && event.type==='pointerup';
+        if(suppressClick)setTimeout(()=>{suppressClick=false;},150);
+        if(moved)snapAvatar();
       }
       if(moved)onSave();
     }
     handle.addEventListener('pointerup',end);
     handle.addEventListener('pointercancel',end);
+    handle.addEventListener('lostpointercapture',event=>{
+      if(pointer?.id===event.pointerId && !pointer.longPress)cancelHold();
+    });
   }
   applySettings();
-  draggable(avatar,avatar,()=>avatarPos,p=>{avatarPos=p;placeAvatar();},()=>write(avatarKey,avatarPos));
-  draggable(chat,chatHeader,()=>chatPos,p=>{chatPos=p;placeChat();},()=>write(chatKey,chatPos));
+  draggable(avatar,avatar,()=>avatarPos,p=>{avatarPos=p;placeAvatar();},saveAvatarPosition);
+  draggable(chat,chatHeader,()=>chatPos,p=>{chatPos=p;placeChat();},
+    ()=>write(chatPositionKey(),chatPos));
   avatar.addEventListener('click',()=>{
     if(suppressClick){suppressClick=false;return;}
     chat.hidden?openChat():closeChat();
   });
-  avatar.addEventListener('contextmenu',event=>{event.preventDefault();openSettingsDialog();});
+  avatar.addEventListener('contextmenu',event=>{event.preventDefault();if(settings.hidden)openSettingsDialog();});
   avatar.addEventListener('keydown',event=>{
     const delta={ArrowLeft:[-10,0],ArrowRight:[10,0],ArrowUp:[0,-10],ArrowDown:[0,10]}[event.key];
     if(!delta)return;
     event.preventDefault();
     const step=event.shiftKey?4:1;
     avatarPos={x:avatarPos.x+delta[0]*step,y:avatarPos.y+delta[1]*step};
-    placeAvatar();write(avatarKey,avatarPos);
+    placeAvatar();saveAvatarPosition();
   });
   document.getElementById('kitsune-chat-close').addEventListener('click',closeChat);
   openSettings.addEventListener('click',openSettingsDialog);
   minimizeButton?.addEventListener('click',()=>{
     historyPanel.hidden=true;historyButton.setAttribute('aria-expanded','false');
     chat.classList.add('mini');
+    document.documentElement.dataset.kitsuneChatMode='mini';
     const maxX=Math.max(10,innerWidth-180),maxY=Math.max(10,innerHeight-60);
     chatPos={x:clamp((avatarPos?.x||20)+Math.min(config.size,150)+8,10,maxX),
       y:clamp((avatarPos?.y||20)+20,10,maxY)};
@@ -760,7 +787,8 @@
   }
   reset.addEventListener('click',()=>{
     config={...defaults};avatarPos=null;chatPos=null;
-    userChangedSettings=true;applySettings();write(settingsKey,config);void savePersistentPreference('avatar',config);write(avatarKey,avatarPos);write(chatKey,chatPos);
+    userChangedSettings=true;applySettings();write(settingsKey,config);void savePersistentPreference('avatar',config);
+    for(const key of [avatarKey,chatKey,positionKey(),chatPositionKey()])write(key,null);
   });
   // Custom full-resolution images reuse the existing, validated local avatar
   // upload API. The repository's supplied fox illustration remains the fallback.
@@ -811,7 +839,17 @@
     setStatus('Предыдущий разговор сохранён. Открыт новый.');
   });
   stopButton.addEventListener('click',()=>stream?.abort());
-  window.addEventListener('resize',()=>{placeAvatar();placeChat();});
+  window.addEventListener('resize',()=>{
+    const mode=innerWidth<=700?'mobile':'desktop';
+    if(mode!==positionScreen){
+      positionScreen=mode;
+      const saved=read(positionKey(),mode==='desktop'?read(avatarKey,null):null);
+      const savedChat=read(chatPositionKey(),mode==='desktop'?read(chatKey,null):null);
+      avatarPos=validPosition(saved)?saved:null;
+      chatPos=validPosition(savedChat)?savedChat:null;
+      applySettings();
+    }else{applySettings();}
+  });
   // Native CSS resize should survive next reload without snapping back.
   let sizing=false;
   if(window.ResizeObserver){
