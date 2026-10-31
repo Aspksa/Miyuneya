@@ -17,7 +17,11 @@ test('Unified pages expose navigation and identical token stylesheet',()=>{
   assert.match(client,/href="\/#brains"/);
   assert.match(client,/href="\/"/);
   assert.match(client,/data-collapse-nav/);
-  assert.match(client,/sidebarLayoutKey/);
+  assert.match(client,/sidebarCollapsed/);
+  const workbench=await read('src/workbench.ts');
+  assert.match(workbench,/Miyuneya\.workbench\./);
+  assert.match(workbench,/legacyKey/);
+  assert.match(workbench,/toggleSidebar/);
   assert.match(shared,/miyu-nav-compact/);
   assert.match(shared,/max-width:620px/);
   for(const file of [home,workspace]){
