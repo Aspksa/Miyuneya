@@ -334,8 +334,9 @@ export async function openSqliteChatArchive(dataDir:string){
     const result=String((db.prepare('PRAGMA quick_check(1)').get() as Row).quick_check);
     if(result!=='ok'){readOnly=true;warnings.push('Повреждение SQLite: архив открыт только для чтения.');}
     let searchable=true;
-    try{searchable=Number((db.prepare('SELECT COUNT(*) n FROM message_fts').get() as Row).n)
-      ===Number((db.prepare('SELECT COUNT(*) n FROM messages').get() as Row).n);}
+    // FTS5 external-content COUNT(*) mirrors the source table even when
+    // the index is empty. Rank=1 compares every posting with source rows.
+    try{db.prepare("INSERT INTO message_fts(message_fts,rank) VALUES('integrity-check',1)").run();}
     catch{searchable=false;}
     if(!searchable)warnings.push('Поисковый индекс требуется восстановить.');
     return {ok:result==='ok',ftsHealthy:searchable,details:result};
