@@ -72,6 +72,18 @@ test('Ветвление связывает сообщения и наследу
   const nested=db.create({id:'nested',parentId:'fork',forkMessageId:'fork-1'});
   assert.equal(nested.conversation.messageCount,3);
   assert.equal(db.page('nested').messages[2].content,'Альтернативный ответ');
+  // Export/import must retain shared history and branch links without
+  // duplicating inherited IDs (the original three messages stay unique).
+  const lines=[];
+  for await (const line of db.exportLines())lines.push(line);
+  const destination=await temporary(t);
+  const restored=await openSqliteChatArchive(destination);
+  await restored.importStream(Readable.from(lines.map(line=>Buffer.from(line))),'application/x-ndjson');
+  assert.equal(restored.page('nested').messages[2].content,'Альтернативный ответ');
+  assert.equal(restored.page('fork').conversation.parentId,'source');
+  assert.equal((restored.db.prepare('SELECT COUNT(*) n FROM messages').get()).n,4);
+  assert.equal(restored.page('fork').messages[2].parentMessageId,'two');
+  await restored.shutdown();
   assert.throws(()=>db.create({parentId:'source',forkMessageId:'missing'}),/не найдено/);
   await db.shutdown();
 });
