@@ -138,6 +138,9 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       const verified=await verifyBackup(pendingDir);
       if(!verified.ok)throw Error(verified.issues.join('; '));
       await rename(pendingDir,finalDir);
+      const bytes=info.database.size+info.attachments.reduce((sum,item)=>sum+Number(item.size||0),0);
+      store.setSetting('backupCount',String(Number(store.getSetting('backupCount')||0)+1));
+      store.setSetting('backupBytes',String(Number(store.getSetting('backupBytes')||0)+bytes));
       store.setSetting('lastBackup',info.createdAt);
       return {ok:true,directory:finalDir,attachments:rows.length,
         durationMs:Math.round(performance.now()-started)};
@@ -193,7 +196,10 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     })).sort((a,b)=>b.maxMs-a.maxMs).slice(0,12);
     if(slow.some(x=>x.name==='save'&&x.maxMs>500))
       alerts.push('Запись сообщений выполнялась дольше 500 мс. Проверьте состояние диска.');
-    return {...info,freeBytes,backupAt,readOnly:store.readOnly(),wal:true,
+    return {...info,freeBytes,backupAt,
+      backupCount:Number(store.getSetting('backupCount')||0),
+      backupBytes:Number(store.getSetting('backupBytes')||0),
+      readOnly:store.readOnly(),wal:true,
       warnings:alerts,operations:slow,backupRunning:!!active};
   }
   async function maintain(){
