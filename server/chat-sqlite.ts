@@ -301,6 +301,47 @@ export async function openSqliteChatArchive(dataDir:string){
   // The JSONL export reads one CONSISTENT SQLite snapshot even if the user
   // continues chatting during a multi-gigabyte download. The temporary
   // snapshot is cleaned up on success, failure and cancelled downloads.
+  // Navigate to the source message in O(depth + indexed lookup) time.
+  // The returned page includes context on both sides of the target.
+  function locate(id:string,options:{messageId?:string;date?:string;limit?:number}={}){
+    if(importInProgress)throw error('Архив занят импортом. Повторите позже.',423);
+    const c=getConversation(id);
+    const count=Number(c.message_count);
+    const size=Math.min(150,Math.max(1,integer(options.limit,100)));
+    let target:Row|undefined;
+    if(options.messageId){
+      target=visible(id,safeId(options.messageId));
+      if(!target)throw error('Сообщение не найдено в этом разговоре.',404);
+    }else if(options.date){
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(options.date)
+        || !Number.isFinite(Date.parse(options.date+'T00:00:00.000Z')))
+        throw error('Укажите дату в формате ГГГГ-ММ-ДД.');
+      // Trace the actual inherited prefix, not all parent messages.
+      const lineage: {id:string;end:number}[]=[];
+      let node=c,cutoff=count;
+      for(let depth=0;depth<=32;depth++){
+        lineage.push({id:String(node.id),end:cutoff});
+        if(!node.parent_id)break;
+        cutoff=Math.min(cutoff,Number(node.inherited_count));
+        node=getConversation(node.parent_id);
+        if(depth===32)throw error('Превышена глубина ветвления.',409);
+      }
+      let earliest:Row|undefined;
+      const stmt=db.prepare('SELECT * FROM messages WHERE conversation_id=? AND sequence<=? AND created_at>=? ORDER BY sequence LIMIT 1');
+      for(const source of lineage){
+        const candidate=stmt.get(source.id,source.end,options.date+'T00:00:00.000Z') as Row|undefined;
+        if(candidate&&(!earliest||Number(candidate.sequence)<Number(earliest.sequence)))
+          earliest=candidate;
+      }
+      target=earliest;
+      if(!target)throw error('Начиная с указанной даты сообщений нет.',404);
+    }else throw error('Укажите сообщение или дату.');
+    // Shared prefixes retain their original absolute sequence.
+    const sequence=Number(target.sequence);
+    const before=Math.min(count,sequence+Math.min(30,Math.floor(size/3)));
+    const result=page(id,before,size);
+    return {...result,targetMessageId:target.id,targetSequence:sequence};
+  }
   async function* exportLines(){
     if(importInProgress)throw error('Архив занят импортом. Повторите экспорт позже.',423);
     const snapshot=join(home,'export-'+randomUUID()+'.sqlite');
@@ -544,7 +585,7 @@ export async function openSqliteChatArchive(dataDir:string){
     path,db,home,readOnly:()=>readOnly,lockWrites:(reason:string)=>{readOnly=true;warnings.push(reason);},
     warnings,timings,timed,getSetting,setSetting,write,
     getConversation,formatConversation,visible,list,search:list,searchAdvanced,isImporting:()=>importInProgress,create,modify,select,
-    saveMessage,page,exportLines,importLegacy,importStream,rebuildSearch,quickCheck,
+    saveMessage,page,locate,exportLines,importLegacy,importStream,rebuildSearch,quickCheck,
     shutdown:async()=>{if(!closed){closed=true;db.close();await releaseLock();}}
   };
   }catch(e){
