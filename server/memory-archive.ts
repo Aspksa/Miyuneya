@@ -96,7 +96,7 @@ export async function openMemoryArchive(dataDir: string) {
         .map(row=>JSON.parse(row.payload) as MemoryItem)};
     }
     function get(id:string):MemoryItem|undefined{
-      if(!/^[\\w-]{1,100}$/.test(id))return undefined;
+      if(!/^[\w-]{1,100}$/.test(id))return undefined;
       const row=getFact.get(id) as {payload:string}|undefined;
       return row?JSON.parse(row.payload) as MemoryItem:undefined;
     }
