@@ -40,9 +40,11 @@
   const avatarSizeValue = document.getElementById('kitsune-size-output');
   const opacityValue = document.getElementById('kitsune-opacity-output');
 
-  const defaults = { size: 180, opacity: 100, glow: true, animations: true, font: 15, width: 410, height: 550 };
+  const defaults = { size: 180, opacity: 100, glow: true, animations: true, font: 15, width: 410, height: 550, snap: true, quietMode: false, chatMode: 'floating' };
   const settingsKey = 'miyuneya.kitsune.settings.v1';
   const avatarKey = 'miyuneya.kitsune.position.v1';
+  const positionKey = ()=>'miyuneya.kitsune.position.'+(window.innerWidth <= 700?'mobile':'desktop')+'.v2';
+  const chatPositionKey = ()=>'miyuneya.kitsune.chat-position.'+(window.innerWidth <= 700?'mobile':'desktop')+'.v2';
   const chatKey = 'miyuneya.kitsune.chat-position.v1';
   const historyKey = 'miyuneya.kitsune.history.v1';
   const customImageKey = 'miyuneya.kitsune.custom-image.v1';
@@ -63,14 +65,19 @@
     if(Number.isInteger(storedSettings.opacity) && storedSettings.opacity>=50 && storedSettings.opacity<=100)config.opacity=storedSettings.opacity;
     if(typeof storedSettings.glow==='boolean')config.glow=storedSettings.glow;
     if(typeof storedSettings.animations==='boolean')config.animations=storedSettings.animations;
+    if(typeof storedSettings.snap==='boolean')config.snap=storedSettings.snap;
+    if(typeof storedSettings.quietMode==='boolean')config.quietMode=storedSettings.quietMode;
+    if(['floating','dock','full'].includes(storedSettings.chatMode))config.chatMode=storedSettings.chatMode;
     if(Number.isInteger(storedSettings.font)&&storedSettings.font>=13&&storedSettings.font<=20)config.font=storedSettings.font;
     if(Number.isInteger(storedSettings.width)&&storedSettings.width>=320&&storedSettings.width<=800)config.width=storedSettings.width;
     if(Number.isInteger(storedSettings.height)&&storedSettings.height>=350&&storedSettings.height<=900)config.height=storedSettings.height;
   }
 
-  const savedAvatar=read(avatarKey,null),savedChat=read(chatKey,null);
+  const savedAvatar=read(positionKey(),window.innerWidth>700?read(avatarKey,null):null);
+  const savedChat=read(chatPositionKey(),window.innerWidth>700?read(chatKey,null):null);
   let avatarPos=validPosition(savedAvatar)?savedAvatar:null;
   let chatPos=validPosition(savedChat)?savedChat:null;
+  let positionScreen=window.innerWidth<=700?'mobile':'desktop';
   let suppressClick=false, stream=null, settingsReturnFocus=null;
   // The old browser copy is kept untouched as an emergency migration source.
   const legacyHistory=read(historyKey,[]);
@@ -382,7 +389,8 @@
       ['width',320,800],['height',350,900]]){
       if(Number.isInteger(candidate[key])&&candidate[key]>=min&&candidate[key]<=max)config[key]=candidate[key];
     }
-    for(const key of ['glow','animations'])if(typeof candidate[key]==='boolean')config[key]=candidate[key];
+    for(const key of ['glow','animations','snap','quietMode'])if(typeof candidate[key]==='boolean')config[key]=candidate[key];
+    if(['floating','dock','full'].includes(candidate.chatMode))config.chatMode=candidate.chatMode;
     applySettings();
   }).catch(()=>{});
 
@@ -392,10 +400,18 @@
       && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   }
   function applySettings(){
-    avatar.style.setProperty('--kitsune-size',config.size+'px');
+    const mobile=window.innerWidth<=700;
+    const avatarSize=mobile?Math.min(72,Math.max(56,Math.round(config.size*.44))):config.size;
+    avatar.style.setProperty('--kitsune-size',avatarSize+'px');
     avatar.style.setProperty('--kitsune-alpha',String(config.opacity/100));
     avatar.classList.toggle('no-glow',!config.glow);
     avatar.classList.toggle('no-motion',!preferredMotion());
+    avatar.classList.toggle('kitsune-quiet',!!config.quietMode);
+    chat.classList.toggle('mode-floating',config.chatMode==='floating');
+    chat.classList.toggle('mode-dock',config.chatMode==='dock');
+    chat.classList.toggle('mode-full',config.chatMode==='full');
+    chat.dataset.mode=config.chatMode;
+    document.documentElement.dataset.kitsuneChatMode=chat.hidden?'closed':config.chatMode;
     chat.style.setProperty('--kitsune-font',config.font+'px');
     chat.style.width='min('+config.width+'px, calc(100vw - 20px))';
     chat.style.height='min('+config.height+'px, calc(100dvh - 24px))';
@@ -414,7 +430,7 @@
     placeChat();
   }
   function placeAvatar(){
-    const size=avatar.getBoundingClientRect().width || Math.min(config.size,innerWidth-20,innerHeight-20);
+    const size=avatar.getBoundingClientRect().width || Math.min(innerWidth<=700?72:config.size,innerWidth-20,innerHeight-20);
     const safeW=Math.max(10,innerWidth-size-10),safeH=Math.max(10,innerHeight-size-10);
     if(!avatarPos)avatarPos={x:Math.min(32,safeW),y:safeH};
     avatarPos={x:clamp(avatarPos.x,10,safeW),y:clamp(avatarPos.y,10,safeH)};
@@ -422,13 +438,18 @@
     avatar.style.top=avatarPos.y+'px';
   }
   function placeChat(){
+    if(config.chatMode!=='floating'&&!chat.classList.contains('mini')){
+      chat.style.removeProperty('left');chat.style.removeProperty('top');
+      return;
+    }
     const r=chat.getBoundingClientRect();
     const width=r.width||400,height=r.height||540;
     if(!chatPos){
       const railWidth=Math.min(76,innerWidth*.13);
       const available=Math.max(10,innerWidth-width-railWidth-10);
-      const avatarCenter=(avatarPos?.x||32)+config.size/2;
-      const side=avatarCenter>innerWidth/2?(avatarPos?.x||32)-width-15:(avatarPos?.x||32)+config.size+15;
+      const displaySize=avatar.getBoundingClientRect().width||config.size;
+      const avatarCenter=(avatarPos?.x||32)+displaySize/2;
+      const side=avatarCenter>innerWidth/2?(avatarPos?.x||32)-width-15:(avatarPos?.x||32)+displaySize+15;
       chatPos={x:clamp(side,10,available),
         y:clamp((avatarPos?.y||20)-Math.max(24,height/4),10,Math.max(10,innerHeight-height-10))};
     }
@@ -510,11 +531,13 @@
   function openChat(){
     chat.classList.remove('mini');
     chat.hidden=false;avatar.setAttribute('aria-expanded','true');
+    document.documentElement.dataset.kitsuneChatMode=config.chatMode;
     placeChat();renderChat();input.focus();
   }
   function closeChat(){
     chat.classList.remove('mini');
     chat.hidden=true;avatar.setAttribute('aria-expanded','false');
+    document.documentElement.dataset.kitsuneChatMode='closed';
     avatar.focus({preventScroll:true});
   }
   function openSettingsDialog(){
