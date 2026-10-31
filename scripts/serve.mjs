@@ -22,7 +22,7 @@ process.on('message',message=>{
   if(message?.type!=='init' || initialized) return;
   initialized=true;
   initializing=(async()=>{
-    app=await createApp(root,message.instance,message.preview,{launchId:message.launchId,onShutdown:()=>{if(process.connected) process.send({type:'stop-requested'});}});
+    app=await createApp(root,message.instance,message.preview,{launchId:message.launchId,onShutdown:()=>{if(process.connected) process.send({type:'stop-requested'});},onUpdateRestart:()=>{if(process.connected) process.send({type:'update-restart-requested'});}});
     await new Promise((resolve,reject)=>{app.once('error',reject);app.listen(message.port,message.host,resolve);});
     if(process.connected) process.send({type:'ready',port:app.address().port});
   })();
