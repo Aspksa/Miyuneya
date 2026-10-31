@@ -7,6 +7,7 @@ import { atomicWrite } from '../scripts/runtime.mjs';
 import type { Memory, MemoryItem } from './memory.ts';
 import { openCognitiveJobs } from './cognitive-jobs.ts';
 import { openCognitiveNotebook } from './cognitive-notebook.ts';
+import { suggestCognitiveInquiries, type CognitiveInquiry } from './cognitive-curiosity.ts';
 
 type Insight = {
   version: number; generatedAt: string; strategy: 'lexical' | 'graph';
@@ -52,7 +53,8 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
   getArchivePage?: (offset:number,limit:number)=>{total:number;offset:number;items:Memory['items']},
   isIdle:()=>boolean=()=>true,
   sweepMs=60_000,
-  lookupSource?:(id:string)=>MemoryItem|undefined) {
+  lookupSource?:(id:string)=>MemoryItem|undefined,
+  proposeQuestion?:(candidate:CognitiveInquiry)=>Promise<string|null>) {
   const file=join(dataDir,'cognitive-daemon.json');
   let state:State=blank();
   try {
@@ -163,6 +165,18 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
       if(task.kind!=='evaluation'&&result.growth)
         notebook.learn(result.growth,task.kind+':'+task.fingerprint);
       notebook.reconcile();
+      // Curiosity is a question, never a new fact. At most one question per
+      // day, and only from currently supported records. Questions only appear
+      // later through the existing context/UI, subject to its own cooldown.
+      if(proposeQuestion && !closed && token===generation && enabled() &&
+         Date.now()-notebook.lastInquiryAt()>=24*60*60_000){
+        for(const candidate of suggestCognitiveInquiries(result.growth,getMemory(),
+          lookupSource||((id)=>getMemory().items.find(x=>x.id===id)))){
+          if(notebook.wasAsked(candidate.key))continue;
+          const id=await proposeQuestion(candidate);
+          if(id){notebook.rememberInquiry(candidate.key,id);break;}
+        }
+      }
       jobs.finish(task);
       jobs.record(task,result.metrics,'shadow');
       const recent=jobs.history('changes').filter(x=>x.examples>=8);
@@ -249,6 +263,7 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     pending:jobs.overview().queued>0,runs:state.runs,failures:state.failures,
     lastError:state.lastError,result:enabled()?state.result:null,
     notebook:enabled()?notebook.overview():null,
+    curiosity:enabled()?notebook.curiosityOverview():null,
   });
   const strategy=()=>enabled() && !jobs.overview().queued ? state.result?.strategy||'lexical' : 'lexical';
   // On startup a pending fingerprint is replayed by re-snapshotting live data.
@@ -267,5 +282,6 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     jobs.close();
   }
   const context=(query:string)=>enabled()?notebook.context(query):'';
-  return {enqueue,clear,modeChanged,overview,strategy,context,shutdown};
+  const settleQuestion=(id:string,status:'answered'|'dismissed')=>notebook.settleInquiry(id,status);
+  return {enqueue,clear,modeChanged,overview,strategy,context,settleQuestion,shutdown};
 }

@@ -35,6 +35,12 @@ export function openCognitiveNotebook(dataDir:string,resolve:(id:string)=>Memory
         job TEXT PRIMARY KEY,at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS notes_by_seen ON notes(tier,last_seen DESC);
+      CREATE TABLE IF NOT EXISTS inquiries(
+        key TEXT PRIMARY KEY, question_id TEXT NOT NULL UNIQUE,
+        created TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open'
+          CHECK(status IN ('open','answered','dismissed'))
+      );
+      CREATE INDEX IF NOT EXISTS inquiries_created ON inquiries(created DESC);
     `);
     const lookup=db.prepare('SELECT * FROM notes WHERE id=?');
     const put=db.prepare(`INSERT INTO notes(id,kind,title,basis,refs,versions,state,first_seen,last_seen,observations,tier)
@@ -53,6 +59,11 @@ export function openCognitiveNotebook(dataDir:string,resolve:(id:string)=>Memory
     const del=db.prepare('DELETE FROM notes WHERE id=?');
     const updateRefs=db.prepare('UPDATE notes SET refs=?,versions=? WHERE id=?');
     const totals=db.prepare('SELECT kind,state,count(*) AS amount FROM notes GROUP BY kind,state');
+    const inquiryExists=db.prepare('SELECT key FROM inquiries WHERE key=?');
+    const inquiryLatest=db.prepare('SELECT created FROM inquiries ORDER BY created DESC LIMIT 1');
+    const inquiryPut=db.prepare("INSERT OR IGNORE INTO inquiries(key,question_id,created,status) VALUES(?,?,?,'open')");
+    const inquiryDone=db.prepare("UPDATE inquiries SET status=? WHERE question_id=?");
+    const inquiryStats=db.prepare("SELECT status,count(*) AS count FROM inquiries GROUP BY status");
     let closed=false;
     const validRefs=(refs:unknown)=>Array.isArray(refs) ? [...new Set(refs.filter(idOk))].slice(0,30) : [];
     const read=(row:any):Note=>({id:row.id,kind:row.kind,title:row.title,basis:row.basis,
@@ -196,10 +207,28 @@ export function openCognitiveNotebook(dataDir:string,resolve:(id:string)=>Memory
         .map(n=>({kind:n.kind,state:n.state,title:n.title,refs:n.refs.length,
           observations:n.observations,firstSeen:n.firstSeen,lastSeen:n.lastSeen})) };
     }
+    function wasAsked(key:string){return !closed&&/^[a-f0-9]{64}$/.test(key)&&!!inquiryExists.get(key);}
+    function rememberInquiry(key:string,questionId:string){
+      if(closed||!/^[a-f0-9]{64}$/.test(key)||!idOk(questionId))return false;
+      return inquiryPut.run(key,questionId,new Date().toISOString()).changes>0;
+    }
+    function settleInquiry(questionId:string,status:'answered'|'dismissed'){
+      if(!closed&&idOk(questionId))inquiryDone.run(status,questionId);
+    }
+    function lastInquiryAt(){
+      const row=inquiryLatest.get() as {created?:string}|undefined;
+      return row?.created?Date.parse(row.created):0;
+    }
+    function curiosityOverview(){
+      const stats={open:0,answered:0,dismissed:0};
+      for(const row of inquiryStats.all() as {status:'open'|'answered'|'dismissed';count:number}[])
+        stats[row.status]=row.count;
+      return stats;
+    }
     function clear(){
-      if(!closed)transaction(()=>{db.exec('DELETE FROM notes; DELETE FROM processed');});
+      if(!closed)transaction(()=>{db.exec('DELETE FROM notes; DELETE FROM processed; DELETE FROM inquiries');});
     }
     function close(){if(!closed){closed=true;db.close();}}
-    return {learn,overview,context,reconcile,eraseSource,clear,close};
+    return {learn,overview,context,reconcile,eraseSource,wasAsked,rememberInquiry,settleInquiry,lastInquiryAt,curiosityOverview,clear,close};
   }catch(e){db.close();throw e;}
 }
