@@ -48,7 +48,7 @@ export function workspaceContext(data: Workspace, now = new Date(), budget = 30_
   const open = data.tasks.filter(t => !t.done).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const done = data.tasks.filter(t => t.done).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 30);
   const terms=query.toLocaleLowerCase('ru').match(/[\p{L}\p{N}]{3,}/gu) || [];
-  const score=n=>terms.reduce((sum,t)=>sum+(n.title.toLocaleLowerCase('ru').includes(t)?5:0)+(n.body.toLocaleLowerCase('ru').includes(t)?1:0),0);
+  const score=(n: Workspace['notes'][number])=>terms.reduce<number>((sum,t)=>sum+(n.title.toLocaleLowerCase('ru').includes(t)?5:0)+(n.body.toLocaleLowerCase('ru').includes(t)?1:0),0);
   const notes = [...data.notes].sort((a,b)=>score(b)-score(a) || b.updatedAt.localeCompare(a.updatedAt));
   const excerpt=n=>{if(!terms.length || n.body.length<=800)return n.body.slice(0,800)+(n.body.length>800?'…':'');const lower=n.body.toLocaleLowerCase('ru');const position=terms.map(t=>lower.indexOf(t)).filter(p=>p>=0).sort((a,b)=>b-a)[0];if(position===undefined)return n.body.slice(0,800)+'…';const start=Math.max(0,position-150);return (start?'…':'')+n.body.slice(start,start+4000)+(start+4000<n.body.length?'…':'');};
   let used = lines.join('\n').length, cut = false;
@@ -170,7 +170,7 @@ export async function createApp(root: string, instance: string, preview = false,
       const next=structuredClone(state.data);if(next.notes.length+(note?1:0)>5000||next.tasks.length+tasks.length>5000)throw new Error('Достигнут предел записей пространства.');
       const key=createHash('sha256').update(id).digest('hex').slice(0,24),now=new Date().toISOString();
       if(note&&!next.notes.some(n=>n.id==='auto-note-'+key))next.notes.push({id:'auto-note-'+key,...note,updatedAt:now});
-      tasks.forEach((title,i)=>{if(!next.tasks.some(t=>t.id==='auto-task-'+key+'-'+i))next.tasks.push({id:'auto-task-'+key+'-'+i,title,details:'Создано правилом для документа на диске.',done:false,createdAt:now,group,attachments:[{kind:'file',id:file},...(note?[{kind:'note',id:'auto-note-'+key}]:[])]});});
+      tasks.forEach((title,i)=>{if(!next.tasks.some(t=>t.id==='auto-task-'+key+'-'+i))next.tasks.push({id:'auto-task-'+key+'-'+i,title,details:'Создано правилом для документа на диске.',done:false,createdAt:now,group,attachments:[{kind:'file' as const,id:file},...(note?[{kind:'note' as const,id:'auto-note-'+key}]:[])]});});
       next.automationApplied=[...(next.automationApplied || []),id].slice(-20000);
       if(!validateWorkspace(next))throw new Error('Результат сценария не прошёл проверку.');
       const saved={data:next,revision:state.revision+1};if(Buffer.byteLength(JSON.stringify(saved))>1900000)throw new Error('Пространство заполнено: экспортируйте записи и освободите место перед повтором.');await atomicWrite(dataFile,JSON.stringify(saved,null,2));state=saved;
