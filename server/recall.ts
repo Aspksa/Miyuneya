@@ -191,7 +191,8 @@ export function memoryContext(memory: Memory, query: string, titles: Titles = ne
   }
   if (memory.understanding) { add('Твоё общее понимание пользователя:'); add('[Сводка модели, может быть устаревшей] '+memory.understanding.text); }
   if (topics.length) { add('\nТемы его жизни, к которым относится разговор:'); for (const { t } of topics) add(`- ${t.title} (${categoryNames[t.area].toLocaleLowerCase('ru')})${t.summary ? ': [сводка модели] ' + t.summary : ''}`); }
-  if (rules.length) { add((lines.length ? '\n' : '') + 'Подтверждённые пожелания пользователя (учитывай с текущим запросом):'); for (const { item } of rules.filter(x=>x.item.source==='user'||x.item.evidence?.length).slice(0, 25)) if (!add('- ' + item.text)) break; }
+  const confirmedRules=rules.filter(x=>x.item.source==='user'||x.item.evidence?.length).slice(0,25);
+  if (confirmedRules.length) { add((lines.length ? '\n' : '') + 'Подтверждённые пожелания пользователя (учитывай с текущим запросом):'); for (const { item } of confirmedRules) if (!add('- ' + item.text)) break; }
   const known = [...chosen.map(c => c.item), ...pulled];
   if (known.length) { add('\nЧто ты знаешь о пользователе (используй к месту, не перечисляй без просьбы):'); for (const item of known) if (!add('- ' + (item.status==='inferred'?'[непроверенное предположение] ':item.status==='contested'?'[противоречие: уточнить] ':'') + item.text + until(item) + linked(item.links))) break; }
   if (entities.length) { add('\nЛюди, проекты и темы из разговора:'); for (const { e } of entities) add(`- ${e.name} (${entityNames[e.type]})${e.about ? ': ' + e.about : ''}`); }
