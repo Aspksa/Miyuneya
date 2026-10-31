@@ -125,6 +125,15 @@ test('Managed restart applies staged release, confirms local readiness and keeps
   t.after(()=>stop(root,child));
   const ptr=await waitReady(root,child,30000);
   const dataFile=join(root,'data','workspace.json');
+  const {emptyWorkspace}=await import('../src/model.ts');
+  const workspace=emptyWorkspace();
+  workspace.notes.push({id:'keep-safe',title:'Личная запись',body:'Не менять при установке',
+    updatedAt:'2026-10-31T10:00:00.000Z'});
+  const saved=await fetch('http://127.0.0.1:'+ptr.port+'/api/workspace',{
+    method:'PUT',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({revision:0,data:workspace})
+  });
+  assert.equal(saved.status,200);
   const before=await readFile(dataFile,'utf8');
   const candidate=join(root,'.runtime','test-update');await mkdir(candidate);
   const updated=old+'\n/* restart verified */\n';
