@@ -33,6 +33,10 @@ const normalizedId=(conversation:string,id:string)=>
 export async function openSqliteChatArchive(dataDir:string){
   const home=join(dataDir,'chats'),path=join(home,'archive.sqlite');
   await mkdir(home,{recursive:true});
+  const previousSize=await stat(path).then(v=>v.size).catch(e=>{
+    if((e as NodeJS.ErrnoException).code==='ENOENT')return 0;
+    throw e;
+  });
   const db=new DatabaseSync(path,{timeout:5000});
   const timings=new Map<string,{count:number;sum:number;max:number}>();
   const warnings:string[]=[];
@@ -64,10 +68,19 @@ export async function openSqliteChatArchive(dataDir:string){
     'CREATE INDEX IF NOT EXISTS attachments_conversation ON attachments(conversation_id,created_at);'
   ];
   try{
+    // A previously initialized DB with missing core tables must NOT be
+    // silently recreated with empty tables: preserve it for recovery.
+    const formerVersion=Number((db.prepare('PRAGMA user_version').get() as Row).user_version);
+    const present=new Set((db.prepare("SELECT name FROM sqlite_master WHERE type IN ('table','view')").all() as Row[]).map(x=>String(x.name)));
+    if(previousSize>0 && formerVersion>=3
+      && ['settings','conversations','messages','attachments'].some(name=>!present.has(name)))
+      throw Error('Не найдена таблица пользовательской базы. Автоматическая перезапись запрещена.');
+    const missingSearch=previousSize>0 && formerVersion>=3 && !present.has('message_fts');
     db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;');
     const mode=(db.prepare('PRAGMA journal_mode=WAL').get() as Row).journal_mode;
     if(mode!=='wal')throw Error('Режим SQLite WAL недоступен: нужен локальный диск.');
     db.exec(schema.join('\n'));
+    if(missingSearch)db.prepare("INSERT INTO message_fts(message_fts) VALUES('rebuild')").run();
     const version=Number((db.prepare('PRAGMA user_version').get() as Row).user_version);
     if(version>3)throw Error('База создана более новой версией. Обновите Miyuneya.');
     db.exec('PRAGMA user_version=3');
