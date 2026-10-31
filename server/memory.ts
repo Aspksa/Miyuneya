@@ -8,6 +8,7 @@ import type { Titles } from './recall.ts';
 import { growth } from './growth.ts';
 import { buildCognitiveSnapshot, cognitiveContext } from './cognitive.ts';
 import { openCognitiveDaemon } from './cognitive-daemon.ts';
+import { isUsefulClarification, type CognitiveInquiry } from './cognitive-curiosity.ts';
 import { openMemoryArchive } from './memory-archive.ts';
 import { GOAL_PROMPT } from './logic.ts';
 import { canonical, compatible, digest, strictDate, evidence, savedEvidence, memoryResult, SOURCE_PROMPT } from './integrity.ts';
@@ -44,7 +45,7 @@ export type Prediction = { id: string; text: string; kind: Reasoning; confidence
 export type MistakeKind = 'calc' | 'assumption' | 'causality' | 'memory' | 'prediction' | 'other';
 export type Mistake = { id: string; at: string; kind: MistakeKind; text: string; fix: string; rule: string | null; origin: string | null };
 export type Settings = { enabled: boolean; private: boolean; thinking: boolean; intensity: Intensity };
-export type Question = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number; lastAsked: string | null };
+export type Question = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number; lastAsked: string | null; cognitiveKey?:string };
 export type EntityType = 'person' | 'project' | 'place' | 'topic' | 'thing';
 export type Entity = { id: string; name: string; type: EntityType; about: string; aliases: string[]; created: string; seen: string };
 export type RelationType = 'related' | 'part_of' | 'blocks' | 'after' | 'decided_in' | 'about';
@@ -122,7 +123,7 @@ export function normalizeMemory(raw: any, now = new Date().toISOString(), retain
   if (clip(raw.understanding?.text, 1500)) memory.understanding = { text: clip(raw.understanding.text, 1500), updated: iso(raw.understanding.updated, now) };
   for (const q of array(raw.questions)) {
     const text = clip(q?.text, 300);
-    if (text && fresh(q.id)) memory.questions.push({ id: q.id, kind: q.kind === 'conflict' ? 'conflict' : 'gap', text, entity: typeof q.entity === 'string' ? q.entity.slice(0, 100) : null, facts: ids(q.facts), created: iso(q.created, now), asked: Number.isSafeInteger(q.asked) && q.asked > 0 ? q.asked : 0, lastAsked: typeof q.lastAsked === 'string' && Number.isFinite(Date.parse(q.lastAsked)) ? q.lastAsked : null });
+    if (text && fresh(q.id)) memory.questions.push({ id: q.id, kind: q.kind === 'conflict' ? 'conflict' : 'gap', text, entity: typeof q.entity === 'string' ? q.entity.slice(0, 100) : null, facts: ids(q.facts), created: iso(q.created, now), asked: Number.isSafeInteger(q.asked) && q.asked > 0 ? q.asked : 0, lastAsked: typeof q.lastAsked === 'string' && Number.isFinite(Date.parse(q.lastAsked)) ? q.lastAsked : null, cognitiveKey:typeof q.cognitiveKey==='string'&&/^[a-f0-9]{64}$/.test(q.cognitiveKey)?q.cognitiveKey:undefined });
   }
   for (const x of array(raw.reminders)) {
     const about = clip(x?.about, 120), text = clip(x?.text, 300);
@@ -288,11 +289,11 @@ function relink(memory: Memory, from: string[], to: string) {
 }
 
 // A question Miyuneya will ask the user: about something unknown, or which of two facts is true now.
-export function ask(memory: Memory, kind: Question['kind'], text: unknown, extra: { entity?: string | null; facts?: string[] } = {}, now = new Date().toISOString()) {
+export function ask(memory: Memory, kind: Question['kind'], text: unknown, extra: { entity?: string | null; facts?: string[]; cognitiveKey?:string } = {}, now = new Date().toISOString()) {
   const value = clip(text, 300);
   if (!value || memory.questions.length >= LIMITS.questions) return null;
   if (memory.questions.some(q => similarity(q.text, value) >= 0.5 || (extra.entity && q.entity === extra.entity) || (kind === 'conflict' && q.kind === 'conflict' && extra.facts?.every(id => q.facts.includes(id))))) return null;
-  const question: Question = { id: newId(), kind, text: value, entity: extra.entity ?? null, facts: extra.facts ?? [], created: now, asked: 0, lastAsked: null };
+  const question: Question = { id: newId(), kind, text: value, entity: extra.entity ?? null, facts: extra.facts ?? [], created: now, asked: 0, lastAsked: null, ...(extra.cognitiveKey?{cognitiveKey:extra.cognitiveKey}:{}) };
   memory.questions.push(question);
   journal(memory, 'question', `${kind === 'conflict' ? 'Хочу уточнить' : 'Хочу спросить'}: ${value}`, now);
   return question;
@@ -309,6 +310,23 @@ export function answer(memory: Memory, id: string, text: unknown, now = new Date
   const question = memory.questions.find(q => q.id === id);
   const value = clip(text);
   if (!question || !value) return null;
+  if(question.cognitiveKey){
+    // Only a user's explicit answer to the displayed question is accepted.
+    // A model-generated reflection must never verify its own speculation.
+    if(source!=='user'||!isUsefulClarification(value))return null;
+    const fact=clip(`Уточнение пользователя: «${value.slice(0,195)}» (на вопрос «${question.text.slice(0,140)}»)`);
+    const added=upsert(memory,'fact',fact,{source:'user',now,origin:question.id,
+      links:question.facts.slice(0,10),
+      category:memory.items.find(i=>i.id===question.facts[0])?.category||'other'});
+    if(!added)return null;
+    added.item.evidence=[...(added.item.evidence||[]),{
+      source:'answer-'+question.id,version:digest(question.text+'\n'+value),quote:value,
+      at:now,role:'user' as const
+    }].slice(-8);
+    memory.questions=memory.questions.filter(q=>q!==question);
+    journal(memory,'question',`Получено уточнение владельца: ${value}`,now);
+    return added.item;
+  }
   const entity = memory.entities.find(e => e.id === question.entity);
   let fact = value;
   if (entity) { if (!entity.about) entity.about = clip(value, 300); entity.seen = now; fact = `${entity.name}: ${value}`; }
@@ -915,7 +933,15 @@ export async function openMemory(dataDir: string, options: Options) {
   let lastActivity=Date.now();
   const cognitiveDaemon = await openCognitiveDaemon(dataDir,()=>memory,
     (offset,limit)=>archive.page(offset,limit),()=>Date.now()-lastActivity>=idleMs,
-    60_000,(id)=>memory.items.find(x=>x.id===id)||archive.get(id));
+    60_000,(id)=>memory.items.find(x=>x.id===id)||archive.get(id),
+    async (proposal:CognitiveInquiry)=>{
+      if(!memory.settings.enabled||memory.settings.private||memory.questions.length>=LIMITS.questions)return null;
+      const question=ask(memory,proposal.kind,proposal.text,
+        {facts:proposal.refs,cognitiveKey:proposal.key});
+      if(!question)return null;
+      await save();
+      return question.id;
+    });
   // Once, re-scan legacy notes: a global timestamp could previously skip unprocessed batches.
   memory.noteVersions ||= {};
   const key = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
@@ -1173,7 +1199,12 @@ export async function openMemory(dataDir: string, options: Options) {
     },
     async remind(about: string, text: string, said = '') { const added = remind(memory, about, text, said); if (added) await changed(); return added; },
     async promise(text: string, due?: string | null) { const added = promise(memory, text, due, null); if (added) await save(); return added; },
-    async answer(id: string, text: string) { const added = answer(memory, id, text); if (added) await changed(); return !!added; },
+    async answer(id: string, text: string) {
+      const original=memory.questions.find(q=>q.id===id);
+      const added=answer(memory,id,text);
+      if(added){await changed();if(original?.cognitiveKey)cognitiveDaemon.settleQuestion(id,'answered');}
+      return !!added;
+    },
     async add(kind: MemoryKind, text: string, extra: { category?: unknown; until?: unknown } = {}) { const added = upsert(memory, kind, text, { source: 'user', pinned: true, ...extra, evidence:[{source:'manual-'+digest(text).slice(0,16),version:digest(text),quote:text,at:new Date().toISOString(),role:'user'}] }); await changed(); return added?.item ?? null; },
     async edit(id: string, change: { text?: string; pinned?: boolean; topic?: string; outcome?: string; category?: string; until?: string | null; name?: string; about?: string; type?: string; title?: string; summary?: string; done?: boolean; step?: string; result?: 'right' | 'wrong'; note?: string }) {
       const goal = memory.goals.find(g => g.id === id), prediction = memory.predictions.find(p => p.id === id);
@@ -1234,7 +1265,15 @@ export async function openMemory(dataDir: string, options: Options) {
       if (entry && change.text !== undefined && clip(change.text, 2000)) entry.text = clip(change.text, 2000);
       await changed(); return true;
     },
-    async remove(id: string) { epoch++; await cognitiveDaemon.clear();
+    async remove(id: string) {
+      const question=memory.questions.find(q=>q.id===id&&q.cognitiveKey);
+      if(question){
+        memory.questions=memory.questions.filter(q=>q!==question);
+        await save();
+        cognitiveDaemon.settleQuestion(id,'dismissed');
+        return true;
+      }
+      epoch++; await cognitiveDaemon.clear();
       const target=memory.items.find(i=>i.id===id); if(target){forget(memory,target.text);await changed();archive.erase(id);return true;}
       if (id === 'understanding') { if (!memory.understanding) return false; memory.understanding = null; await changed(); return true; }
       const count = () => memory.items.length + memory.episodes.length + memory.entities.length + memory.diary.length + memory.topics.length + memory.questions.length + memory.reminders.length + memory.promises.length + memory.thoughts.length
