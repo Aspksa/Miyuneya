@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "fingerprint": "074572bfe6bb54054c253f71375a065d479023fc2d796f63cf97173c6ba53692",
+  "fingerprint": "b383812b2c7bc5f79d659db7a48cdc032627012d3a3e5f94a01dad92e0de7070",
   "outputs": {
     "appearance.js": "be3c7d9aa4c3a5303c1a3a03578fc7c02c75a47efa3964dfbadb717b0207dd1a",
     "assistant.js": "bb573bd724ba4354a6687742829c56ddc00a3c38abd0d571455136b84add31fc",
@@ -22,9 +22,9 @@
     "blank.html": "8f8a6be532666bc05fb70086e6c504e5d632a589f30d7b0c01d12d7d28e6a699",
     "blank.css": "a60356bf78a20fa5438950a84ed5290fbadd4c689d38a76678689cf49b8b8a73",
     "blank.js": "9223ee65424251b40c38a70e94f2d881b0a308a284f42d28acf4966a1a862eef",
-    "avatar.js": "af5d99eb00e71f83b6a9933836f53b7766042e07c2316029b75f1dd6e8bd7291",
-    "avatar.css": "65e7a32408fb892ad43b49ea8f905b54fe3a66f5eb56b62b9e9227913a3bd843",
+    "avatar.js": "466114bef10439b734460e86498302782cafe3116ebf429318d074c4d37b2aea",
+    "avatar.css": "5230b00af09d255499dd73cf564a463cf89f2fbab70a9d69c5efc63cf61aae9c",
     "avatars/hayumeri-kitsune.avif": "4f332669f87c4b042628c884bf88ed4712a6be5d1b1566c9e4308ac70d8f7097",
-    "avatar-studio.js": "1fd5b48d8ef3c38a09b72ba984ce0f93f96b4212fbf33ecfe669e63765da8c76"
+    "avatar-studio.js": "6282f59ff23fea01afd8d417b3441f04e81a8de267c39f64cdd57bc8b5fa4da2"
   }
 }
