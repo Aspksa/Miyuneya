@@ -320,10 +320,12 @@ export async function openChatArchive(dataDir: string) {
   async function importStream(body: AsyncIterable<Uint8Array>, contentType: string) {
     if (contentType.startsWith('application/json')) {
       let raw = '';
+      const decoder = new TextDecoder();
       for await (const chunk of body) {
-        raw += Buffer.from(chunk).toString('utf8');
+        raw += decoder.decode(chunk, { stream: true });
         if (Buffer.byteLength(raw) > 32_000_000) throw error('Старый формат JSON больше 32 МБ; конвертируйте его в JSONL.', 413);
       }
+      raw += decoder.decode();
       let parsed: unknown;
       try { parsed = JSON.parse(raw); } catch { throw error('Некорректный файл резервной копии.'); }
       return importLegacy(parsed);
