@@ -396,7 +396,8 @@ export async function openSqliteChatArchive(dataDir:string){
     }else setSetting('jsonMigrated','yes');
   }
   return {
-    path,db,home,readOnly:()=>readOnly,warnings,timings,timed,getSetting,setSetting,write,
+    path,db,home,readOnly:()=>readOnly,lockWrites:(reason:string)=>{readOnly=true;warnings.push(reason);},
+    warnings,timings,timed,getSetting,setSetting,write,
     getConversation,formatConversation,visible,list,search:list,create,modify,select,
     saveMessage,page,exportLines,importLegacy,importStream,rebuildSearch,quickCheck,
     shutdown:async()=>{if(!closed){closed=true;db.close();}}
