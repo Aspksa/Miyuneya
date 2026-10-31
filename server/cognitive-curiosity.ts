@@ -11,7 +11,7 @@ export type CognitiveInquiry = {
 const sensitive=/(парол|логин|токен|секрет|api.?key|ключ доступа|пин.?код|паспорт|диагноз|болезн|здоров|лекарств|банк|карта|сч[её]т|адрес проживания)/iu;
 const eligible=(x:MemoryItem|undefined)=>!!x && x.kind==='fact' && x.status==='active' &&
   !expired(x) && x.category!=='health' && x.category!=='personal' && x.category!=='people' &&
-  !sensitive.test(x.text) &&
+  !sensitive.test(x.text) && !x.text.startsWith('Уточнение пользователя к вопросу ') &&
   (x.source==='user'||x.evidence?.some(e=>e.role==='user'||e.role==='note')===true);
 const brief=(text:string)=>text.replace(/\s+/g,' ').trim().slice(0,90);
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
