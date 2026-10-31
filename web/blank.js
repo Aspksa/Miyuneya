@@ -425,6 +425,25 @@
   const hub = document.getElementById('brain-workspace');
   const area = document.getElementById('work-area');
   if (!link || !hub || !area || !window.location || typeof window.addEventListener !== 'function') return;
+  let brainStatusVersion=0;
+  async function refreshBrainCognitive(){
+    const version=++brainStatusVersion;
+    const node=document.getElementById('brain-cognitive-stats');
+    if(!node)return;
+    try{
+      const res=await fetch('/api/memory',{cache:'no-store'});
+      if(!res.ok)throw Error('Недоступно');
+      const data=await res.json();
+      if(version!==brainStatusVersion||window.location.hash!=='#brains')return;
+      if(!data.enabled){node.textContent='Память выключена. Включите её в настройках рабочего пространства.';return;}
+      const c=data.cognitive?.summary;
+      node.textContent=c
+        ?'Фактов: '+c.active+' · Связей: '+c.associations+' · Требуют проверки: '+(c.inferred+c.contested)
+        :'Модуль ещё не загружен в локальном сервере.';
+    }catch{
+      if(version===brainStatusVersion)node.textContent='Локальный сервер памяти недоступен.';
+    }
+  }
   function renderBrainLocation() {
     const active = window.location.hash === '#brains';
     hub.hidden = !active;
@@ -432,6 +451,7 @@
     area.setAttribute('aria-label', active ? 'Мозги Hayumeri' : 'Главная Miyuneya');
     const home=document.getElementById('miyu-portal-home');if(home)home.setAttribute('aria-current',active?'false':'page');
     document.title = active ? 'Мозги Hayumeri' : '';
+    if(active)void refreshBrainCognitive();
   }
   window.addEventListener('hashchange', renderBrainLocation);
   renderBrainLocation();
