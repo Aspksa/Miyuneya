@@ -38,6 +38,10 @@ export type CognitiveView = {
 };
 export type MemoryView = { cognitiveAutonomy?:{
   state:'paused'|'working'|'queued'|'idle';pending:boolean;runs:number;failures:number;lastError:string;
+  notebook?:null|{
+    total:number;observed:number;hypotheses:number;topics:number;
+    latest:{kind:string;state:string;title:string;refs:number;observations:number;firstSeen:string;lastSeen:string}[];
+  };
   result:null|{
     generatedAt:string;strategy:'lexical'|'graph';
     metrics:{reviewed:number;verified:number;directLinks:number;candidateLinks:number;
@@ -411,6 +415,17 @@ export function mountMemory(host: MemoryHost) {
       (auto.result?.conflicts.length?'<h4>Нужна проверка</h4>'+auto.result.conflicts.slice(0,6).map(a=>
       '<p class="memory-note">'+escape(a.left.text)+' / '+escape(a.right.text)+' <small>Возможное противоречие</small></p>').join(''):'')+
       '</section>'):'';
+    const notebook=auto?.notebook;
+    const selfWritten=notebook?('<section class="memory-archive"><h3>Собственная растущая память</h3>'+
+      '<p class="memory-note">Самостоятельно сохранено структур: '+notebook.total+
+      ' · наблюдаемых тем: '+notebook.topics+
+      ' · гипотез: '+notebook.hypotheses+
+      '. Каждая запись связана с исходными фактами и переживает перезапуск.</p>'+
+      (notebook.latest.length?'<h4>Недавно дописано</h4>'+
+      notebook.latest.slice(0,8).map(n=>'<p class="memory-note">'+
+        escape(n.title)+' · '+(n.state==='observed'?'группировка по источникам':'непроверенная гипотеза')+
+        ' · основание: '+n.refs+' записей</p>').join(''):'')+
+      '</section>'):'';
     const grow=auto?.result?.growth;
     const growthInfo=grow?('<section class="memory-archive"><h3>Самостоятельный рост знаний</h3>'+
       '<p class="memory-note">Изучено записей: '+grow.reviewed+
@@ -455,7 +470,7 @@ export function mountMemory(host: MemoryHost) {
     return '<div class="cognitive-overview"><h3>Когнитивная память</h3>'+
       '<p class="memory-note">Сопоставляет уже сохранённые факты, эпизоды, темы и граф связей. '+
       'Новые выводы не объявляются истиной автоматически. Совместное упоминание не доказывает причинность.</p>'+
-      '<div class="cognitive-metrics">'+cards+'</div>'+autoInfo+growthInfo+ 
+      '<div class="cognitive-metrics">'+cards+'</div>'+autoInfo+selfWritten+growthInfo+ 
       (archiveCount?'<section class="memory-archive"><h3>Долговременный архив</h3>'+ 
       '<p class="memory-note">Сохранено вне активной памяти: фактов и правил — '+archiveCount.facts+', эпизодов — '+archiveCount.episodes+', связей — '+archiveCount.edges+'. Архив хранится локально и используется в ответах по релевантной теме.</p>'+ 
       '<form class="memory-archive-search"><label>Поиск старых записей <input type="search" name="query" maxlength="120" placeholder="Слово или тема" value="'+escape(archiveQuery)+'"></label> <button type="submit" class="button quiet">Найти в архиве</button></form>'+ 
