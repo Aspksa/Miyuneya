@@ -87,7 +87,7 @@ test('Откат обновления: приложение не принима�
   const root=await fixture(t,'Миюнэя обновления & русский путь (2026)');
   const file=join(root,'scripts','chat-archive-worker.mjs');
   const original=await readFile(file,'utf8');
-  const damaged=original.replace('const ok=version===4&&!missing.length&&quick===\\'ok\\'&&!foreign&&fts;',
+  const damaged=original.replace("const ok=version===4&&!missing.length&&quick==='ok'&&!foreign&&fts;",
     'const ok=false;');
   assert.notEqual(damaged,original,'Preflight fixture must mutate exact condition');
   const folder=join(root,'.runtime','candidate');await mkdir(folder,{recursive:true});
