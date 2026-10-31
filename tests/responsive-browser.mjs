@@ -473,7 +473,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
       assert.ok(metrics.x>=-1 && metrics.right<=width+1 && metrics.bottom<=height+1,
         `Clipped settings: ${name}/${theme}`);
       assert.ok(metrics.contrast>=4.5,`Low text contrast: ${name}/${theme} ${metrics.contrast}`);
-      assert.ok(metrics.svg>=3 && metrics.bitmaps===1,`Raster UI asset on blank homepage: ${name}`);
+      assert.ok(metrics.svg>=3 && metrics.bitmaps===2,`Two deliberate image assets (avatar + live preview): ${name}`);
       assert.ok(metrics.railWidth>=50 && metrics.railWidth<=117);
       const capture=await cd.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false,fromSurface:true});
       const bytes=Buffer.from(capture.data,'base64');
