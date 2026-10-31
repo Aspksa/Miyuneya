@@ -715,3 +715,8 @@
   overflow-wrap:normal;
   word-break:normal;
 }
+
+@media(max-width:700px){
+  /* All chat modes occupy the viewport on phones; the selector stays in settings. */
+  .kitsune-chat-mode-quick{display:none;}
+}
