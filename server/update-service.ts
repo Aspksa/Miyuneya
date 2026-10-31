@@ -7,7 +7,7 @@ import { prepareUpdate, allowed } from '../scripts/update.mjs';
 const RELEASES='https://api.github.com/repos/Aspksa/Miyuneya/releases/latest';
 const BASE='https://github.com/Aspksa/Miyuneya/releases/download/';
 const ASSET='miyuneya-update.json';
-const LIMIT=15_000_000;
+const LIMIT=24_000_000;
 const version=/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const sha256=(bytes:Uint8Array)=>createHash('sha256').update(bytes).digest('hex');
 const newer=(a:string,b:string)=>a.split('.').map(Number).some((n,i)=>n>b.split('.').map(Number)[i]&&a.split('.').slice(0,i).every((v,j)=>Number(v)===Number(b.split('.')[j])));
@@ -132,7 +132,7 @@ export async function openGithubUpdater(root:string,fetcher:typeof fetch=fetch){
         seen.add(file.path);
         const content=Buffer.from(file.data,'base64');
         total+=content.length;
-        if(total>10_000_000||sha256(content)!==file.sha256)throw new Error('SHA-256 файла обновления не совпадает.');
+        if(total>16_000_000||sha256(content)!==file.sha256)throw new Error('SHA-256 файла обновления не совпадает.');
         await atomicWrite(join(incoming,file.path),content);
         entries.push({path:file.path,sha256:file.sha256});
       }
