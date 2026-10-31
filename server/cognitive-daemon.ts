@@ -88,6 +88,8 @@ export async function openCognitiveDaemon(dataDir:string, getMemory:()=>Memory) 
       const started=child;
       child.on('exit',()=>{if(child===started)child=null;});
       child.on('error',()=>{if(child===started)child=null;});
+      // Background analytics must not keep a finished test or a closing app alive.
+      child.unref();
     }
     const proc=child;
     if(!proc?.connected)throw Error('Фоновый процесс недоступен');
@@ -140,7 +142,14 @@ export async function openCognitiveDaemon(dataDir:string, getMemory:()=>Memory) 
   }
   function enqueue() {
     if(!enabled())return;
-    const data=snapshot(getMemory()),fingerprint=checksum(data);
+    const data=snapshot(getMemory());
+    // No useful pairwise analysis exists for fewer than two facts. Avoid a
+    // child process on every new empty workspace and on lightweight tests.
+    if(data.items.filter(x=>x.kind==='fact').length<2){
+      if(state.pending||state.result)void clear().catch(()=>{});
+      return;
+    }
+    const fingerprint=checksum(data);
     if(fingerprint===state.completed && !state.pending)return;
     if(state.pending===fingerprint)return;
     pendingSnapshot=data;
