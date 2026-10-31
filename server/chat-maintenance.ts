@@ -1,11 +1,12 @@
 import { backup, DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
-import { join, basename } from 'node:path';
-import { mkdir, readFile, rm, readdir, rename, stat, statfs, copyFile } from 'node:fs/promises';
+import { join, basename, isAbsolute, parse } from 'node:path';
+import { mkdir, readFile, rm, readdir, rename, stat, statfs, copyFile, realpath, cp } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import type { openSqliteChatArchive } from './chat-sqlite.ts';
+import { ensureSpace } from './chat-db-safety.ts';
 type Store=Awaited<ReturnType<typeof openSqliteChatArchive>>;
 type Row=Record<string,any>;
 const now=()=>new Date().toISOString();
@@ -20,7 +21,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   let timer:ReturnType<typeof setTimeout>|undefined;
   const warnings=store.warnings;
   const workers=new Set<Worker>();
-  function background(action:'check'|'rebuild'):Promise<Row>{
+  function background(action:'check'|'rebuild'|'optimize'):Promise<Row>{
     if(stopped)throw fail('Архив закрывается.',503);
     return new Promise((resolve,reject)=>{
       const worker=new Worker(new URL('../scripts/chat-archive-worker.mjs',import.meta.url),{
@@ -48,6 +49,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     if(!/^[a-z0-9+.-]+\/[a-z0-9+.-]+$/i.test(type)||type.length>100)throw fail('Неверный тип вложения.');
     const name=basename(String(fileName||'файл')).replace(/[\x00-\x1f]/g,'').slice(0,180)||'файл';
     if(messageId&&!store.visible(conversationId,messageId))throw fail('Сообщение для вложения не найдено.',404);
+    await ensureSpace(blobRoot===store.home?store.home:store.home,bytes.length*2,'сохранение вложения');
     const id=randomUUID(),sha256=digest(bytes),date=now();
     const file=join(blobRoot,id+'.blob');
     await mkdir(blobRoot,{recursive:true});
@@ -116,6 +118,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     const pendingDir=join(root,'pending-'+suffix),finalDir=join(root,suffix);
     await mkdir(pendingDir,{recursive:true});
     try{
+      await ensureSpace(root,(await stat(store.path)).size*1.5+Number((db.prepare('SELECT COALESCE(SUM(byte_size),0) AS bytes FROM attachments').get() as Row).bytes),'резервное копирование архива');
       const copy=join(pendingDir,'archive.sqlite');
       await backup(db,copy,{rate:64});
       const saved=new DatabaseSync(copy,{readOnly:true});
@@ -167,6 +170,11 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       await reindex();
       store.setSetting('lastCheck',now());
       return {...result,ftsHealthy:true,repaired:true};
+    }
+    const attachmentIssues=await inspectAttachments(200);
+    if(attachmentIssues.length){
+      warnings.push('Проблемы вложений: '+attachmentIssues.join('; '));
+      return {...result,ok:false,attachmentIssues};
     }
     store.setSetting('lastCheck',now());
     const last=await latestBackup();
