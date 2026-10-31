@@ -147,7 +147,7 @@
       const prepared=await compose(file,config.trim);
       const modal=document.createElement('dialog');modal.className='kitsune-preview-dialog';
       const preview=document.createElement('img');preview.alt='Предпросмотр аватара';
-      const previewURL=URL.createObjectURL(prepared.variants[2].blob);
+      const previewURL=URL.createObjectURL(prepared.variants.at(-1).blob);
       preview.src=previewURL;
       const info=document.createElement('p');
       info.textContent=file.name+' · '+prepared.width+' × '+prepared.height+' · '+Math.round(file.size/1024)+' КБ · обрезка: '+prepared.crop.w+' × '+prepared.crop.h;
@@ -272,9 +272,9 @@
   async function add(prepared){
     const entries=await all();
     if(entries.length>=20)throw Error('В библиотеке максимум 20 образов. Удалите лишние перед добавлением.');
-    const id=crypto.randomUUID?.() || Date.now()+'-'+Math.random();
-    await put({id,name:prepared.original.name||'Аватар',...prepared,added:Date.now()});
-    await choose(id);
+    const id=crypto.randomUUID?.() || 'avatar-'+Date.now()+'-'+Math.floor(Math.random()*1e8);
+    const storedId=await put({id,name:prepared.original.name||'Аватар',...prepared,added:Date.now()});
+    await choose(storedId||id);
     notify('Образ добавлен в локальную библиотеку и выбран.');
   }
   const libraryUpload=$('kitsune-library-upload');
@@ -318,19 +318,32 @@
       }
       setFraming();
       // Migration keeps IndexedDB originals until every upload is confirmed.
+      const migratedKey='miyuneya.kitsune.avatar-migration.v2';
+      const idMap=read(migratedKey,{});
       if(serverLibrary && db){
         const serverRows=await all();
         const known=new Set(serverRows.map(row=>row.id));
         const old=await localAll();
         for(const row of old){
-          if(known.has(row.id))continue;
+          const stableId=/^[a-zA-Z0-9_-]{1,80}$/.test(String(row.id))?row.id:
+            (idMap[row.id]||crypto.randomUUID?.()||'legacy-'+Date.now());
+          if(known.has(stableId))continue;
           if(!(row.original instanceof Blob))continue;
-          await put(row);
-          known.add(row.id);
+          if(known.size>=20){notify('На сервере уже 20 образов. Остальные оригиналы сохранены в браузере.','error');break;}
+          try{
+            const saved=await put({...row,id:stableId});
+            known.add(saved);
+            idMap[row.id]=saved;
+            store(migratedKey,idMap);
+          }catch(error){
+            notify('Не удалось перенести все аватары. Оригиналы остались в браузере: '+error.message,'error');
+            break;
+          }
         }
       }
       preferencesHydrated=true;
-      const selected=typeof prefs.selectedAvatar==='string'?prefs.selectedAvatar:read(selectedKey,null);
+      const legacySelected=read(selectedKey,null);
+      const selected=typeof prefs.selectedAvatar==='string'?prefs.selectedAvatar:(idMap[legacySelected]||legacySelected);
       if(typeof selected==='string'){
         try{await choose(selected);}catch{lastSelected=null;store(selectedKey,null);await renderLibrary();}
       } else await renderLibrary();
