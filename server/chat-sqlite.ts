@@ -215,15 +215,16 @@ export async function openSqliteChatArchive(dataDir:string){
     const h=createHash('sha256');let conversations=0,messages=0;
     const header=JSON.stringify({format:'miyuneya-chats',schema:2,exportedAt:now()})+'\n';
     h.update(header);yield header;
-    for(const c of db.prepare('SELECT * FROM conversations ORDER BY created_at,id').iterate() as Iterable<Row>){
+    // Parents precede child branches. Each branch exports only its own
+    // messages; the shared inherited prefix stays in the parent's records.
+    const order="WITH RECURSIVE tree(id,depth) AS (SELECT id,0 FROM conversations WHERE parent_id IS NULL UNION ALL SELECT c.id,t.depth+1 FROM conversations c JOIN tree t ON t.id=c.parent_id) SELECT c.* FROM tree t JOIN conversations c ON c.id=t.id ORDER BY t.depth,c.created_at,c.id";
+    for(const c of db.prepare(order).iterate() as Iterable<Row>){
       const line=JSON.stringify({kind:'conversation',conversation:formatConversation(c)})+'\n';
       h.update(line);yield line;conversations++;
-      const count=Number(c.message_count);
-      for(let start=0;start<count;start+=100){
-        for(const m of scan(c.id,start,Math.min(count,start+100))){
-          const msg=JSON.stringify({kind:'message',conversationId:c.id,message:formatMessage(m)})+'\n';
-          h.update(msg);yield msg;messages++;
-        }
+      const messagesStmt=db.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY sequence');
+      for(const m of messagesStmt.iterate(c.id) as Iterable<Row>){
+        const msg=JSON.stringify({kind:'message',conversationId:c.id,message:formatMessage(m)})+'\n';
+        h.update(msg);yield msg;messages++;
       }
     }
     yield JSON.stringify({kind:'end',conversations,messages,sha256:h.digest('hex')})+'\n';
@@ -302,8 +303,15 @@ export async function openSqliteChatArchive(dataDir:string){
             if(!idOK(c.id)||!dateOK(c.createdAt))throw error('Некорректный диалог в резервной копии.');
             const old=conversationStmt.get(c.id);
             if(!old){
-              db.prepare('INSERT INTO conversations(id,title,created_at,updated_at,archived,message_count) VALUES(?,?,?,?,?,0)')
-                .run(c.id,String(c.title).slice(0,140),c.createdAt,c.updatedAt,c.archived?1:0);
+              let parent:string|null=null,fork:string|null=null,inherited=0;
+              if(c.parentId!==undefined||c.forkMessageId!==undefined){
+                parent=safeId(c.parentId);fork=safeId(c.forkMessageId);
+                const source=visible(parent,fork);
+                if(!source)throw error('Точка ветвления отсутствует в импортируемом архиве.',409);
+                inherited=Number(source.sequence);
+              }
+              db.prepare('INSERT INTO conversations(id,title,created_at,updated_at,archived,message_count,parent_id,fork_message_id,inherited_count) VALUES(?,?,?,?,?,?,?,?,?)')
+                .run(c.id,String(c.title).slice(0,140),c.createdAt,c.updatedAt,c.archived?1:0,inherited,parent,fork,inherited);
             }
           }else if(row.kind==='message'){
             const msg=row.message;
@@ -316,8 +324,11 @@ export async function openSqliteChatArchive(dataDir:string){
             }
             const c=getConversation(row.conversationId);
             const seq=Number(c.message_count)+1;
+            const parent=msg.parentMessageId&&visible(row.conversationId,msg.parentMessageId)
+              ? visible(row.conversationId,msg.parentMessageId).id
+              : seq>1?scan(row.conversationId,seq-2,seq-1)[0]?.id||null:null;
             db.prepare('INSERT INTO messages(id,conversation_id,sequence,role,content,created_at,version,complete,parent_message_id) VALUES(?,?,?,?,?,?,?,?,?)')
-              .run(id,row.conversationId,seq,msg.role,msg.content,msg.createdAt,msg.version,msg.complete?1:0,null);
+              .run(id,row.conversationId,seq,msg.role,msg.content,msg.createdAt,msg.version,msg.complete?1:0,parent);
             db.prepare('UPDATE conversations SET message_count=message_count+1 WHERE id=?').run(row.conversationId);
           }
         }
