@@ -20,7 +20,7 @@ export type LogicView = Level & { quality?:{sample:number;brier:number|null;inde
   conclusions: { right: number; total: number; share: number | null }; corrections: number; fixed: number; causes: number; goals: number;
   week: { predictions: number; checked: number; right: number; corrections: number }; kinds: { kind: Reasoning; checked: number; right: number }[] };
 export type TopicView = { id: string; title: string; area: Category; summary: string; facts: string[]; created: string; updated: string };
-export type QuestionView = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number };
+export type QuestionView = { id: string; kind: 'gap' | 'conflict'; text: string; entity: string | null; facts: string[]; created: string; asked: number; cognitiveKey?:string };
 export type GrowthView = Level & { xp: number; name: string; logic: LogicView; week: { xp: number; facts: number; rules: number; lessons: number; episodes: number; entities: number; topics: number };
   quality: { average: number | null; reviewed: number; previous: number | null }; skills: (Level & { area: Category; points: number; week: number; facts: number; topics: { id: string; title: string }[] })[] };
 export type EntityView = { id: string; name: string; type: 'person' | 'project' | 'place' | 'topic' | 'thing'; about: string; aliases: string[]; degree: number };
@@ -38,6 +38,7 @@ export type CognitiveView = {
 };
 export type MemoryView = { cognitiveAutonomy?:{
   state:'paused'|'working'|'queued'|'idle';pending:boolean;runs:number;failures:number;lastError:string;
+  curiosity?:null|{open:number;answered:number;dismissed:number};
   notebook?:null|{
     total:number;observed:number;hypotheses:number;topics:number;
     latest:{kind:string;state:string;title:string;refs:number;observations:number;firstSeen:string;lastSeen:string}[];
@@ -415,8 +416,12 @@ export function mountMemory(host: MemoryHost) {
       (auto.result?.conflicts.length?'<h4>Нужна проверка</h4>'+auto.result.conflicts.slice(0,6).map(a=>
       '<p class="memory-note">'+escape(a.left.text)+' / '+escape(a.right.text)+' <small>Возможное противоречие</small></p>').join(''):'')+
       '</section>'):'';
+    const curiosity=auto?.curiosity;
     const notebook=auto?.notebook;
     const selfWritten=notebook?('<section class="memory-archive"><h3>Собственная растущая память</h3>'+
+      (curiosity?'<p class="memory-note">Самостоятельные вопросы: ожидают ответа — '+curiosity.open+
+       ', получено уточнений — '+curiosity.answered+
+       ', отклонено — '+curiosity.dismissed+'. Вопросы задаются не чаще одного в сутки.</p>':'')+
       '<p class="memory-note">Самостоятельно сохранено структур: '+notebook.total+
       ' · наблюдаемых тем: '+notebook.topics+
       ' · гипотез: '+notebook.hypotheses+
