@@ -1,0 +1,32 @@
+# Temporary visual review workflow; branch is NOT intended for merging.
+name: Временный экспорт сайта для скриншотов
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  package:
+    if: github.head_ref == 'temporary/site-screenshot-export-20261031'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Собрать автономную копию веб-сайта без пользовательских данных
+        run: |
+          npm run build
+          mkdir -p artifacts
+          zip -q -r artifacts/miyuneya-site-source.zip web dist src server scripts package.json Miyuneya.bat
+          cp "$(command -v node)" artifacts/node-linux
+          chmod +x artifacts/node-linux
+          ls -lh artifacts/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: miyuneya-site-local-preview
+          path: |
+            artifacts/miyuneya-site-source.zip
+            artifacts/node-linux
+          retention-days: 1
