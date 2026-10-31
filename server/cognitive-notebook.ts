@@ -29,24 +29,26 @@ export function openCognitiveNotebook(dataDir:string,resolve:(id:string)=>Memory
       CREATE TABLE IF NOT EXISTS notes(
         id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL,basis TEXT NOT NULL,
         refs TEXT NOT NULL,versions TEXT NOT NULL,state TEXT NOT NULL,first_seen TEXT NOT NULL,last_seen TEXT NOT NULL,
-        observations INTEGER NOT NULL
+        observations INTEGER NOT NULL,tier INTEGER NOT NULL DEFAULT 1
       );
       CREATE TABLE IF NOT EXISTS processed(
         job TEXT PRIMARY KEY,at TEXT NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS notes_by_seen ON notes(last_seen DESC);
+      CREATE INDEX IF NOT EXISTS notes_by_seen ON notes(tier,last_seen DESC);
     `);
     const lookup=db.prepare('SELECT * FROM notes WHERE id=?');
-    const put=db.prepare(`INSERT INTO notes(id,kind,title,basis,refs,versions,state,first_seen,last_seen,observations)
-      VALUES(?,?,?,?,?,?,?,?,?,?)
+    const put=db.prepare(`INSERT INTO notes(id,kind,title,basis,refs,versions,state,first_seen,last_seen,observations,tier)
+      VALUES(?,?,?,?,?,?,?,?,?,?,1)
       ON CONFLICT(id) DO UPDATE SET
         title=excluded.title,basis=excluded.basis,refs=excluded.refs,versions=excluded.versions,state=excluded.state,
-        last_seen=excluded.last_seen,observations=notes.observations+1`);
+        last_seen=excluded.last_seen,observations=notes.observations+1,tier=1`);
     const processed=db.prepare('SELECT job FROM processed WHERE job=?');
     const mark=db.prepare('INSERT OR IGNORE INTO processed(job,at) VALUES(?,?)');
     const capProcessed=db.prepare('DELETE FROM processed WHERE job NOT IN (SELECT job FROM processed ORDER BY at DESC LIMIT 1000)');
-    const capNotes=db.prepare('DELETE FROM notes WHERE id NOT IN (SELECT id FROM notes ORDER BY last_seen DESC LIMIT 3000)');
-    const list=db.prepare('SELECT * FROM notes ORDER BY last_seen DESC LIMIT ?');
+    // Keep historical notebook entries on disk; only the newest 3,000 are hot.
+    const capNotes=db.prepare('UPDATE notes SET tier=0 WHERE tier=1 AND id NOT IN (SELECT id FROM notes ORDER BY last_seen DESC LIMIT 3000)');
+    const list=db.prepare('SELECT * FROM notes WHERE tier=1 ORDER BY last_seen DESC LIMIT ?');
+    const hot=db.prepare('SELECT * FROM notes WHERE tier=1 LIMIT 3000');
     const all=db.prepare('SELECT * FROM notes');
     const del=db.prepare('DELETE FROM notes WHERE id=?');
     const updateRefs=db.prepare('UPDATE notes SET refs=?,versions=? WHERE id=?');
@@ -133,7 +135,7 @@ export function openCognitiveNotebook(dataDir:string,resolve:(id:string)=>Memory
       if(closed)return 0;
       let removed=0;
       transaction(()=>{
-        for(const raw of all.all() as any[]){
+        for(const raw of hot.all() as any[]){
           const note=read(raw),fresh=canUse(note.refs,note.versions);
           if(fresh.length<needed(note.kind)){
             del.run(note.id);removed++;continue;
