@@ -299,8 +299,8 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.equal(await evalJS('document.getElementById("kitsune-chat").hidden'),false);
   const headerBefore=await evalJS(`(()=>{
     const p=document.getElementById('kitsune-chat').getBoundingClientRect();
-    const h=document.getElementById('kitsune-chat-header').getBoundingClientRect();
-    return {left:p.left,top:p.top,x:h.left+45,y:h.top+16};
+    const title=document.querySelector('.kitsune-chat-title').getBoundingClientRect();
+    return {left:p.left,top:p.top,x:title.left+Math.min(18,title.width/2),y:title.top+title.height/2};
   })()`);
   await cd.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:headerBefore.x,y:headerBefore.y});
   await cd.send('Input.dispatchMouseEvent',{type:'mousePressed',x:headerBefore.x,y:headerBefore.y,button:'left',clickCount:1});
@@ -310,7 +310,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
     const r=document.getElementById('kitsune-chat').getBoundingClientRect();
     return {left:r.left,top:r.top};
   })()`);
-  assert.ok(chatAfter.left>=headerBefore.left+15,'Chat moves by dragging the header');
+  assert.ok(chatAfter.left>=headerBefore.left+15,'Chat moves by dragging the header: '+JSON.stringify({headerBefore,chatAfter}));
   await evalJS(`(()=>{
     const control=document.getElementById('kitsune-chat-mode-quick');
     control.value='dock';control.dispatchEvent(new Event('change',{bubbles:true}));
