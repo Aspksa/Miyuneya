@@ -82,7 +82,7 @@
   let avatarPos=validPosition(savedAvatar)?savedAvatar:null;
   let chatPos=validPosition(savedChat)?savedChat:null;
   let positionScreen=window.innerWidth<=700?'mobile':'desktop';
-  let suppressClick=false, stream=null, settingsReturnFocus=null;
+  let suppressClick=false, stream=null, settingsReturnFocus=null, avatarDragging=false;
   // The old browser copy is kept untouched as an emergency migration source.
   const legacyHistory=read(historyKey,[]);
   let history=Array.isArray(legacyHistory)?legacyHistory.filter(m=>m &&
@@ -572,6 +572,7 @@
   }
   document.addEventListener('focusin',adaptQuiet);
   document.addEventListener('focusout',()=>requestAnimationFrame(adaptQuiet));
+  document.addEventListener('focusin',()=>{if(!avatarDragging)requestAnimationFrame(placeAvatar);});
 
   function setStatus(message=''){status.textContent=message;status.hidden=!message;}
   function preferredMotion(){
@@ -620,6 +621,7 @@
     const safeW=Math.max(10,innerWidth-size-10),safeH=Math.max(10,innerHeight-size-10);
     if(!avatarPos)avatarPos={x:Math.min(32,safeW),y:safeH};
     avatarPos={x:clamp(avatarPos.x,10,safeW),y:clamp(avatarPos.y,10,safeH)};
+    if(!avatarDragging && presence?.avoidAvatar)avatarPos=presence.avoidAvatar(avatarPos,size);
     avatar.style.left=avatarPos.x+'px';
     avatar.style.top=avatarPos.y+'px';
   }
@@ -755,6 +757,7 @@
       if(event.button!==0 || (handle===chatHeader && config.chatMode!=='floating') ||
         (handle!==avatar && event.target.closest('button,input,textarea,select')))return;
       pointer={id:event.pointerId,x:event.clientX,y:event.clientY,pos:{...getPosition()},moved:false,longPress:false};
+      if(handle===avatar)avatarDragging=true;
       handle.setPointerCapture?.(event.pointerId);
       if(handle===avatar && event.pointerType==='touch'){
         holdTimer=setTimeout(()=>{
@@ -776,7 +779,7 @@
       cancelHold();
       if(!pointer||event.pointerId!==pointer.id)return;
       const {moved,longPress}=pointer;pointer=null;
-      if(handle===avatar){
+      if(handle===avatar){avatarDragging=false;
         suppressClick=(moved||longPress) && event.type==='pointerup';
         if(suppressClick)setTimeout(()=>{suppressClick=false;},150);
         if(moved)snapAvatar();
