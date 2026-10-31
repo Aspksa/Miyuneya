@@ -290,10 +290,12 @@
     const file=e.target.files?.[0];e.target.value='';
     if(!file)return;
     void showPreview(file,async prepared=>{
-      const response=await fetch('/api/assistant/avatar',{method:'PUT',headers:{'Content-Type':prepared.original.type},body:prepared.original});
-      if(!response.ok)throw Error('Локальный сервер отклонил изображение');
+      if(!serverLibrary){
+        const response=await fetch('/api/assistant/avatar',{method:'PUT',headers:{'Content-Type':prepared.original.type},body:prepared.original});
+        if(!response.ok)throw Error('Локальный сервер отклонил изображение');
+      }
       await add(prepared);
-      notify('Оригинал сохранён на сервере без сжатия. Библиотека хранит и его, и оптимизированные размеры.');
+      notify('Оригинал сохранён в папке проекта без сжатия. Для показа созданы оптимизированные размеры.');
     });
   },true);
   $('kitsune-image-restore')?.addEventListener('click',()=>{
