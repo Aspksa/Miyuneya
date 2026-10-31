@@ -57,7 +57,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   async function postUpdatePreflight(){
     if(store.isImporting())return {ok:false,busy:true};
     const started=performance.now();
-    const result=await background('preflight').catch(()=>({ok:false}));
+    const result:Row=await background('preflight').catch(()=>({ok:false}));
     event('update-preflight',result.ok?'ok':'failed',result.ok?'none':'sqlite-preflight',performance.now()-started);
     return {ok:!!result.ok,schemaVersion:result.schemaVersion??null,
       ftsHealthy:result.ftsHealthy===true,foreignKeyIssues:result.foreignKeyIssues??null};
@@ -428,7 +428,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     const bytes=(await stat(store.path+'-wal').catch(()=>null))?.size||0;
     if(bytes<32*1024*1024)return {ok:true,skipped:true,walBytes:bytes};
     const started=performance.now();
-    const result=await background('checkpoint').catch(()=>({ok:false}));
+    const result:Row=await background('checkpoint').catch(()=>({ok:false}));
     event('checkpoint',result.ok?'ok':'warning',result.ok?'passive':'checkpoint-failed',performance.now()-started);
     const after=(await stat(store.path+'-wal').catch(()=>null))?.size||0;
     if(result.busy||after>=256*1024*1024)
