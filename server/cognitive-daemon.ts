@@ -11,6 +11,9 @@ type Insight = {
   version: number; generatedAt: string; strategy: 'lexical' | 'graph';
   candidates: {id:string;left:{id:string;text:string};right:{id:string;text:string};reason:string;score?:number;status:string}[];
   conflicts: {id:string;left:{id:string;text:string};right:{id:string;text:string};reason:string;status:string}[];
+  growth?: {reviewed:number;grounded:number;archiveReviewed:number;branches:unknown[];paths:unknown[];
+    sourceChecks:unknown[];ambiguities:unknown[];candidateLinks:unknown[];conflicts:unknown[];
+    temporal:unknown[];feedback:unknown;evaluation:{examples:number;lexical:number;graph:number;holdout:boolean}};
   metrics: {reviewed:number;verified:number;directLinks:number;candidateLinks:number;potentialConflicts:number;
     retrievalExamples:number;lexicalRecallAt3:number;graphRecallAt3:number};
 };
@@ -24,14 +27,20 @@ const checksum=(value:unknown)=>createHash('sha256').update(JSON.stringify(value
 function snapshot(memory:Memory){
   return {
     items:memory.items.slice(-600).map(x=>({id:x.id,kind:x.kind,text:x.text,status:x.status,
-      until:x.until,source:x.source,evidence:x.evidence?.slice(0,6).map(e=>({source:e.source,quote:e.quote})),links:x.links.slice(0,30)})),
+      until:x.until,category:x.category,source:x.source,evidence:x.evidence?.slice(0,6).map(e=>({source:e.source,quote:e.quote,role:e.role})),links:x.links.slice(0,30)})),
     edges:memory.edges.slice(-1500).map(x=>({from:x.from,to:x.to,type:x.type})),
+    entities:memory.entities.slice(-300).map(x=>({id:x.id,name:x.name,aliases:x.aliases})),
+    mistakes:memory.mistakes.slice(-50).map(x=>({kind:x.kind,text:x.text})),
+    history:(memory.history||[]).slice(-50).map(x=>({reason:x.reason})),
   };
 }
 function validResult(x:any):x is Insight {
   return x?.version===1 && ['lexical','graph'].includes(x.strategy) &&
     Array.isArray(x.candidates)&&x.candidates.length<=48&&
     Array.isArray(x.conflicts)&&x.conflicts.length<=24 &&
+    (!x.growth || (Array.isArray(x.growth.branches)&&x.growth.branches.length<=12 &&
+      Array.isArray(x.growth.paths)&&x.growth.paths.length<=10 &&
+      x.growth.evaluation?.examples<=24)) &&
     typeof x.metrics?.reviewed==='number' && typeof x.generatedAt==='string';
 }
 
@@ -89,7 +98,7 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     if(!child){
       // windowsHide is supported at runtime, but omitted from older
       // @types/node ForkOptions bundled by the CI typechecker.
-      child=fork(childFile,[],{cwd:dataDir,execArgv:[],windowsHide:true,
+      child=fork(childFile,[],{cwd:dataDir,execArgv:['--max-old-space-size=96'],windowsHide:true,
         stdio:['ignore','ignore','ignore','ipc']} as Parameters<typeof fork>[2]);
       const started=child;
       child.on('exit',()=>{if(child===started)child=null;});
