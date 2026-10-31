@@ -1173,7 +1173,15 @@ export async function openMemory(dataDir: string, options: Options) {
       await save(); return true;
     },
     async remember(text: string) { const at=new Date().toISOString(); memory.forgotten=(memory.forgotten || []).filter(q=>!q.every(h=>[...tokens(text)].map(digest).includes(h))); const added = upsert(memory, commandKind(text), text, { source: 'user', pinned: true, evidence:[{source:'manual-'+digest(text).slice(0,16),version:digest(text),quote:text.slice(0,1200),at,role:'user'}] }); await changed(); return added?.item ?? null; },
-    async forget(text: string) { epoch++; await cognitiveDaemon.clear(); const removed = forget(memory, text); await changed(); const archived = archive.forget(text); await indexing; await index(); return [...new Set([...removed,...archived])]; },
+    async forget(text: string) {
+      epoch++;await cognitiveDaemon.clear();
+      const removed=forget(memory,text),archived=archive.forget(text);
+      const valid=(id:string)=>{const x=memory.items.find(i=>i.id===id)||archive.get(id);
+        return !!x&&x.status==='active'&&!expired(x);};
+      memory.questions=memory.questions.filter(q=>!q.cognitiveKey||q.facts.every(valid));
+      await changed();await indexing;await index();
+      return [...new Set([...removed,...archived])];
+    },
     // Thoughts shown to the user once («пока вас не было…») are no longer new.
     async seen() { let dirty = false; for (const t of memory.thoughts) if (!t.seen) { t.seen = true; dirty = true; } if (dirty) await save(); },
     // «Подумать сейчас» skips the wait for the user to be away but keeps the daily limit.
@@ -1182,7 +1190,7 @@ export async function openMemory(dataDir: string, options: Options) {
       if(change.private!==undefined || change.enabled!==undefined)epoch++;
       memory.settings = { ...memory.settings, ...change };
       await cognitiveDaemon.modeChanged();
-      if (memory.settings.private || !memory.settings.enabled) memory.dialogs = [];
+      if (memory.settings.private || !memory.settings.enabled) {memory.dialogs = [];memory.questions=memory.questions.filter(q=>!q.cognitiveKey);}
       await save();
     },
     // Decomposes a goal into a tree of steps with the planning model and keeps it in «Дела».
@@ -1248,6 +1256,8 @@ export async function openMemory(dataDir: string, options: Options) {
       if (!item && !episode && !entity && !entry) return false;
       const at = new Date().toISOString();
       if (item) {
+        // Editing the premises invalidates the old autonomous question.
+        memory.questions=memory.questions.filter(q=>!q.cognitiveKey||!q.facts.includes(id));
         if (change.text !== undefined && clip(change.text) && clip(change.text) !== item.text) { epoch++; revision(memory,item,clip(change.text),'исправлено пользователем',[],at); journal(memory, 'edited', `Исправлено вами: ${item.text} → ${clip(change.text)}`, at); item.status='active'; item.evidence=[{source:'manual-'+item.id,version:digest(clip(change.text)),quote:clip(change.text),at,role:'user'}]; item.text = clip(change.text); item.seen = at; item.source = 'user'; }
         if (change.pinned !== undefined) { item.pinned = change.pinned; if (change.pinned) { item.weight = 1; item.status='active'; item.source='user'; item.evidence=[{source:'manual-'+item.id,version:digest(item.text),quote:item.text,at,role:'user'}]; } item.seen = at; }
         if (change.category !== undefined) item.category = category(change.category);
@@ -1274,7 +1284,7 @@ export async function openMemory(dataDir: string, options: Options) {
         return true;
       }
       epoch++; await cognitiveDaemon.clear();
-      const target=memory.items.find(i=>i.id===id); if(target){forget(memory,target.text);await changed();archive.erase(id);return true;}
+      const target=memory.items.find(i=>i.id===id); if(target){memory.questions=memory.questions.filter(q=>!q.cognitiveKey||!q.facts.includes(id));forget(memory,target.text);await changed();archive.erase(id);return true;}
       if (id === 'understanding') { if (!memory.understanding) return false; memory.understanding = null; await changed(); return true; }
       const count = () => memory.items.length + memory.episodes.length + memory.entities.length + memory.diary.length + memory.topics.length + memory.questions.length + memory.reminders.length + memory.promises.length + memory.thoughts.length
         + memory.causes.length + memory.goals.length + memory.predictions.length + memory.mistakes.length;
