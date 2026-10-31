@@ -44,7 +44,7 @@ function validMessage(value: unknown): value is ArchiveMessage {
   if (!value || typeof value !== 'object') return false;
   const m = value as ArchiveMessage;
   return validId(m.id) && (m.role === 'user' || m.role === 'assistant')
-    && typeof m.content === 'string' && m.content.length <= 1_000_000
+    && typeof m.content === 'string' && m.content.length <= 10_000_000
     && dateOk(m.createdAt) && Number.isSafeInteger(m.version)
     && m.version >= 1 && typeof m.complete === 'boolean';
 }
@@ -266,7 +266,7 @@ export async function openChatArchive(dataDir: string) {
     for (const name of files.slice(start, end)) {
       messages.push(parseStrict(await readFile(filePath(id, name), 'utf8'), filePath(id, name), validMessage));
     }
-    return { messages, total: count, nextBefore: start > 0 ? start : null };
+    return { conversation: { ...meta }, messages, total: count, nextBefore: start > 0 ? start : null };
   }
   async function* exportLines() {
     yield JSON.stringify({ format: 'miyuneya-chats', schema: 2, exportedAt: iso() }) + '\n';
@@ -330,7 +330,7 @@ export async function openChatArchive(dataDir: string) {
     }
     for await (const chunk of body) {
       buffer += decoder.decode(chunk, { stream: true });
-      if (buffer.length > 2_000_000) throw error('Слишком длинная запись резервной копии.', 413);
+      if (buffer.length > 12_000_000 && buffer.indexOf('\n') === -1) throw error('Слишком длинная запись резервной копии.', 413);
       let n: number;
       while ((n = buffer.indexOf('\n')) !== -1) {
         const line = buffer.slice(0, n);
