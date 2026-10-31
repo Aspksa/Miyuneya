@@ -52,7 +52,7 @@ test('Owner answers create attributed, contextual memory without rewriting sourc
   assert.equal(m.questions.length,1);
   const added=answer(m,q.id,'Да','2026-10-31T10:00:00Z','user');
   assert.ok(added);
-  assert.match(added.text,/Уточнение пользователя:/);
+  assert.match(added.text,/Уточнение пользователя к вопросу/);
   assert.match(added.text,/«Да»/);
   assert.ok(added.evidence.some(e=>e.role==='user'&&e.quote==='Да'));
   assert.ok(added.links.includes(a.id)&&added.links.includes(b.id));
