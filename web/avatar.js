@@ -797,8 +797,10 @@
       const mb=v=>(Number(v)/1048576).toFixed(1)+' МБ';
       const date=info.backupAt?new Date(info.backupAt).toLocaleString('ru-RU'):'ещё нет';
       overview.textContent='Диалогов: '+info.conversations+' · Сообщений: '+info.messages+
-        ' · База: '+mb(info.databaseBytes)+' · Вложения: '+info.attachments+
+        ' · База: '+mb(info.databaseBytes)+' · WAL: '+mb(info.walBytes)+
+        ' · Свободных страниц: '+info.unusedPages+' · Вложения: '+info.attachments+
         ' ('+mb(info.attachmentBytes)+') · Копий: '+info.backupCount+' ('+mb(info.backupBytes)+') · Последняя: '+date+
+        (info.lastExternalBackup?' · Внешняя копия: '+new Date(info.lastExternalBackup).toLocaleString('ru-RU'):'')+
         (info.warnings.length?' · Внимание: '+info.warnings.join(' / '):' · Всё в порядке');
     }
     refresh.onclick=()=>void refreshArchiveStatus().catch(e=>setStatus(e.message));
@@ -806,7 +808,8 @@
       check.disabled=true;backupNow.disabled=true;reindex.disabled=true;
       try{
         const data=await requestArchive('/api/assistant/archive/'+action,{method:'POST'});
-        setStatus(action==='backup'?'Резервная копия создана и проверена.':
+        setStatus(action==='backup'?(data.external?.ok===false?'Локальная копия сохранена. Внешний SSD: '+data.external.error:
+          'Резервная копия создана и проверена'+(data.external?.ok?' на двух дисках.':'.')):
           action==='rebuild'?'Поиск восстановлен.':
           data.ok?'Целостность базы подтверждена.':'Обнаружены проблемы с целостностью.');
         await refreshArchiveStatus();
@@ -816,7 +819,32 @@
     check.onclick=()=>void runMaintenance('check');
     backupNow.onclick=()=>void runMaintenance('backup');
     reindex.onclick=()=>void runMaintenance('rebuild');
-    tools.append(heading,overview,refresh,check,backupNow,reindex);
+    const externalHint=document.createElement('p');
+    externalHint.textContent='Независимая копия: укажите существующую папку другого диска (например E:\\Backup). При отключении SSD локальная копия сохраняется.';
+    const externalInput=document.createElement('input');externalInput.type='text';
+    externalInput.placeholder='E:\\Резервные копии';
+    externalInput.setAttribute('aria-label','Папка резервных копий на внешнем SSD');
+    externalInput.className='kitsune-external-path';
+    const externalSave=document.createElement('button');externalSave.type='button';
+    externalSave.textContent='Сохранить внешний диск';
+    externalSave.onclick=async()=>{
+      externalSave.disabled=true;
+      try{
+        const value=externalInput.value.trim();
+        const cfg=await requestArchive('/api/assistant/archive/external',
+          jsonOptions('PUT',{destination:value||null}));
+        externalInput.value=cfg.destination||'';
+        setStatus(cfg.configured?'Независимое резервирование включено.':'Независимый диск отключён в настройках.');
+        await refreshArchiveStatus();
+      }catch(e){setStatus('Внешний SSD: '+e.message);}
+      finally{externalSave.disabled=false;}
+    };
+    async function refreshExternal(){
+      if(!remoteChats)return;
+      const cfg=await requestArchive('/api/assistant/archive/external');
+      externalInput.value=cfg.destination||'';
+    }
+    tools.append(heading,overview,refresh,check,backupNow,reindex,externalHint,externalInput,externalSave);
     const attachmentsBox=document.createElement('div');attachmentsBox.className='kitsune-archive-tools';
     const filesTitle=document.createElement('strong');filesTitle.textContent='Вложения текущего разговора';
     const fileLabel=document.createElement('label');fileLabel.textContent='Добавить файл (до 15 МБ)';
@@ -853,7 +881,7 @@
     };
     attachmentsBox.append(filesTitle,fileLabel,fileList);
     chatPanel.append(tools,attachmentsBox);
-    void archiveReady.then(refreshArchiveStatus).catch(()=>{});
+    void archiveReady.then(()=>Promise.all([refreshArchiveStatus(),refreshExternal()])).catch(()=>{});
     openSettings.addEventListener('click',()=>{
       void refreshArchiveStatus().catch(()=>{});
       void refreshFiles().catch(()=>{});
