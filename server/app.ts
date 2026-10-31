@@ -202,6 +202,13 @@ export async function createApp(root: string, instance: string, preview = false,
     try {
       const path = new URL(req.url || '/', origin).pathname;
       if (req.method === 'GET' && path === '/__miyuneya/health') return send(stopping ? 503 : 200, { app: 'Miyuneya', instance, launchId: options.launchId, ready: !stopping });
+      if (path === '/__miyuneya/post-update-check') {
+        if(req.method!=='POST')return send(405,{error:'Метод не поддерживается'});
+        if(!options.launchId || req.headers['x-miyuneya-session']!==options.launchId)
+          return send(403,{error:'Недопустимый сеанс'});
+        const outcome=await chatMaintenance.postUpdatePreflight();
+        return send(outcome.ok?200:503,outcome);
+      }
       if (path === '/__miyuneya/shutdown' && req.method === 'POST') {
         if (!options.launchId || req.headers['x-miyuneya-session'] !== options.launchId) return send(403, { error: 'Недопустимый сеанс' });
         send(200, { stopping: true });
@@ -326,6 +333,17 @@ export async function createApp(root: string, instance: string, preview = false,
         const data = await readJson(req, send, 2000);
         if (data === undefined) return;
         try { return send(200, await chatMaintenance.configureExternal(data?.destination ?? null)); }
+        catch(e){return chatFailure(e);}
+      }
+      if (path === '/api/assistant/archive/maintenance') {
+        if(req.method==='GET'){
+          try { return send(200,await chatMaintenance.maintenanceLog()); }
+          catch(e){return chatFailure(e);}
+        }
+        if(req.method!=='PUT')return send(405,{error:'Метод не поддерживается'});
+        const input=await readJson(req,send,1000);
+        if(input===undefined)return;
+        try{return send(200,chatMaintenance.configureMaintenance(input?.intervalMinutes));}
         catch(e){return chatFailure(e);}
       }
       if (path === '/api/assistant/archive/status') {
