@@ -910,7 +910,11 @@ export async function openMemory(dataDir: string, options: Options) {
     archive.compact(memory,LIMITS);
     await atomicWrite(file,JSON.stringify(memory,null,2));
   } else archive.compact(memory,LIMITS);
-  const cognitiveDaemon = await openCognitiveDaemon(dataDir,()=>memory);
+  // The expensive archive crawler only runs while the user is idle; all
+  // database reads remain in the parent process, never inside the worker.
+  let lastActivity=Date.now();
+  const cognitiveDaemon = await openCognitiveDaemon(dataDir,()=>memory,
+    (offset,limit)=>archive.page(offset,limit),()=>Date.now()-lastActivity>=idleMs);
   // Once, re-scan legacy notes: a global timestamp could previously skip unprocessed batches.
   memory.noteVersions ||= {};
   const key = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
@@ -929,7 +933,6 @@ export async function openMemory(dataDir: string, options: Options) {
   }); writing = next.catch(() => {}); return next; };
   const saveVectors = () => write(vectorFile, () => ({ model: vectorModel, vectors: Object.fromEntries(vectors) }));
   // The app has just been opened, so the user is here: the quiet time before thinking starts counting now.
-  let lastActivity = Date.now();
   let job: { kind: 'reflect' | 'sleep' | 'think'; done: Promise<unknown> } | null = null;
   let retryThinkAt = 0;
   let retrySleepAt = 0;
@@ -1265,7 +1268,7 @@ export async function openMemory(dataDir: string, options: Options) {
       if (removed) { await save(); archive.unlink(from,to); }
       return removed > 0;
     },
-    async reset() { epoch++; await cognitiveDaemon.clear(); memory = { ...emptyMemory(), settings: memory.settings }; vectors = new Map(); retrySleepAt = 0; await save(); archive.clear(); await saveVectors(); },
+    async reset() { epoch++; await cognitiveDaemon.clear(); memory = { ...emptyMemory(), settings: memory.settings }; vectors = new Map(); retrySleepAt = 0; archive.clear(); await save(); await saveVectors(); },
     close: (id: string) => memory.dialogs.some(d => d.id === id) ? run('reflect', () => reflect(id)) : Promise.resolve(0),
     sleepNow: () => run('sleep', sleep),
     archiveSearch: (query: string, limit = 20) => memory.settings.enabled ? archive.search(query,limit) : [],
