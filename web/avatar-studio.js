@@ -182,6 +182,29 @@
     $(id)?.addEventListener('input',e=>{config[key]=e.target.type==='checkbox'?e.target.checked:Number(e.target.value);setFraming();});
   }
   setFraming();
+  // Keep advanced studio effects synchronized with the four simple profiles.
+  window.addEventListener('miyuneya-avatar-effect-preset',event=>{
+    const chosen=event.detail;
+    if(!chosen||typeof chosen!=='object')return;
+    config.gold=!!chosen.gold;config.dragEase=!!chosen.dragEase;
+    setFraming();
+  });
+
+  function previewLibraryImage(src,label,release){
+    const modal=document.createElement('dialog');modal.className='kitsune-preview-dialog';
+    const heading=document.createElement('h3');heading.textContent=label||'Предпросмотр образа';
+    const picture=document.createElement('img');picture.alt=label||'Аватар';picture.src=src;
+    const closeButton=document.createElement('button');closeButton.type='button';closeButton.textContent='Закрыть предпросмотр';
+    const done=()=>{
+      if(modal.open)modal.close();
+      modal.remove();
+      if(release)URL.revokeObjectURL(src);
+    };
+    closeButton.onclick=done;
+    modal.addEventListener('cancel',event=>{event.preventDefault();done();});
+    modal.append(heading,picture,closeButton);
+    root.append(modal);modal.showModal();closeButton.focus();
+  }
 
   const panels=[...root.querySelectorAll('[data-kitsune-panel]')],tabs=[...root.querySelectorAll('[data-kitsune-tab]')];
   function activate(tab){
@@ -234,7 +257,9 @@
     const builtin=document.createElement('button');builtin.type='button';builtin.className='kitsune-library-card';
     const builtImg=document.createElement('img');builtImg.src='/avatars/avatar1.png';builtImg.alt='';
     const builtLabel=document.createElement('span');builtLabel.textContent='Исходная кицунэ';
-    builtin.append(builtImg,builtLabel);
+    const builtinInfo=document.createElement('small');
+    builtinInfo.textContent='Оригинал · 1254 × 1254 px';
+    builtin.append(builtImg,builtLabel,builtinInfo);
     builtin.setAttribute('aria-pressed',String(!lastSelected));
     builtin.onclick=()=>{releaseURLs();lastSelected=null;store(selectedKey,null);image.removeAttribute('srcset');image.src='/avatars/avatar1.png';void renderLibrary();};
     grid.append(builtin);
@@ -251,9 +276,25 @@
         thumbnail.src=thumbURL;
       }
       const title=document.createElement('span');title.textContent=row.name.slice(0,40);
-      b.append(thumbnail,title);b.setAttribute('aria-pressed',String(lastSelected===row.id));
+      const meta=document.createElement('small');
+      meta.textContent=(row.type||row.original?.type||'Изображение').replace('image/','').toUpperCase()+
+        (row.width&&row.height?' · '+row.width+' × '+row.height+' px':'');
+      b.append(thumbnail,title,meta);b.setAttribute('aria-pressed',String(lastSelected===row.id));
       b.onclick=()=>void choose(row.id).catch(e=>notify(e.message,'error'));
       const wrapper=document.createElement('div');wrapper.className='kitsune-library-entry';
+      const view=document.createElement('button');view.type='button';
+      view.className='kitsune-library-view';view.textContent='Просмотреть';
+      view.title='Посмотреть образ крупно, не переключая аватар';
+      view.onclick=async()=>{
+        try{
+          if(serverLibrary)previewLibraryImage(remoteURL(row.id),row.name);
+          else {
+            const saved=await get(row.id);
+            const url=URL.createObjectURL(saved.original);
+            previewLibraryImage(url,row.name,true);
+          }
+        }catch(e){notify('Предпросмотр: '+(e?.message||'не удалось открыть'),'error');}
+      };
       const del=document.createElement('button');del.type='button';del.className='kitsune-library-delete';
       del.textContent='Удалить';del.setAttribute('aria-label','Удалить образ '+row.name.slice(0,40));
       del.onclick=async()=>{
@@ -266,7 +307,7 @@
           await renderLibrary();notify('Образ удалён из библиотеки.');
         }catch(e){notify(e.message,'error');}
       };
-      wrapper.append(b,del);grid.append(wrapper);
+      wrapper.append(b,view,del);grid.append(wrapper);
     }
   }
   async function add(prepared){
