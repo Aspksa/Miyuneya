@@ -137,7 +137,22 @@
   const archiveToggle=document.createElement('button');archiveToggle.type='button';archiveToggle.textContent='Архив';
   const historyList=document.createElement('div');historyList.className='kitsune-history-list';
   const moreChats=document.createElement('button');moreChats.type='button';moreChats.textContent='Показать ещё';
-  historyPanel.append(searchHistory,newButton,archiveToggle,historyList,moreChats);
+  const searchMode=document.createElement('select');searchMode.className='kitsune-search-mode';
+  for(const [value,label] of [['morphology','Словоформы'],['exact','Точные слова'],['phrase','Точная фраза']]){
+    const option=document.createElement('option');option.value=value;option.textContent=label;
+    searchMode.append(option);
+  }
+  const searchSort=document.createElement('select');searchSort.className='kitsune-search-sort';
+  for(const [value,label] of [['relevance','По совпадению'],['date','По дате']]){
+    const option=document.createElement('option');option.value=value;option.textContent=label;
+    searchSort.append(option);
+  }
+  const searchTypos=document.createElement('label');searchTypos.className='kitsune-search-typos';
+  const searchTyposInput=document.createElement('input');searchTyposInput.type='checkbox';
+  searchTyposInput.checked=true;searchTypos.append(searchTyposInput,' Учитывать опечатки');
+  const searchOptions=document.createElement('div');searchOptions.className='kitsune-search-options';
+  searchOptions.append(searchMode,searchSort,searchTypos);
+  historyPanel.append(searchHistory,searchOptions,newButton,archiveToggle,historyList,moreChats);
   chatTools.insertBefore(historyButton,clearChat);
   chat.querySelector('.kitsune-chat-header').after(historyPanel);
   const moreMessages=document.createElement('button');moreMessages.type='button';
@@ -159,7 +174,8 @@
   async function fetchConversationList(){
     const ticket=++listRequest;
     const query=new URLSearchParams({offset:'0',limit:'60',q:searchHistory.value,
-      archived:showArchived?'1':'0'});
+      archived:showArchived?'1':'0',mode:searchMode.value,sort:searchSort.value,
+      typos:searchTyposInput.checked?'1':'0'});
     const data=await requestArchive(base+'?'+query);
     if(ticket!==listRequest)return;
     chatState.conversations=data.conversations;
@@ -169,7 +185,8 @@
   async function loadMoreConversations(){
     if(chatState.conversations.length>=chatState.total)return;
     const query=new URLSearchParams({offset:String(chatState.conversations.length),limit:'60',
-      q:searchHistory.value,archived:showArchived?'1':'0'});
+      q:searchHistory.value,archived:showArchived?'1':'0',
+      mode:searchMode.value,sort:searchSort.value,typos:searchTyposInput.checked?'1':'0'});
     const data=await requestArchive(base+'?'+query);
     chatState.conversations.push(...data.conversations);
     chatState.total=data.total;renderConversationList();
@@ -207,7 +224,12 @@
           setStatus(showArchived?'Разговор восстановлен.':'Разговор сохранён в архиве.');
         }catch(e){setStatus(e.message);}
       };
-      wrapper.append(select,rename,archive);historyList.append(wrapper);
+      wrapper.append(select,rename,archive);
+      if(row.matchSnippet && searchHistory.value.trim()){
+        const snippet=document.createElement('div');snippet.className='kitsune-history-snippet';
+        snippet.textContent=row.matchSnippet;wrapper.append(snippet);
+      }
+      historyList.append(wrapper);
     }
     moreChats.hidden=chatState.conversations.length>=chatState.total;
   }
@@ -222,6 +244,9 @@
     searchTimer=setTimeout(()=>void fetchConversationList().catch(e=>setStatus(e.message)),250);
   };
   moreChats.onclick=()=>void loadMoreConversations().catch(e=>setStatus(e.message));
+  for(const control of [searchMode,searchSort,searchTyposInput]){
+    control.addEventListener('change',()=>void fetchConversationList().catch(e=>setStatus(e.message)));
+  }
   archiveToggle.onclick=()=>{
     showArchived=!showArchived;
     archiveToggle.textContent=showArchived?'Обычные разговоры':'Архив';
