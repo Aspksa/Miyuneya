@@ -44,7 +44,13 @@ export async function openGithubUpdater(root:string,fetcher:typeof fetch=fetch){
   await mkdir(area,{recursive:true});
   const currentFile=join(area,'current.json');
   const stateFile=join(area,'settings.json');
-  const pkg=await readJSON(join(root,'package.json'));
+  // Embedded version keeps partial/offline fixtures and damaged package metadata
+  // from preventing the main app from opening. The real installation records
+  // confirmed releases separately in .runtime/updates/current.json.
+  const pkg=await readJSON(join(root,'package.json')).catch(e=>{
+    if(e.code==='ENOENT')return {version:'0.6.0'};
+    throw e;
+  });
   ensureVersion(pkg.version);
   const saved=await readJSON(stateFile).catch(e=>{if(e.code==='ENOENT'||e instanceof SyntaxError)return {};throw e;});
   let autoCheck=saved?.autoCheck===true,autoDownload=saved?.autoDownload===true;
