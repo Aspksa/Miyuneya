@@ -95,7 +95,7 @@ test('Autonomous worker asks at most one distinct question, learns confirmed ans
   t.after(async()=>{await engine?.shutdown();await removeTemp(root);});
   const question=await until(()=>engine.view().questions.find(q=>q.cognitiveKey));
   assert.ok(question.facts.includes(a.id)&&question.facts.includes(b.id));
-  assert.equal(engine.view().cognitiveAutonomy.curiosity.open,1);
+  await until(()=>engine.view().cognitiveAutonomy.curiosity?.open===1);
   const existing=engine.view().items.filter(x=>x.id===a.id||x.id===b.id).map(x=>x.text);
   assert.equal(await engine.answer(question.id,'Нет, это разные ситуации'),true);
   assert.equal(engine.view().cognitiveAutonomy.curiosity.answered,1);
