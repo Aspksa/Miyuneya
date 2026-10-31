@@ -1,4 +1,5 @@
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, backup } from 'node:sqlite';
+import { acquireDatabaseWriter, ensureSpace } from './chat-db-safety.ts';
 import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { mkdir, stat } from 'node:fs/promises';
@@ -7,7 +8,7 @@ import { createReadStream } from 'node:fs';
 import { openChatArchive as openLegacyArchive } from './chat-archive.ts';
 
 export type ChatMessage={id:string;role:'user'|'assistant';content:string;createdAt:string;version:number;complete:boolean;parentMessageId?:string|null};
-export type ChatQuery={query?:string;offset?:number;limit?:number;archived?:boolean};
+export type ChatQuery={query?:string;offset?:number;limit?:number;archived?:boolean;mode?:'morphology'|'exact'|'phrase';typos?:boolean;sort?:'relevance'|'date'};
 export type ChatMeta={id:string;title:string;createdAt:string;updatedAt:string;messageCount:number;archived:boolean;parentId?:string;forkMessageId?:string};
 type Row=Record<string,any>;
 const idOK=(x:unknown):x is string=>typeof x==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(x);
@@ -37,10 +38,23 @@ export async function openSqliteChatArchive(dataDir:string){
     if((e as NodeJS.ErrnoException).code==='ENOENT')return 0;
     throw e;
   });
-  const db=new DatabaseSync(path,{timeout:5000});
+  const releaseLock=await acquireDatabaseWriter(path);
+  let db:DatabaseSync;
+  try{db=new DatabaseSync(path,{timeout:5000});}
+  catch(e){await releaseLock();throw e;}
+  try{
   const timings=new Map<string,{count:number;sum:number;max:number}>();
   const warnings:string[]=[];
   let readOnly=false,closed=false;
+  let busyMs=5000;
+  const pageCache=new Map<string,{size:number;result:ReturnType<typeof makePage>}>();
+  let cachedBytes=0;
+  function makePage(c:Row,records:Row[],start:number,count:number){
+    return {conversation:formatConversation(c),messages:records.map(formatMessage),
+      total:count,nextBefore:start?start:null};
+  }
+  const clearPageCache=()=>{pageCache.clear();cachedBytes=0;};
+
   const timed=<T>(key:string,run:()=>T):T=>{
     const start=performance.now();
     try{return run();}
@@ -49,17 +63,36 @@ export async function openSqliteChatArchive(dataDir:string){
   };
   const write=<T>(key:string,run:()=>T):T=>{
     if(readOnly)throw error('Хранилище повреждено. Режим только чтения: запись запрещена.',503);
-    return timed(key,()=>{db.exec('BEGIN IMMEDIATE');try{const value=run();db.exec('COMMIT');return value;}
-      catch(e){db.exec('ROLLBACK');throw e;}});
+    return timed(key,()=>{
+      db.exec('BEGIN IMMEDIATE');
+      try{
+        const value=run();db.exec('COMMIT');
+        if(['save','create','modify'].includes(key))clearPageCache();
+        return value;
+      }catch(e){
+        try{db.exec('ROLLBACK');}catch{}
+        const message=(e as Error).message||'';
+        if(/SQLITE_BUSY|database is locked/i.test(message)){
+          busyMs=Math.min(12000,busyMs+1000);
+          db.exec('PRAGMA busy_timeout='+busyMs);
+          warnings.push('Блокировка SQLite: тайм-аут увеличен до '+busyMs+' мс.');
+        }
+        if(/SQLITE_FULL|disk I\/O|database disk image is malformed/i.test(message))
+          warnings.push('Ошибка диска: запись не подтверждена.');
+        throw e;
+      }
+    });
   };
   const schema=[
     'CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);',
     'CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,title TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0,message_count INTEGER NOT NULL DEFAULT 0,parent_id TEXT REFERENCES conversations(id),fork_message_id TEXT,inherited_count INTEGER NOT NULL DEFAULT 0);',
     'CREATE INDEX IF NOT EXISTS conversations_updated ON conversations(archived,updated_at DESC);',
+    'CREATE INDEX IF NOT EXISTS conversations_parent ON conversations(parent_id,inherited_count);',
     'CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id),sequence INTEGER NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL,version INTEGER NOT NULL,complete INTEGER NOT NULL,parent_message_id TEXT,UNIQUE(conversation_id,sequence));',
     'CREATE INDEX IF NOT EXISTS messages_paging ON messages(conversation_id,sequence DESC);',
     'CREATE INDEX IF NOT EXISTS messages_created ON messages(created_at);',
     'CREATE INDEX IF NOT EXISTS messages_parent ON messages(parent_message_id);',
+    'CREATE INDEX IF NOT EXISTS messages_conversation_created ON messages(conversation_id,created_at DESC,id);',
     "CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(content,content='messages',content_rowid='rowid',tokenize='unicode61');",
     "CREATE TRIGGER IF NOT EXISTS fts_ins AFTER INSERT ON messages BEGIN INSERT INTO message_fts(rowid,content) VALUES(new.rowid,new.content); END;",
     "CREATE TRIGGER IF NOT EXISTS fts_del AFTER DELETE ON messages BEGIN INSERT INTO message_fts(message_fts,rowid,content) VALUES('delete',old.rowid,old.content); END;",
