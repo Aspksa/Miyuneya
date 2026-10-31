@@ -70,6 +70,21 @@ test('Invalid signatures, missing releases, path injection and unsupported downg
   assert.equal(allowed.test('scripts/start.mjs'),false);
   assert.equal(allowed.test('data/chat.sqlite'),false);
 });
+test('GitHub-provided asset digest is checked and corrupt optional preferences never prevent startup',async t=>{
+  const root=await fixture(t);
+  const preferences=join(root,'.runtime','updates','settings.json');
+  await mkdir(join(root,'.runtime','updates'),{recursive:true});
+  await writeFile(preferences,'{ broken settings JSON');
+  const corrupted=mockRelease('0.6.1',{'web/style.css':'/* authenticated */'},{
+    assets:[{name:'miyuneya-update.json',size:500,digest:'sha256:'+'0'.repeat(64)}]
+  });
+  const manager=await openGithubUpdater(root,corrupted.get);
+  assert.equal((await manager.view()).autoCheck,false);
+  await manager.check();
+  await assert.rejects(manager.stage(),/SHA-256 релиза GitHub не совпадает/);
+  assert.equal((await manager.view()).pending,null);
+});
+
 test('Check preferences persist; automatic staging occurs only with explicit opt-in',async t=>{
   const root=await fixture(t);
   const mock=mockRelease('0.6.1',{'web/style.css':'/* staged */'});
