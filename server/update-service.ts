@@ -119,7 +119,7 @@ export async function openGithubUpdater(root:string,fetcher:typeof fetch=fetch){
       for(const file of bundle.files){
         if(!file||typeof file.path!=='string'||!allowed.test(file.path)||
           seen.has(file.path)||typeof file.sha256!=='string'||!/^[a-f0-9]{64}$/.test(file.sha256)||
-          typeof file.data!=='string'||file.data.length>LIMIT||!^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.data))
+          typeof file.data!=='string'||file.data.length>LIMIT||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.data))
           throw new Error('Недопустимый файл пакета обновления.');
         seen.add(file.path);
         const content=Buffer.from(file.data,'base64');
