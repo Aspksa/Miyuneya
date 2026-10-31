@@ -1,4 +1,5 @@
 import { openWorkflows } from './workflows.ts';
+import { openGithubUpdater } from './update-service.ts';
 import { openPersonalVault } from './personal-vault.ts';
 import { openSqliteChatArchive } from './chat-sqlite.ts';
 import { openChatMaintenance } from './chat-maintenance.ts';
@@ -65,8 +66,13 @@ export function workspaceContext(data: Workspace, now = new Date(), budget = 30_
   return lines.join('\n');
 }
 
-export async function createApp(root: string, instance: string, preview = false, options: { launchId?: string; onShutdown?: () => void; cloudUrl?: string; memoryIdleMs?: number; memoryTickMs?: number; memoryThinkIdleMs?: number } = {}) {
+export async function createApp(root: string, instance: string, preview = false, options: { launchId?: string; onShutdown?: () => void; onUpdateRestart?: () => void; cloudUrl?: string; memoryIdleMs?: number; memoryTickMs?: number; memoryThinkIdleMs?: number } = {}) {
   const dataDir = join(root, 'data');
+  const updates=await openGithubUpdater(root);
+  const updateTimer=setInterval(()=>void updates.checkScheduled(),3600_000);
+  updateTimer.unref();
+  const initialUpdateCheck=setTimeout(()=>void updates.checkScheduled(),120_000);
+  initialUpdateCheck.unref();
   const dataFile = join(dataDir, 'workspace.json');
   // The cloud.ru key lives apart from workspace.json so it never reaches the browser or a backup.
   const assistantFile = join(dataDir, 'assistant.json');
@@ -217,6 +223,31 @@ export async function createApp(root: string, instance: string, preview = false,
         return;
       }
       if (stopping) return send(503, { error: 'Сервер завершает работу' });
+      if (path === '/api/updates') {
+        if(req.method==='GET')return send(200,await updates.view());
+        if(req.method==='PUT'){
+          const body=await readJson(req,send,1000);
+          if(body===undefined)return;
+          try{return send(200,await updates.configure(body));}
+          catch(e){return send((e as {status?:number}).status||400,{error:(e as Error).message});}
+        }
+        if(req.method!=='POST')return send(405,{error:'Метод не поддерживается'});
+        const body=await readJson(req,send,1000);
+        if(body===undefined)return;
+        try{
+          if(body?.action==='check')return send(200,await updates.check());
+          if(body?.action==='download')return send(200,await updates.stage());
+          if(body?.action==='restart'){
+            const stage=(await updates.view()).pending;
+            if(!stage||stage==='повреждён')return send(409,{error:'Подготовленное обновление отсутствует.'});
+            if(!options.onUpdateRestart)return send(409,{error:'Перезапуск доступен через Miyuneya.bat.'});
+            send(202,{restarting:true});
+            setImmediate(()=>options.onUpdateRestart?.());
+            return;
+          }
+          return send(400,{error:'Неизвестное действие обновления.'});
+        }catch(e){return send((e as {status?:number}).status||502,{error:(e as Error).message});}
+      }
       if (path === '/api/site/appearance') {
         if (req.method === 'GET') return send(200, { appearance: { theme: state.data.settings.theme, ...defaultAppearance(), ...state.data.settings.appearance } });
         if (req.method !== 'PUT') return send(405, { error: 'Метод не поддерживается' });
@@ -858,6 +889,8 @@ export async function createApp(root: string, instance: string, preview = false,
     shutdown() {
       if (!shutdownPromise) shutdownPromise = (async () => {
         stopping = true;
+        clearInterval(updateTimer);
+        clearTimeout(initialUpdateCheck);
         for (const controller of upstream) controller.abort(new Error('shutdown'));
         if (server.listening) await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()));
         await Promise.all([...active]);
