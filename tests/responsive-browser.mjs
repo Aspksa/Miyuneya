@@ -91,7 +91,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   const avatarStyles=await readFile(join(root,'web','avatar.css'),'utf8');
   const avatarScript=await readFile(join(root,'web','avatar.js'),'utf8');
   const studioScript=await readFile(join(root,'web','avatar-studio.js'),'utf8');
-  const avatarBytes=await readFile(join(root,'web','avatars','hayumeri-kitsune.avif'));
+  const avatarBytes=await readFile(join(root,'web','avatars','avatar1.png'));
   assert.ok(source.includes('<link rel="stylesheet" href="/blank.css">'));
   assert.ok(source.includes('<script type="module" src="/blank.js"></script>'));
   // The complete real DOM and real stylesheet are rendered without external network.
@@ -100,7 +100,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
     .replace('<link rel="stylesheet" href="/avatar.css">','<style>'+avatarStyles+'</style>')
     .replace('<script defer src="/avatar.js"></script>','')
     .replace('<script defer src="/avatar-studio.js"></script>','')
-    .replace('src="/avatars/hayumeri-kitsune.avif"','src="data:image/avif;base64,'+avatarBytes.toString('base64')+'"');
+    .replace('src="/avatars/avatar1.png"','src="data:image/png;base64,'+avatarBytes.toString('base64')+'"');
   const frame=await cd.send('Page.getFrameTree');
   await cd.send('Page.setDocumentContent',{frameId:frame.frameTree.frame.id,html:documentHTML});
   async function evalJS(expression) {
@@ -150,7 +150,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
     return {imageNatural:image.naturalWidth,chatHidden:chat.hidden,settingsHidden:document.getElementById('kitsune-settings').hidden,
       bounds:avatar.getBoundingClientRect().toJSON()};
   })()`);
-  assert.equal(kitsuneInitial.imageNatural,160,'Uploaded local AVIF must decode with transparency');
+  assert.equal(kitsuneInitial.imageNatural,1254,'Full-resolution local PNG must decode correctly');
   assert.equal(kitsuneInitial.chatHidden,true);
   assert.equal(kitsuneInitial.settingsHidden,true);
   await evalJS('document.getElementById("kitsune-avatar").click()');
@@ -260,8 +260,9 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
       viewportHeight:innerHeight,scroll:document.documentElement.scrollWidth};
   })()`);
   assert.equal(narrowChat.savedWidth,500,'Viewport shrink must not be persisted as a manual resize');
-  assert.ok(narrowChat.visibleWidth<=300,'Chat must fit in narrow viewport');
+  assert.ok(narrowChat.visibleWidth<=321 && narrowChat.visibleWidth>=318,'Mobile chat must use available width without overflow');
   assert.ok(narrowChat.avatarBottom<=narrowChat.viewportHeight+1,'Avatar must stay on screen');
+  assert.ok(await evalJS('document.getElementById("kitsune-avatar").getBoundingClientRect().width<=72'),'Mobile avatar must shrink and not cover notes');
   assert.ok(narrowChat.scroll<=321,'Chat must not cause page overflow');
   const chatCapture=await cd.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false,fromSurface:true});
   await writeFile(join(designArtifacts,'Avatar-chat-320-DPR2.png'),Buffer.from(chatCapture.data,'base64'));
@@ -270,6 +271,11 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
 
   await evalJS('document.getElementById("kitsune-settings-close").click()');
   assert.equal(await evalJS('document.getElementById("kitsune-settings").hidden'),true);
+  // Disable snapping for the free-drag regression, then test edge snapping separately.
+  await evalJS(`(()=>{
+    const snap=document.getElementById('kitsune-snap');
+    snap.checked=false;snap.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
   // Mouse dragging must move the avatar and NOT activate chat.
   const beforeDrag=await evalJS(`(()=>{
     const r=document.getElementById('kitsune-avatar').getBoundingClientRect();
@@ -302,6 +308,21 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
     return {left:r.left,top:r.top};
   })()`);
   assert.ok(chatAfter.left>=headerBefore.left+15,'Chat moves by dragging the header');
+  await evalJS(`(()=>{
+    const control=document.getElementById('kitsune-chat-mode-quick');
+    control.value='dock';control.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  assert.equal(await evalJS("document.getElementById('kitsune-chat').classList.contains('mode-dock')"),true);
+  await evalJS(`(()=>{
+    const control=document.getElementById('kitsune-chat-mode-quick');
+    control.value='full';control.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  assert.equal(await evalJS("document.getElementById('kitsune-chat').classList.contains('mode-full')"),true);
+  await evalJS(`(()=>{
+    const control=document.getElementById('kitsune-chat-mode-quick');
+    control.value='floating';control.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  assert.equal(await evalJS("document.getElementById('kitsune-chat').classList.contains('mode-floating')"),true);
   await evalJS('document.getElementById("kitsune-chat-close").click()');
   await evalJS('document.getElementById("kitsune-settings-reset").click()');
   const studioReset=await evalJS(`(()=>({
