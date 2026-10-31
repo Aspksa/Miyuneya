@@ -28,6 +28,8 @@ test('Постоянный чат: отдельные файлы, страниц
   assert.equal(page.messages.length,100);
   assert.equal(page.nextBefore,105);
   assert.equal(page.messages[0].content,'Данные 105');
+  assert.equal((await archive.search({query:'Данные 2'})).total,1);
+  assert.equal((await archive.search({query:'Данные 2'})).conversations[0].id,'conversation-1');
   page=await archive.page('conversation-1',page.nextBefore,100);
   assert.equal(page.messages[0].content,'Данные 5');
   assert.equal(page.nextBefore,5);
@@ -138,7 +140,9 @@ test('Старая браузерная JSON-копия импортируетс
     {id:'older',title:'Резервная копия',createdAt:timestamp,updatedAt:timestamp,
       messages:[{role:'user',content:'До копии'}]}
   ]};
-  const result=await archive.importStream(Readable.from([Buffer.from(JSON.stringify(backup))]),'application/json');
+  const bytes=Buffer.from(JSON.stringify(backup));
+  const split=bytes.indexOf(Buffer.from('До копии'))+1;
+  const result=await archive.importStream(Readable.from([bytes.subarray(0,split),bytes.subarray(split)]),'application/json');
   assert.equal(result.imported,1);
   assert.equal(archive.list().total,2);
   assert.equal((await archive.page('newer')).messages[0].content,'После резервной копии');
