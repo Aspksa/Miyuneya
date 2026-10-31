@@ -7,6 +7,7 @@ import { Worker } from 'node:worker_threads';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import type { openSqliteChatArchive } from './chat-sqlite.ts';
 import { ensureSpace } from './chat-db-safety.ts';
+import { openChatMaintenanceJournal } from './chat-maintenance-journal.ts';
 type Store=Awaited<ReturnType<typeof openSqliteChatArchive>>;
 type Row=Record<string,any>;
 const now=()=>new Date().toISOString();
@@ -17,11 +18,18 @@ const fileDigest=async(path:string)=>digest(await readFile(path));
 
 export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}={}) {
   const db=store.db,root=join(dataDir,'chat-backups'),blobRoot=join(store.home,'attachments');
-  let stopped=false,active:Promise<unknown>|null=null;
+  let stopped=false,active:Promise<unknown>|null=null,scheduledJob:Promise<void>|null=null;
+  const journal=openChatMaintenanceJournal(dataDir);
+  const event=(name:Parameters<typeof journal.write>[0],result:Parameters<typeof journal.write>[1],code='none',durationMs=0)=>{
+    void journal.write(name,result,code,durationMs).catch(()=>{});
+  };
+  let nextRunAt:string|null=null;
+  const interval=()=>{const value=Number(store.getSetting('maintenanceIntervalMinutes')||30);
+    return [15,30,60].includes(value)?value:30;};
   let timer:ReturnType<typeof setTimeout>|undefined;
   const warnings=store.warnings;
   const workers=new Set<Worker>();
-  function background(action:'check'|'rebuild'|'optimize'):Promise<Row>{
+  function background(action:'check'|'rebuild'|'optimize'|'checkpoint'|'preflight'):Promise<Row>{
     if(stopped)throw fail('Архив закрывается.',503);
     return new Promise((resolve,reject)=>{
       const worker=new Worker(new URL('../scripts/chat-archive-worker.mjs',import.meta.url),{
@@ -39,10 +47,37 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   }
   async function reindex(){
     if(store.isImporting())throw fail('Импорт чата ещё выполняется.',423);
+    const started=performance.now();
     const result=await background('rebuild');
-    if(!result.ok)throw fail(result.error||'Не удалось восстановить FTS5.',503);
+    event('search-rebuild',result.ok?'ok':'failed',result.ok?'none':'fts-error',performance.now()-started);
+    if(!result.ok)throw fail('Не удалось восстановить FTS5.',503);
     store.setSetting('ftsRebuilt',now());
     return {ok:true};
+  }
+  async function postUpdatePreflight(){
+    if(store.isImporting())return {ok:false,busy:true};
+    const started=performance.now();
+    const result=await background('preflight').catch(()=>({ok:false}));
+    event('update-preflight',result.ok?'ok':'failed',result.ok?'none':'sqlite-preflight',performance.now()-started);
+    return {ok:!!result.ok,schemaVersion:result.schemaVersion??null,
+      ftsHealthy:result.ftsHealthy===true,foreignKeyIssues:result.foreignKeyIssues??null};
+  }
+  function maintenanceConfiguration(){
+    return {intervalMinutes:interval(),nextRunAt,enabled:automatic};
+  }
+  function configureMaintenance(minutes:number){
+    if(!Number.isSafeInteger(minutes)||![15,30,60].includes(minutes))
+      throw fail('Доступные интервалы обслуживания: 15, 30 или 60 минут.');
+    store.write('maintenance-config',()=>store.setSetting('maintenanceIntervalMinutes',String(minutes)));
+    event('schedule','ok','interval-updated');
+    if(automatic){
+      if(timer)clearTimeout(timer);
+      schedule(minutes*60_000);
+    }
+    return maintenanceConfiguration();
+  }
+  async function maintenanceLog(limit=35){
+    return {schedule:maintenanceConfiguration(),events:await journal.recent(limit)};
   }
   async function saveAttachment(conversationId:string,bytes:Buffer,type:string,fileName:string,messageId?:string){
     store.getConversation(conversationId);
@@ -296,7 +331,13 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   function backupNow(){
     if(store.isImporting())return Promise.resolve({ok:false,error:'Дождитесь завершения импорта переписки.'});
     if(active)return Promise.resolve({ok:false,error:'Проверка или резервирование уже выполняется.'});
-    const job=performBackup();
+    const started=performance.now();
+    const job=performBackup().then(result=>{
+      event('backup',result.ok?'ok':'failed',result.ok?'none':'backup-failed',performance.now()-started);
+      if(result.external)event('external-backup',result.external.ok?'ok':'warning',
+        result.external.ok?'none':'external-unavailable');
+      return result;
+    });
     active=job;
     void job.finally(()=>{if(active===job)active=null;});
     return job;
