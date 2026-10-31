@@ -89,7 +89,7 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
   };
   const exited=async()=>{await Promise.all(exiting.splice(0));};
   const schedule=(delay=300)=>{
-    if(closed||!state.pending||!enabled())return;
+    if(closed||!jobs.overview().queued||!enabled())return;
     if(timer)clearTimeout(timer);
     timer=setTimeout(()=>{timer=null;void processQueue();},delay);
     timer.unref?.();
@@ -129,54 +129,100 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     });
   };
   async function processQueue(){
-    if(closed||running||!state.pending||!enabled())return;
-    if(Date.now()<nextRetry){schedule(nextRetry-Date.now());return;}
+    if(closed||running||!enabled())return;
+    const task=jobs.take();
+    if(!task){
+      const next=jobs.overview().next;
+      if(next!==null)schedule(Math.max(300,next-Date.now()));
+      return;
+    }
     running=true;
     const token=generation;
-    const data=pendingSnapshot||snapshot(getMemory());
-    const fingerprint=checksum(data);
-    // The queued memory was superseded while the process was paused.
-    if(state.pending!==fingerprint){state.pending=fingerprint;await save();}
+    const base=snapshot(getMemory());
+    const page=task.kind==='archive' ? getArchivePage?.(state.archiveOffset,48) : null;
+    const data=page ? {...base,archive:page.items.map(x=>({id:x.id,kind:x.kind,text:x.text,
+      status:x.status,until:x.until,category:x.category,source:x.source,
+      evidence:x.evidence?.slice(0,6).map(e=>({source:e.source,quote:e.quote,role:e.role})),
+      links:x.links.slice(0,30)}))} : base;
+    // A stale change job must not replace a newer version of memory.
+    if(task.kind==='changes' && task.fingerprint!==checksum(base)){
+      jobs.finish(task);running=false;enqueue();schedule();return;
+    }
+    state.pending=task.fingerprint;
     try{
-      const result=await send(fingerprint,data);
-      if(token!==generation || !enabled() || state.pending!==fingerprint)return;
-      state={...state,completed:fingerprint,pending:null,runs:state.runs+1,
-        failures:0,lastError:'',result};
+      const result=await send(task.fingerprint,data);
+      if(token!==generation||!enabled())return;
+      jobs.finish(task);
+      jobs.record(task,result.metrics,'shadow');
+      const recent=jobs.history('changes').filter(x=>x.examples>=8);
+      const improved=recent.length>=2 && recent.slice(0,2).every(x=>x.graph>=x.lexical+0.05);
+      result.strategy=improved ? 'graph' : 'lexical';
+      if(task.kind==='archive' && page){
+        state.archiveOffset=page.offset+page.items.length>=page.total?0:page.offset+page.items.length;
+        state.lastArchiveAt=Date.now();
+      }
+      if(task.kind==='evaluation')state.lastEvaluationAt=Date.now();
+      state={...state,completed:task.kind==='changes'?task.fingerprint:state.completed,
+        pending:null,runs:state.runs+1,failures:0,lastError:'',result};
       await save();
     }catch{
       if(token!==generation||closed)return;
+      jobs.retry(task);
       state.failures=Math.min(100,state.failures+1);
-      state.lastError='Не удалось обработать изменения, будет повтор.';
-      nextRetry=Date.now()+Math.min(60_000,1000*2**Math.min(5,state.failures));
+      state.lastError='Фоновый анализ не завершён, повтор будет выполнен с задержкой.';
       await save();
       terminate();
     }finally{
       running=false;
-      if(!closed&&state.pending&&enabled())schedule(Math.max(300,nextRetry-Date.now()));
+      const next=jobs.overview().next;
+      if(next!==null&&!closed&&enabled())schedule(Math.max(300,next-Date.now()));
     }
   }
-  function enqueue() {
+  function enqueue(){
     if(!enabled())return;
     const data=snapshot(getMemory());
-    // No useful pairwise analysis exists for fewer than two facts. Avoid a
-    // child process on every new empty workspace and on lightweight tests.
-    if(data.items.filter(x=>x.kind==='fact').length<2){
+    const enough=data.items.filter(x=>x.kind==='fact').length>=2;
+    if(!enough && !(getArchivePage?.(0,1).total)){
       if(state.pending||state.result)void clear().catch(()=>{});
       return;
     }
     const fingerprint=checksum(data);
-    if(fingerprint===state.completed && !state.pending)return;
-    if(state.pending===fingerprint)return;
+    if(fingerprint===state.completed && !jobs.pending().some(x=>x.kind==='changes'))return;
+    jobs.enqueue('changes',fingerprint,10);
     pendingSnapshot=data;
     state.pending=fingerprint;
     void save().catch(()=>{});
     schedule();
   }
+  function recurring(){
+    if(!enabled()||!isIdle()||running||jobs.overview().queued)return;
+    const now=Date.now();
+    if(getArchivePage&&now-state.lastArchiveAt>10*60_000){
+      const page=getArchivePage(state.archiveOffset,48);
+      if(page.total&&page.items.length){
+        const fingerprint=checksum({kind:'archive',offset:page.offset,ids:page.items.map(x=>x.id),
+          base:checksum(snapshot(getMemory()))});
+        jobs.enqueue('archive',fingerprint,3);
+        state.pending=fingerprint;
+        void save().catch(()=>{});schedule(1000);return;
+      }
+    }
+    if(now-state.lastEvaluationAt>=24*60*60_000){
+      const fingerprint=checksum({kind:'evaluation',base:checksum(snapshot(getMemory())),
+        day:Math.floor(now/(24*60*60_000))});
+      jobs.enqueue('evaluation',fingerprint,1);
+      state.pending=fingerprint;
+      void save().catch(()=>{});schedule(1000);
+    }
+  }
+  const recurringTimer=setInterval(recurring,60_000);
+  recurringTimer.unref();
   async function clear() {
     generation++;
     if(timer){clearTimeout(timer);timer=null;}
     terminate();
     await exited();
+    jobs.clear();
     pendingSnapshot=null;
     state=blank();
     await save();
@@ -187,22 +233,24 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     else enqueue();
   }
   const overview=()=>({
-    state:!enabled()?'paused':state.pending?running?'working':'queued':'idle',
-    pending:!!state.pending,runs:state.runs,failures:state.failures,
+    state:!enabled()?'paused':running?'working':jobs.overview().queued?'queued':'idle',
+    pending:jobs.overview().queued>0,runs:state.runs,failures:state.failures,
     lastError:state.lastError,result:enabled()?state.result:null,
   });
-  const strategy=()=>enabled() && !state.pending ? state.result?.strategy||'lexical' : 'lexical';
+  const strategy=()=>enabled() && !jobs.overview().queued ? state.result?.strategy||'lexical' : 'lexical';
   // On startup a pending fingerprint is replayed by re-snapshotting live data.
-  if(enabled())enqueue();
-  else if(state.pending||state.result)await clear();
+  if(enabled()){enqueue();schedule();}
+  else if(state.pending||state.result||jobs.overview().queued)await clear();
   async function shutdown(){
     closed=true;
     generation++;
     if(timer)clearTimeout(timer);
+    clearInterval(recurringTimer);
     terminate();
     await exited();
-    // A not-yet-completed request remains in the file for replay on next startup.
+    // A not-yet-completed request remains in SQLite for recovery on next startup.
     await writes;
+    jobs.close();
   }
   return {enqueue,clear,modeChanged,overview,strategy,shutdown};
 }
