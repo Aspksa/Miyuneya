@@ -159,6 +159,38 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return null;throw e;}
     return folders[0]?join(root,folders[0]):null;
   }
+  async function retryExternalBackup(){
+    const destination=store.getSetting('externalBackupPath');
+    if(!destination)return {skipped:true};
+    const source=await latestBackup();
+    if(!source)return {skipped:true};
+    const suffix=basename(source),target=join(destination,suffix);
+    const existing=await stat(target).catch(()=>null);
+    if(existing){
+      const verified=await verifyBackup(target);
+      if(verified.ok){
+        store.setSetting('lastExternalBackup',store.getSetting('lastBackup')||now());
+        return {ok:true,directory:target,existing:true};
+      }
+      warnings.push('Предыдущая внешняя копия повреждена: '+suffix+'. Не перезаписана.');
+      return {ok:false,error:'Обнаружена повреждённая внешняя копия, которая не будет перезаписана.'};
+    }
+    const pending=join(destination,'pending-retry-'+randomUUID());
+    try{
+      const localSize=await stat(join(source,'archive.sqlite'));
+      await ensureSpace(destination,localSize.size*2,'восстановление внешней копии');
+      await cp(source,pending,{recursive:true,force:false,errorOnExist:true});
+      const check=await verifyBackup(pending);
+      if(!check.ok)throw Error(check.issues.join('; '));
+      await rename(pending,target);
+      store.setSetting('lastExternalBackup',store.getSetting('lastBackup')||now());
+      return {ok:true,directory:target};
+    }catch(e){
+      await rm(pending,{recursive:true,force:true}).catch(()=>{});
+      warnings.push('Внешняя копия пока не готова: '+(e as Error).message);
+      return {ok:false,error:(e as Error).message};
+    }
+  }
   async function performBackup(){
     const started=performance.now();
     const suffix=now().replace(/[:.]/g,'-')+'-'+randomUUID().slice(0,8);
@@ -312,6 +344,10 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       }
       const last=store.getSetting('lastBackup');
       if(!last||Date.now()-Date.parse(last)>24*3600_000)await backupNow();
+      const external=store.getSetting('externalBackupPath');
+      const recent=store.getSetting('lastExternalBackup');
+      if(external&&(!recent||Date.parse(recent)<Date.parse(store.getSetting('lastBackup')||now())))
+        await retryExternalBackup();
     }catch(e){warnings.push('Проверка архивов не завершилась: '+(e as Error).message);}
   }
   function schedule(delay:number){
@@ -322,7 +358,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   if(automatic)schedule(12000);
   return {
     saveAttachment,listAttachments,attachment,backupNow,verifyBackup,latestBackup,check,statistics,
-    reindex,configureExternal,externalConfiguration,inspectAttachments,
+    reindex,configureExternal,externalConfiguration,inspectAttachments,retryExternalBackup,
     shutdown:async()=>{stopped=true;if(timer)clearTimeout(timer);
       await Promise.allSettled([...workers].map(worker=>worker.terminate()));
       if(active)await active;}
