@@ -537,3 +537,14 @@
 @media (prefers-reduced-motion: reduce) {
  .kitsune-target-message { scroll-behavior:auto; transition:none; }
 }
+
+/* Bounded operations journal and schedule inside existing chat settings. */
+.kitsune-maintenance-settings { display:flex; gap:7px; flex-wrap:wrap; align-items:center;
+  padding:8px 0 0; border-top:1px solid rgba(120,120,140,.2); }
+.kitsune-maintenance-settings label { display:flex; gap:6px; flex-wrap:wrap; align-items:center; font-size:.86em; }
+.kitsune-maintenance-settings select { min-width:85px; color:inherit; background:transparent;
+  border:1px solid rgba(125,125,145,.36); border-radius:6px; padding:4px; }
+.kitsune-maintenance-events { width:100%; max-height:175px; overflow:auto;
+  padding:5px 8px; font-size:.76em; line-height:1.35; border-radius:8px;
+  background:rgba(110,110,135,.07); }
+.kitsune-maintenance-events p { margin:4px 0; overflow-wrap:anywhere; }
