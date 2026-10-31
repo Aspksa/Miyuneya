@@ -498,3 +498,19 @@
 .kitsune-load-older[hidden], .kitsune-chat.mini .kitsune-load-older { display: none !important; }
 .kitsune-history-panel > button { width: 100%; min-height: 32px; }
 .kitsune-history-panel > button[hidden] { display: none !important; }
+
+/* Local durable chat controls; no new page or main navigation changes. */
+.kitsune-fork-message { display:block; margin:7px 0 0 auto; padding:3px 8px; border:1px solid var(--line);
+  border-radius:8px; background:transparent; color:var(--secondary); font:inherit; font-size:.73em; cursor:pointer; }
+.kitsune-fork-message:hover { background:var(--accent-wash); color:var(--text); }
+.kitsune-archive-tools { display:flex; flex-wrap:wrap; gap:7px; align-items:center;
+  margin-block:11px; padding:11px; border:1px solid var(--line); border-radius:12px; }
+.kitsune-archive-tools strong { flex-basis:100%; font-size:.91em; color:var(--text); }
+.kitsune-archive-tools p { flex-basis:100%; margin:0; font-size:.79em; line-height:1.5; overflow-wrap:anywhere; }
+.kitsune-archive-tools button { padding:6px 9px; min-height:30px; border:1px solid var(--line);
+  border-radius:8px; background:var(--icon-hover); color:var(--text); cursor:pointer; font:inherit; font-size:.78em; }
+.kitsune-archive-tools label { font-size:.83em; color:var(--text); cursor:pointer; }
+.kitsune-archive-tools input[type=file] { display:block; width:100%; max-width:260px; padding:6px 0; font-size:.85em; }
+.kitsune-attachments-list { width:100%; display:grid; gap:6px; font-size:.8em; overflow-wrap:anywhere; }
+.kitsune-attachments-list a { color:var(--text); text-decoration:underline; }
+.kitsune-chat.mini .kitsune-fork-message { display:none; }
