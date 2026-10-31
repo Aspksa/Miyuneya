@@ -7,6 +7,7 @@
   if (!avatar || !chat || !settings) return;
   const form = document.getElementById('kitsune-chat-form');
   const input = document.getElementById('kitsune-message');
+  const desktopMessagePlaceholder=input?.placeholder||'Напишите сообщение…';
   const log = document.getElementById('kitsune-log');
   const chatHeader = document.getElementById('kitsune-chat-header');
   const minimizeButton = document.getElementById('kitsune-minimize');
@@ -40,9 +41,11 @@
   const avatarSizeValue = document.getElementById('kitsune-size-output');
   const opacityValue = document.getElementById('kitsune-opacity-output');
 
-  const defaults = { size: 180, opacity: 100, glow: true, animations: true, font: 15, width: 410, height: 550 };
+  const defaults = { size: 180, opacity: 100, glow: true, animations: true, font: 15, width: 410, height: 550, snap: true, quietMode: false, chatMode: 'floating' };
   const settingsKey = 'miyuneya.kitsune.settings.v1';
   const avatarKey = 'miyuneya.kitsune.position.v1';
+  const positionKey = ()=>'miyuneya.kitsune.position.'+(window.innerWidth <= 700?'mobile':'desktop')+'.v2';
+  const chatPositionKey = ()=>'miyuneya.kitsune.chat-position.'+(window.innerWidth <= 700?'mobile':'desktop')+'.v2';
   const chatKey = 'miyuneya.kitsune.chat-position.v1';
   const historyKey = 'miyuneya.kitsune.history.v1';
   const customImageKey = 'miyuneya.kitsune.custom-image.v1';
@@ -63,14 +66,19 @@
     if(Number.isInteger(storedSettings.opacity) && storedSettings.opacity>=50 && storedSettings.opacity<=100)config.opacity=storedSettings.opacity;
     if(typeof storedSettings.glow==='boolean')config.glow=storedSettings.glow;
     if(typeof storedSettings.animations==='boolean')config.animations=storedSettings.animations;
+    if(typeof storedSettings.snap==='boolean')config.snap=storedSettings.snap;
+    if(typeof storedSettings.quietMode==='boolean')config.quietMode=storedSettings.quietMode;
+    if(['floating','dock','full'].includes(storedSettings.chatMode))config.chatMode=storedSettings.chatMode;
     if(Number.isInteger(storedSettings.font)&&storedSettings.font>=13&&storedSettings.font<=20)config.font=storedSettings.font;
     if(Number.isInteger(storedSettings.width)&&storedSettings.width>=320&&storedSettings.width<=800)config.width=storedSettings.width;
     if(Number.isInteger(storedSettings.height)&&storedSettings.height>=350&&storedSettings.height<=900)config.height=storedSettings.height;
   }
 
-  const savedAvatar=read(avatarKey,null),savedChat=read(chatKey,null);
+  const savedAvatar=read(positionKey(),window.innerWidth>700?read(avatarKey,null):null);
+  const savedChat=read(chatPositionKey(),window.innerWidth>700?read(chatKey,null):null);
   let avatarPos=validPosition(savedAvatar)?savedAvatar:null;
   let chatPos=validPosition(savedChat)?savedChat:null;
+  let positionScreen=window.innerWidth<=700?'mobile':'desktop';
   let suppressClick=false, stream=null, settingsReturnFocus=null;
   // The old browser copy is kept untouched as an emergency migration source.
   const legacyHistory=read(historyKey,[]);
@@ -382,9 +390,149 @@
       ['width',320,800],['height',350,900]]){
       if(Number.isInteger(candidate[key])&&candidate[key]>=min&&candidate[key]<=max)config[key]=candidate[key];
     }
-    for(const key of ['glow','animations'])if(typeof candidate[key]==='boolean')config[key]=candidate[key];
+    for(const key of ['glow','animations','snap','quietMode'])if(typeof candidate[key]==='boolean')config[key]=candidate[key];
+    if(['floating','dock','full'].includes(candidate.chatMode))config.chatMode=candidate.chatMode;
     applySettings();
   }).catch(()=>{});
+
+  // Basic controls first; additional geometry is kept behind one disclosure.
+  const avatarPanel=settings.querySelector('[data-kitsune-panel="avatar"]');
+  const chatPanelSettings=settings.querySelector('[data-kitsune-panel="chat"]');
+  const effectsPanel=settings.querySelector('[data-kitsune-panel="effects"]');
+  const controlRow=(label,node)=>{
+    const wrap=document.createElement('label');
+    wrap.className='kitsune-control kitsune-new-control';
+    const title=document.createElement('span');title.textContent=label;
+    wrap.append(title,node);return wrap;
+  };
+  const sizes=document.createElement('select');sizes.id='kitsune-size-preset';
+  sizes.setAttribute('aria-label','Готовый размер аватара');
+  for(const [value,name] of [[100,'Компактный · 100 px'],[180,'Обычный · 180 px'],[260,'Крупный · 260 px']]){
+    const option=document.createElement('option');option.value=String(value);option.textContent=name;sizes.append(option);
+  }
+  const sizeChoice=controlRow('Размер аватара на компьютере',sizes);
+  const automaticHint=document.createElement('p');automaticHint.className='kitsune-help';
+  automaticHint.textContent='На телефоне аватар автоматически уменьшается до 56–72 px. Размер компьютера сохраняется отдельно.';
+  const snap=document.createElement('input');snap.type='checkbox';snap.id='kitsune-snap';
+  const snapLabel=document.createElement('label');snapLabel.className='kitsune-check';
+  snapLabel.append(snap,' Притягивать аватар к ближайшему краю после перемещения');
+  const quiet=document.createElement('input');quiet.type='checkbox';quiet.id='kitsune-quiet';
+  const quietLabel=document.createElement('label');quietLabel.className='kitsune-check';
+  quietLabel.append(quiet,' Не мешать: уменьшить внимание к аватару при работе');
+  const inlinePreview=document.createElement('div');inlinePreview.className='kitsune-live-preview';
+  inlinePreview.setAttribute('aria-label','Живой предпросмотр текущего аватара');
+  const previewImage=document.createElement('img');previewImage.alt='Предпросмотр Миюнэи';
+  const previewNote=document.createElement('p');previewNote.textContent='Предпросмотр изменяется сразу. Изменения сохраняются локально.';
+  inlinePreview.append(previewImage,previewNote);
+  const advancedAvatar=document.createElement('details');advancedAvatar.className='kitsune-advanced';
+  const advancedTitle=document.createElement('summary');advancedTitle.textContent='Дополнительно · кадрирование и тонкая настройка';
+  advancedAvatar.append(advancedTitle);
+  for(const id of ['kitsune-avatar-size','kitsune-framing','kitsune-vertical','kitsune-auto-trim']){
+    const node=document.getElementById(id)?.closest('label');
+    if(node)advancedAvatar.append(node);
+  }
+  const diagnostic=document.getElementById('kitsune-image-diagnostic');
+  if(diagnostic)advancedAvatar.append(diagnostic);
+  const avatarTitle=avatarPanel?.querySelector('legend');
+  if(avatarTitle)avatarTitle.after(inlinePreview,sizeChoice,automaticHint,snapLabel,quietLabel);
+  avatarPanel?.append(advancedAvatar);
+  const chatModeSelect=document.createElement('select');chatModeSelect.id='kitsune-chat-mode';
+  chatModeSelect.setAttribute('aria-label','Режим размещения чата');
+  const headerModeSelect=document.createElement('select');headerModeSelect.id='kitsune-chat-mode-quick';
+  headerModeSelect.setAttribute('aria-label','Быстро переключить режим чата');
+  for(const [id,text] of [['floating','Плавающий'],['dock','Справа'],['full','На весь экран']]){
+    for(const control of [chatModeSelect,headerModeSelect]){
+      const option=document.createElement('option');option.value=id;option.textContent=text;control.append(option);
+    }
+  }
+  headerModeSelect.className='kitsune-chat-mode-quick';
+  chatTools.insertBefore(headerModeSelect,openSettings);
+  const advancedChat=document.createElement('details');advancedChat.className='kitsune-advanced';
+  const chatAdvancedTitle=document.createElement('summary');chatAdvancedTitle.textContent='Дополнительно · размеры окна и шрифт';
+  advancedChat.append(chatAdvancedTitle);
+  for(const id of ['kitsune-chat-width','kitsune-chat-height','kitsune-chat-font']){
+    const node=document.getElementById(id)?.closest('label');
+    if(node)advancedChat.append(node);
+  }
+  const chatLegend=chatPanelSettings?.querySelector('legend');
+  if(chatLegend){
+    chatLegend.after(controlRow('Режим чата',chatModeSelect));
+    chatPanelSettings.append(advancedChat);
+    const cloudLink=document.createElement('a');cloudLink.href='/?settings=cloud';
+    cloudLink.className='kitsune-cloud-settings-link';
+    cloudLink.textContent='Настроить Cloud.ru и модель в настройках проекта';
+    const explain=document.createElement('p');explain.className='kitsune-help';
+    explain.textContent='API-ключ и выбор модели находятся только в настройках проекта. В чате используется сохранённое подключение.';
+    chatPanelSettings.append(cloudLink,explain);
+  }
+  const presetSelect=document.createElement('select');presetSelect.id='kitsune-effect-preset';
+  presetSelect.setAttribute('aria-label','Готовый профиль эффектов');
+  for(const [id,label] of [
+    ['off','Без эффектов'],['gentle','Нежный'],['gold','Золотое сияние'],['alive','Живой']
+  ]){const option=document.createElement('option');option.value=id;option.textContent=label;presetSelect.append(option);}
+  const presetRow=controlRow('Готовые эффекты',presetSelect);
+  effectsPanel?.querySelector('legend')?.after(presetRow);
+  function persistConfig(){
+    userChangedSettings=true;
+    write(settingsKey,config);
+    void savePersistentPreference('avatar',config);
+  }
+  function setChatMode(mode,save=true){
+    if(!['floating','dock','full'].includes(mode))return;
+    config.chatMode=mode;
+    chat.classList.remove('mini');
+    headerModeSelect.value=mode;chatModeSelect.value=mode;
+    applySettings();
+    if(save)persistConfig();
+  }
+  headerModeSelect.onchange=()=>setChatMode(headerModeSelect.value);
+  chatModeSelect.onchange=()=>setChatMode(chatModeSelect.value);
+  function usePreset(mode){
+    const settingsByPreset={
+      off:{glow:false,animations:false,gold:false,dragEase:false},
+      gentle:{glow:false,animations:true,gold:false,dragEase:true},
+      gold:{glow:true,animations:false,gold:true,dragEase:false},
+      alive:{glow:true,animations:true,gold:true,dragEase:true}
+    };
+    const selected=settingsByPreset[mode];if(!selected)return;
+    config.glow=selected.glow;config.animations=selected.animations;
+    applySettings();persistConfig();
+    window.dispatchEvent(new CustomEvent('miyuneya-avatar-effect-preset',{detail:selected}));
+  }
+  presetSelect.addEventListener('change',()=>usePreset(presetSelect.value));
+  sizes.onchange=()=>{config.size=Number(sizes.value);applySettings();persistConfig();};
+  snap.onchange=()=>{config.snap=snap.checked;applySettings();persistConfig();};
+  quiet.onchange=()=>{config.quietMode=quiet.checked;applySettings();persistConfig();};
+  function updatePreview(){
+    previewImage.src=image.currentSrc||image.src;
+    previewImage.style.opacity=String(config.opacity/100);
+    previewImage.classList.toggle('preview-glow',config.glow);
+    previewImage.classList.toggle('preview-quiet',config.quietMode);
+    const custom=sizes.querySelector('option[data-custom]');
+    if(custom)custom.remove();
+    if(![100,180,260].includes(config.size)){
+      const option=document.createElement('option');
+      option.value=String(config.size);
+      option.dataset.custom='true';
+      option.textContent='Своя настройка · '+config.size+' px';
+      sizes.append(option);
+    }
+    sizes.value=String(config.size);
+    snap.checked=config.snap;quiet.checked=config.quietMode;
+    presetSelect.value=config.glow?(config.animations?'alive':'gold'):(config.animations?'gentle':'off');
+    headerModeSelect.value=config.chatMode;chatModeSelect.value=config.chatMode;
+  }
+  image.addEventListener('load',updatePreview);
+  if(window.MutationObserver)new MutationObserver(updatePreview).observe(image,{attributes:true,attributeFilter:['src','srcset']});
+  // Never suppress normal workbench input; only mute avatar decoration while editing.
+  function adaptQuiet(){
+    const target=document.activeElement;
+    const editing=target&&!(chat.contains(target)||settings.contains(target))&&
+      (target.matches('textarea,[contenteditable="true"]') || target.closest('dialog')?.id==='editor');
+    avatar.classList.toggle('kitsune-quiet-automatic',Boolean(editing));
+  }
+  document.addEventListener('focusin',adaptQuiet);
+  document.addEventListener('focusout',()=>requestAnimationFrame(adaptQuiet));
 
   function setStatus(message=''){status.textContent=message;status.hidden=!message;}
   function preferredMotion(){
@@ -392,11 +540,20 @@
       && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   }
   function applySettings(){
-    avatar.style.setProperty('--kitsune-size',config.size+'px');
+    const mobile=window.innerWidth<=700;
+    const avatarSize=mobile?Math.min(72,Math.max(56,Math.round(config.size*.44))):config.size;
+    avatar.style.setProperty('--kitsune-size',avatarSize+'px');
     avatar.style.setProperty('--kitsune-alpha',String(config.opacity/100));
     avatar.classList.toggle('no-glow',!config.glow);
     avatar.classList.toggle('no-motion',!preferredMotion());
+    avatar.classList.toggle('kitsune-quiet',!!config.quietMode);
+    chat.classList.toggle('mode-floating',config.chatMode==='floating');
+    chat.classList.toggle('mode-dock',config.chatMode==='dock');
+    chat.classList.toggle('mode-full',config.chatMode==='full');
+    chat.dataset.mode=config.chatMode;
+    document.documentElement.dataset.kitsuneChatMode=chat.hidden?'closed':config.chatMode;
     chat.style.setProperty('--kitsune-font',config.font+'px');
+    input.placeholder=mobile?'Напишите сообщение…':desktopMessagePlaceholder;
     chat.style.width='min('+config.width+'px, calc(100vw - 20px))';
     chat.style.height='min('+config.height+'px, calc(100dvh - 24px))';
     sizeInput.value=String(config.size);
@@ -410,11 +567,12 @@
     heightValue.textContent=config.height+' px';
     avatarSizeValue.textContent=config.size+' px';
     opacityValue.textContent=config.opacity+'%';
+    updatePreview();
     placeAvatar();
     placeChat();
   }
   function placeAvatar(){
-    const size=avatar.getBoundingClientRect().width || Math.min(config.size,innerWidth-20,innerHeight-20);
+    const size=avatar.getBoundingClientRect().width || Math.min(innerWidth<=700?72:config.size,innerWidth-20,innerHeight-20);
     const safeW=Math.max(10,innerWidth-size-10),safeH=Math.max(10,innerHeight-size-10);
     if(!avatarPos)avatarPos={x:Math.min(32,safeW),y:safeH};
     avatarPos={x:clamp(avatarPos.x,10,safeW),y:clamp(avatarPos.y,10,safeH)};
@@ -422,13 +580,18 @@
     avatar.style.top=avatarPos.y+'px';
   }
   function placeChat(){
+    if(config.chatMode!=='floating'&&!chat.classList.contains('mini')){
+      chat.style.removeProperty('left');chat.style.removeProperty('top');
+      return;
+    }
     const r=chat.getBoundingClientRect();
     const width=r.width||400,height=r.height||540;
     if(!chatPos){
       const railWidth=Math.min(76,innerWidth*.13);
       const available=Math.max(10,innerWidth-width-railWidth-10);
-      const avatarCenter=(avatarPos?.x||32)+config.size/2;
-      const side=avatarCenter>innerWidth/2?(avatarPos?.x||32)-width-15:(avatarPos?.x||32)+config.size+15;
+      const displaySize=avatar.getBoundingClientRect().width||config.size;
+      const avatarCenter=(avatarPos?.x||32)+displaySize/2;
+      const side=avatarCenter>innerWidth/2?(avatarPos?.x||32)-width-15:(avatarPos?.x||32)+displaySize+15;
       chatPos={x:clamp(side,10,available),
         y:clamp((avatarPos?.y||20)-Math.max(24,height/4),10,Math.max(10,innerHeight-height-10))};
     }
@@ -510,11 +673,13 @@
   function openChat(){
     chat.classList.remove('mini');
     chat.hidden=false;avatar.setAttribute('aria-expanded','true');
+    document.documentElement.dataset.kitsuneChatMode=config.chatMode;
     placeChat();renderChat();input.focus();
   }
   function closeChat(){
     chat.classList.remove('mini');
     chat.hidden=true;avatar.setAttribute('aria-expanded','false');
+    document.documentElement.dataset.kitsuneChatMode='closed';
     avatar.focus({preventScroll:true});
   }
   function openSettingsDialog(){
@@ -527,54 +692,81 @@
     (settingsReturnFocus?.isConnected?settingsReturnFocus:avatar).focus({preventScroll:true});
   }
 
+  function snapAvatar(){
+    if(!config.snap)return;
+    const width=avatar.getBoundingClientRect().width;
+    const left=12,right=Math.max(12,innerWidth-width-12);
+    avatarPos={x:(avatarPos.x+width/2<innerWidth/2?left:right),y:avatarPos.y};
+    placeAvatar();
+  }
+  function saveAvatarPosition(){
+    write(positionKey(),avatarPos);
+    if(positionScreen==='desktop')write(avatarKey,avatarPos); // Legacy fallback for earlier versions.
+  }
   function draggable(target,handle,getPosition,setPosition,onSave){
-    let pointer=null;
+    let pointer=null,holdTimer=null;
+    function cancelHold(){if(holdTimer){clearTimeout(holdTimer);holdTimer=null;}}
     handle.addEventListener('pointerdown',event=>{
-      if(event.button!==0 || (handle!==avatar && event.target.closest('button,input,textarea,select')))return;
-      pointer={id:event.pointerId,x:event.clientX,y:event.clientY,pos:{...getPosition()},moved:false};
+      if(event.button!==0 || (handle===chatHeader && config.chatMode!=='floating') ||
+        (handle!==avatar && event.target.closest('button,input,textarea,select')))return;
+      pointer={id:event.pointerId,x:event.clientX,y:event.clientY,pos:{...getPosition()},moved:false,longPress:false};
       handle.setPointerCapture?.(event.pointerId);
+      if(handle===avatar && event.pointerType==='touch'){
+        holdTimer=setTimeout(()=>{
+          if(!pointer||pointer.moved)return;
+          pointer.longPress=true;
+          suppressClick=true;
+          openSettingsDialog();
+        },620);
+      }
     });
     handle.addEventListener('pointermove',event=>{
-      if(!pointer || event.pointerId!==pointer.id)return;
+      if(!pointer || event.pointerId!==pointer.id || pointer.longPress)return;
       const dx=event.clientX-pointer.x,dy=event.clientY-pointer.y;
-      if(!pointer.moved && Math.hypot(dx,dy)<6)return;
-      pointer.moved=true;
+      if(!pointer.moved && Math.hypot(dx,dy)<7)return;
+      pointer.moved=true;cancelHold();
       setPosition({x:pointer.pos.x+dx,y:pointer.pos.y+dy});
     });
     function end(event){
+      cancelHold();
       if(!pointer||event.pointerId!==pointer.id)return;
-      const moved=pointer.moved;pointer=null;
-      if(handle===avatar) {
-        // Cancelled drags and pointer-capture loss must not eat a later click.
-        suppressClick=moved && event.type==='pointerup';
-        if(suppressClick) setTimeout(()=>{suppressClick=false;},0);
+      const {moved,longPress}=pointer;pointer=null;
+      if(handle===avatar){
+        suppressClick=(moved||longPress) && event.type==='pointerup';
+        if(suppressClick)setTimeout(()=>{suppressClick=false;},150);
+        if(moved)snapAvatar();
       }
       if(moved)onSave();
     }
     handle.addEventListener('pointerup',end);
     handle.addEventListener('pointercancel',end);
+    handle.addEventListener('lostpointercapture',event=>{
+      if(pointer?.id===event.pointerId && !pointer.longPress)cancelHold();
+    });
   }
   applySettings();
-  draggable(avatar,avatar,()=>avatarPos,p=>{avatarPos=p;placeAvatar();},()=>write(avatarKey,avatarPos));
-  draggable(chat,chatHeader,()=>chatPos,p=>{chatPos=p;placeChat();},()=>write(chatKey,chatPos));
+  draggable(avatar,avatar,()=>avatarPos,p=>{avatarPos=p;placeAvatar();},saveAvatarPosition);
+  draggable(chat,chatHeader,()=>chatPos,p=>{chatPos=p;placeChat();},
+    ()=>write(chatPositionKey(),chatPos));
   avatar.addEventListener('click',()=>{
     if(suppressClick){suppressClick=false;return;}
     chat.hidden?openChat():closeChat();
   });
-  avatar.addEventListener('contextmenu',event=>{event.preventDefault();openSettingsDialog();});
+  avatar.addEventListener('contextmenu',event=>{event.preventDefault();if(settings.hidden)openSettingsDialog();});
   avatar.addEventListener('keydown',event=>{
     const delta={ArrowLeft:[-10,0],ArrowRight:[10,0],ArrowUp:[0,-10],ArrowDown:[0,10]}[event.key];
     if(!delta)return;
     event.preventDefault();
     const step=event.shiftKey?4:1;
     avatarPos={x:avatarPos.x+delta[0]*step,y:avatarPos.y+delta[1]*step};
-    placeAvatar();write(avatarKey,avatarPos);
+    placeAvatar();saveAvatarPosition();
   });
   document.getElementById('kitsune-chat-close').addEventListener('click',closeChat);
   openSettings.addEventListener('click',openSettingsDialog);
   minimizeButton?.addEventListener('click',()=>{
     historyPanel.hidden=true;historyButton.setAttribute('aria-expanded','false');
     chat.classList.add('mini');
+    document.documentElement.dataset.kitsuneChatMode='mini';
     const maxX=Math.max(10,innerWidth-180),maxY=Math.max(10,innerHeight-60);
     chatPos={x:clamp((avatarPos?.x||20)+Math.min(config.size,150)+8,10,maxX),
       y:clamp((avatarPos?.y||20)+20,10,maxY)};
@@ -607,7 +799,8 @@
   }
   reset.addEventListener('click',()=>{
     config={...defaults};avatarPos=null;chatPos=null;
-    userChangedSettings=true;applySettings();write(settingsKey,config);void savePersistentPreference('avatar',config);write(avatarKey,avatarPos);write(chatKey,chatPos);
+    userChangedSettings=true;applySettings();write(settingsKey,config);void savePersistentPreference('avatar',config);
+    for(const key of [avatarKey,chatKey,positionKey(),chatPositionKey()])write(key,null);
   });
   // Custom full-resolution images reuse the existing, validated local avatar
   // upload API. The repository's supplied fox illustration remains the fallback.
@@ -658,7 +851,17 @@
     setStatus('Предыдущий разговор сохранён. Открыт новый.');
   });
   stopButton.addEventListener('click',()=>stream?.abort());
-  window.addEventListener('resize',()=>{placeAvatar();placeChat();});
+  window.addEventListener('resize',()=>{
+    const mode=innerWidth<=700?'mobile':'desktop';
+    if(mode!==positionScreen){
+      positionScreen=mode;
+      const saved=read(positionKey(),mode==='desktop'?read(avatarKey,null):null);
+      const savedChat=read(chatPositionKey(),mode==='desktop'?read(chatKey,null):null);
+      avatarPos=validPosition(saved)?saved:null;
+      chatPos=validPosition(savedChat)?savedChat:null;
+      applySettings();
+    }else{applySettings();}
+  });
   // Native CSS resize should survive next reload without snapping back.
   let sizing=false;
   if(window.ResizeObserver){

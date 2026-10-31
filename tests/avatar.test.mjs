@@ -9,16 +9,37 @@ const js = await readFile(new URL('web/avatar.js', root), 'utf8');
 const app = await readFile(new URL('server/app.ts', root), 'utf8');
 const build = await readFile(new URL('scripts/build.mjs', root), 'utf8');
 const portrait = await readFile(new URL('web/avatars/hayumeri-kitsune.avif', root));
+const hires = await readFile(new URL('web/avatars/avatar1.png',root));
 
-test('Uploaded user-supplied kitsune is a bundled AVIF with alpha, not an external URL', () => {
+test('Full-resolution existing kitsune is displayed, legacy AVIF remains available as fallback', () => {
   assert.ok(portrait.length > 1000);
   assert.equal(portrait.toString('ascii', 4, 12), 'ftypavif');
   assert.match(html, /id="kitsune-avatar"/);
-  assert.match(html, /src="\/avatars\/hayumeri-kitsune\.avif"/);
+  assert.equal(hires.readUInt32BE(16),1254);
+  assert.equal(hires.readUInt32BE(20),1254);
+  assert.match(html,/src="\/avatars\/avatar1\.png"/);
+  assert.match(html,/width="1254" height="1254"/);
   assert.match(app, /'\/avatars\/hayumeri-kitsune\.avif': \['avatars\/hayumeri-kitsune\.avif', 'image\/avif'\]/);
   assert.ok(build.includes("'avatars/hayumeri-kitsune.avif'"));
 });
 
+test('New avatar/chat UX offers size, mobile, dock, full, quiet, preset and one Cloud.ru entrypoint',async()=>{
+  const studio=await readFile(new URL('web/avatar-studio.js',root),'utf8');
+  assert.match(js,/kitsune-snap/);
+  assert.match(js,/kitsune-quiet/);
+  assert.match(js,/positionKey\(/);
+  assert.match(js,/pointerType==='touch'/);
+  assert.match(js,/kitsune-live-preview/);
+  assert.match(js,/chatModeSelect/);
+  assert.match(js,/mode-dock/);
+  assert.match(js,/mode-full/);
+  assert.match(js,/\.\/\?settings=cloud|\/?settings=cloud/);
+  assert.match(studio,/previewLibraryImage/);
+  assert.match(studio,/miyuneya-avatar-effect-preset/);
+  assert.match(css,/mode-dock/);
+  assert.match(css,/mode-full/);
+  assert.match(css,/max-width:72px/);
+});
 test('All avatar and chat controls exist, script parses, and modal is centered', () => {
   assert.doesNotThrow(() => new Function(js));
   for (const id of [
