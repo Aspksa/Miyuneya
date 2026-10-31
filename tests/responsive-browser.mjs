@@ -89,6 +89,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   const stylesheet=await readFile(join(root,'web','blank.css'),'utf8');
   const script=await readFile(join(root,'web','blank.js'),'utf8');
   const avatarStyles=await readFile(join(root,'web','avatar.css'),'utf8');
+  const avatarLayoutStyles=await readFile(join(root,'web','avatar-layout.css'),'utf8');
   const sharedStyles=await readFile(join(root,'web','unified-ui.css'),'utf8');
   const experienceStyles=await readFile(join(root,'web','avatar-experience.css'),'utf8');
   const stateScript=await readFile(join(root,'web','avatar-state.js'),'utf8');
@@ -102,6 +103,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   const documentHTML=source.replace('<link rel="stylesheet" href="/blank.css">','<style>'+stylesheet+'</style>')
     .replace('<script type="module" src="/blank.js"></script>','')
     .replace('<link rel="stylesheet" href="/avatar.css">','<style>'+avatarStyles+'</style>')
+    .replace('<link rel="stylesheet" href="/avatar-layout.css">','<style>'+avatarLayoutStyles+'</style>')
     .replace('<link rel="stylesheet" href="/unified-ui.css">','<style>'+sharedStyles+'</style>')
     .replace('<link rel="stylesheet" href="/avatar-experience.css">','<style>'+experienceStyles+'</style>')
     .replace('<script src="/chat-attachments.js" defer></script>','')
