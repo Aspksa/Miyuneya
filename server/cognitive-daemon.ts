@@ -49,7 +49,8 @@ function validResult(x:any):x is Insight {
  */
 export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
   getArchivePage?: (offset:number,limit:number)=>{total:number;offset:number;items:Memory['items']},
-  isIdle:()=>boolean=()=>true) {
+  isIdle:()=>boolean=()=>true,
+  sweepMs=60_000) {
   const file=join(dataDir,'cognitive-daemon.json');
   let state:State=blank();
   try {
@@ -215,7 +216,7 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
       void save().catch(()=>{});schedule(1000);
     }
   }
-  const recurringTimer=setInterval(recurring,60_000);
+  const recurringTimer=setInterval(recurring,Math.max(50,sweepMs));
   recurringTimer.unref();
   async function clear() {
     generation++;
