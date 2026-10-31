@@ -94,6 +94,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   const experienceStyles=await readFile(join(root,'web','avatar-experience.css'),'utf8');
   const stateScript=await readFile(join(root,'web','avatar-state.js'),'utf8');
   const attachmentScript=await readFile(join(root,'web','chat-attachments.js'),'utf8');
+  const formatScript=await readFile(join(root,'web','chat-format.js'),'utf8');
   const avatarScript=await readFile(join(root,'web','avatar.js'),'utf8');
   const studioScript=await readFile(join(root,'web','avatar-studio.js'),'utf8');
   const avatarBytes=await readFile(join(root,'web','avatars','avatar1.png'));
@@ -106,6 +107,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
     .replace('<link rel="stylesheet" href="/avatar-layout.css">','<style>'+avatarLayoutStyles+'</style>')
     .replace('<link rel="stylesheet" href="/unified-ui.css">','<style>'+sharedStyles+'</style>')
     .replace('<link rel="stylesheet" href="/avatar-experience.css">','<style>'+experienceStyles+'</style>')
+    .replace('<script src="/chat-format.js" defer></script>','')
     .replace('<script src="/chat-attachments.js" defer></script>','')
     .replace('<script src="/avatar-state.js" defer></script>','')
     .replace('<script defer src="/avatar.js"></script>','')
@@ -120,6 +122,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   }
   assert.equal(await evalJS('document.readyState'),'complete');
   await evalJS(script);
+  await evalJS(formatScript);
   await evalJS(attachmentScript);
   await evalJS(stateScript);
   await evalJS(avatarScript);
