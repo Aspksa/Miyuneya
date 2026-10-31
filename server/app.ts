@@ -479,6 +479,7 @@ export async function createApp(root: string, instance: string, preview = false,
               if(!res.destroyed)res.write(JSON.stringify({delta:answer})+'\n');
             }
             const exact = exactLines(plan, calcs).length;
+            if(chats && !await chats.record(messages.map((m:ChatMessage)=>({role:m.role,content:m.content})),answer))write({memory:'Не удалось сохранить разговор в архив чатов. Проверьте папку data/chats.'});
             write({ done: true, model, ...(reviewed?{verification:reviewed.status}:{}), ...(hard ? { reasoning: true } : {}), ...(plan ? { planned: true } : {}), ...(exact ? { exact } : {}) });
             // A reminder counts as given only once the answer that carries it has arrived.
             await memory.delivered(recall,answer).catch(() => {});
