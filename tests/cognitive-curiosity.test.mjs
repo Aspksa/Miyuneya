@@ -129,3 +129,20 @@ test('Owner can dismiss a background question without a re-ask loop',async t=>{
   assert.equal(engine.view().questions.filter(q=>q.cognitiveKey).length,0);
   assert.equal(engine.view().items.length,2);
 });
+
+test('Sensitive-mode switch and editing a premise remove outdated autonomous questions',async t=>{
+  const root=await mkdtemp(join(tmpdir(),'Miyuneya curiosity safety '));
+  await mkdir(join(root,'data'));
+  const {m,a}=seed();
+  await writeFile(join(root,'data','memory.json'),JSON.stringify(m));
+  const engine=await openMemory(join(root,'data'),{
+    ask:async()=>'{}',available:()=>false,workspace:()=>null,tickMs:60_000
+  });
+  t.after(async()=>{await engine.shutdown();await removeTemp(root);});
+  await until(()=>engine.view().questions.find(q=>q.cognitiveKey));
+  assert.equal(await engine.edit(a.id,{text:'Водители получают специальные документы по внутреннему регламенту'}),true);
+  assert.equal(engine.view().questions.filter(q=>q.cognitiveKey).length,0);
+  await engine.settings({private:true});
+  assert.equal(engine.view().questions.filter(q=>q.cognitiveKey).length,0);
+  assert.equal(engine.view().cognitiveAutonomy.curiosity,null);
+});
