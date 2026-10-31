@@ -1,4 +1,5 @@
 import { mkdir, readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { atomicWrite } from '../scripts/runtime.mjs';
 
@@ -47,5 +48,30 @@ export async function openChats(dataDir: string) {
     queue=job.then(()=>{},()=>{});
     return job;
   };
-  return {snapshot,replace,shutdown:async()=>{await queue;}};
+  // Legacy avatar chat sends the last 40 turns but has no dialog identifier.
+  // Record completed exchanges locally without relying on browser storage.
+  // Match an overlapping tail to avoid duplicating old turns on every request.
+  const record=async (messages: Message[],answer:string)=>{
+    if(!messages.length || !messages.every(validMessage) || typeof answer!=='string' || !answer.trim())return false;
+    let current=snapshot();
+    const active=current.dialogs.find(d=>d.id===current.activeId);
+    let overlap=0;
+    if(active){
+      for(let n=Math.min(active.messages.length,messages.length);n>0;n--){
+        const tail=active.messages.slice(-n);
+        if(tail.every((m,i)=>m.role===messages[i].role&&m.content===messages[i].content)){overlap=n;break;}
+      }
+    }
+    const now=new Date().toISOString();
+    if(active&&overlap){
+      active.messages=[...active.messages,...messages.slice(overlap),{role:'assistant',content:answer}].slice(-400);
+      active.updatedAt=now;
+    }else{
+      const d:Dialog={id:randomUUID(),title:messages.find(m=>m.role==='user')?.content.slice(0,80).trim()||'Новый разговор',createdAt:now,updatedAt:now,messages:[...messages,{role:'assistant',content:answer}].slice(-400)};
+      if(current.dialogs.length>=60)return false;
+      current.dialogs.unshift(d);current.activeId=d.id;
+    }
+    try{await replace(current);return true;}catch{return false;}
+  };
+  return {snapshot,replace,record,shutdown:async()=>{await queue;}};
 }
