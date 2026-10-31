@@ -301,7 +301,8 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     const lastCheck=store.getSetting('lastCheck');
     try{
       if(!lastCheck||Date.now()-Date.parse(lastCheck)>24*3600_000){
-        await check();
+        const checked=await check();
+        if(!checked.ok)return; // Do not optimize or copy a damaged archive.
         const current=await statistics();
         store.setSetting('growthBaseline',JSON.stringify({
           bytes:current.dbFileBytes,messages:current.messages,at:now()
