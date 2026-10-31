@@ -28,6 +28,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - run: npm run build
       - run: npm test
       - run: npm run check
       - name: Проверка HiDPI в Chromium — 320 px до 5K, скриншоты
