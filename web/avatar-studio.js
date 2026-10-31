@@ -7,12 +7,17 @@
   const storage='miyuneya.kitsune.studio.v1',selectedKey='miyuneya.kitsune.selected.v1';
   const defaults={framing:100,vertical:50,trim:true,gold:true,dragEase:true};
   const read=(key,fallback)=>{try{const s=localStorage.getItem(key);return s?JSON.parse(s):fallback}catch{return fallback}};
-  const store=(key,val)=>{try{localStorage.setItem(key,JSON.stringify(val))}catch{}};
+  let preferencesHydrated=false;
+  const store=(key,val)=>{
+    try{localStorage.setItem(key,JSON.stringify(val))}catch{}
+    if(preferencesHydrated && key===storage)void window.miyuneyaAvatarPreferences?.save('studio',val);
+    if(preferencesHydrated && key===selectedKey)void window.miyuneyaAvatarPreferences?.save('selectedAvatar',val);
+  };
   const value=read(storage,{});
   let config={...defaults};
   for(const k of ['framing','vertical'])if(Number.isFinite(value[k]))config[k]=Math.max(k==='framing'?100:0,Math.min(k==='framing'?180:100,value[k]));
   for(const k of ['trim','gold','dragEase'])if(typeof value[k]==='boolean')config[k]=value[k];
-  let db=null, urls=[],lastSelected=null;
+  let db=null, urls=[],lastSelected=null, serverLibrary=false;
   const thumbnailURLs=new Set();
   function releaseThumbnails(){
     for(const url of thumbnailURLs)URL.revokeObjectURL(url);
@@ -46,10 +51,39 @@
       tx.onabort=()=>reject(tx.error);
     });
   }
-  const all=()=>transaction('readonly',store=>store.getAll());
-  const get=id=>transaction('readonly',store=>store.get(id));
-  const put=row=>transaction('readwrite',store=>store.put(row));
-  const erase=id=>transaction('readwrite',store=>store.delete(id));
+  const localAll=()=>transaction('readonly',store=>store.getAll());
+  const localGet=id=>transaction('readonly',store=>store.get(id));
+  const remoteURL=id=>'/api/assistant/avatars/'+encodeURIComponent(id);
+  async function all(){
+    if(!serverLibrary)return localAll();
+    const response=await fetch('/api/assistant/avatars',{cache:'no-store'});
+    if(!response.ok)throw Error('Не удалось прочитать библиотеку на диске.');
+    return (await response.json()).avatars;
+  }
+  async function get(id){
+    if(!serverLibrary)return localGet(id);
+    const response=await fetch(remoteURL(id),{cache:'no-store'});
+    if(!response.ok)throw Error('Изображение недоступно на диске.');
+    const blob=await response.blob();
+    const composed=await compose(new File([blob],'avatar',{type:blob.type}),false);
+    const row=(await all()).find(x=>x.id===id);
+    return {id,name:row?.name||'Аватар',original:blob,variants:composed.variants,
+      preview:composed.preview,width:composed.width,height:composed.height};
+  }
+  async function put(row){
+    if(!serverLibrary)return transaction('readwrite',store=>store.put(row));
+    const response=await fetch('/api/assistant/avatars',{method:'POST',
+      headers:{'Content-Type':row.original.type,'X-Avatar-Name':encodeURIComponent(row.name),
+        'X-Avatar-Id':row.id},body:row.original});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok)throw Error(result.error||'Не удалось сохранить образ на диске.');
+    return result.avatar.id;
+  }
+  async function erase(id){
+    if(!serverLibrary)return transaction('readwrite',store=>store.delete(id));
+    const response=await fetch(remoteURL(id),{method:'DELETE'});
+    if(!response.ok)throw Error('Не удалось удалить образ из библиотеки.');
+  }
   async function decode(file){
     const url=URL.createObjectURL(file);
     try {
@@ -193,7 +227,7 @@
     await renderLibrary();
   }
   async function renderLibrary(){
-    if(!grid||!db)return;
+    if(!grid||(!db && !serverLibrary))return;
     const rows=await all();
     releaseThumbnails();
     grid.replaceChildren();
@@ -207,12 +241,15 @@
     for(const row of rows.slice(0,20)){
       const b=document.createElement('button');b.type='button';b.className='kitsune-library-card';
       const thumbnail=document.createElement('img');thumbnail.alt='';
-      const thumbURL=URL.createObjectURL(row.preview);
-      thumbnailURLs.add(thumbURL);
-      const releaseThumb=()=>{URL.revokeObjectURL(thumbURL);thumbnailURLs.delete(thumbURL);};
-      thumbnail.onload=releaseThumb;
-      thumbnail.onerror=releaseThumb;
-      thumbnail.src=thumbURL;
+      if(serverLibrary)thumbnail.src=remoteURL(row.id);
+      else {
+        const thumbURL=URL.createObjectURL(row.preview);
+        thumbnailURLs.add(thumbURL);
+        const releaseThumb=()=>{URL.revokeObjectURL(thumbURL);thumbnailURLs.delete(thumbURL);};
+        thumbnail.onload=releaseThumb;
+        thumbnail.onerror=releaseThumb;
+        thumbnail.src=thumbURL;
+      }
       const title=document.createElement('span');title.textContent=row.name.slice(0,40);
       b.append(thumbnail,title);b.setAttribute('aria-pressed',String(lastSelected===row.id));
       b.onclick=()=>void choose(row.id).catch(e=>notify(e.message,'error'));
@@ -248,7 +285,7 @@
   const regularUpload=$('kitsune-image-upload');
   // Capture before the legacy immediate-upload handler: approval is mandatory.
   regularUpload?.addEventListener('change',e=>{
-    if(!db)return; // Built-in server upload remains available when IndexedDB is unavailable.
+    if(!db && !serverLibrary)return; // The legacy upload remains a fallback.
     e.stopImmediatePropagation();
     const file=e.target.files?.[0];e.target.value='';
     if(!file)return;
@@ -265,11 +302,41 @@
   },true);
   async function initialize(){
     try{
-      db=await openDatabase();
-      const selected=read(selectedKey,null);
-      if(typeof selected==='string')await choose(selected);
-      else await renderLibrary();
-    }catch(e){notify('Библиотека недоступна: '+(e?.message||'Проверьте настройки браузера'),'error');}
+      const response=await fetch('/api/assistant/avatars',{cache:'no-store'});
+      serverLibrary=response.ok;
+      try{db=await openDatabase();}catch(e){
+        if(!serverLibrary)throw e;
+      }
+      let prefs={};
+      try{prefs=await window.miyuneyaAvatarPreferences?.load()||{};}catch{}
+      if(prefs.studio && typeof prefs.studio==='object'){
+        for(const key of ['framing','vertical']){
+          const n=prefs.studio[key];
+          if(Number.isFinite(n))config[key]=Math.max(key==='framing'?100:0,Math.min(key==='framing'?180:100,n));
+        }
+        for(const key of ['trim','gold','dragEase'])if(typeof prefs.studio[key]==='boolean')config[key]=prefs.studio[key];
+      }
+      setFraming();
+      // Migration keeps IndexedDB originals until every upload is confirmed.
+      if(serverLibrary && db){
+        const serverRows=await all();
+        const known=new Set(serverRows.map(row=>row.id));
+        const old=await localAll();
+        for(const row of old){
+          if(known.has(row.id))continue;
+          if(!(row.original instanceof Blob))continue;
+          await put(row);
+          known.add(row.id);
+        }
+      }
+      preferencesHydrated=true;
+      const selected=typeof prefs.selectedAvatar==='string'?prefs.selectedAvatar:read(selectedKey,null);
+      if(typeof selected==='string'){
+        try{await choose(selected);}catch{lastSelected=null;store(selectedKey,null);await renderLibrary();}
+      } else await renderLibrary();
+    }catch(e){
+      notify('Библиотека недоступна: '+(e?.message||'Проверьте настройки браузера'),'error');
+    }
   }
   void initialize();
   $('kitsune-settings-reset')?.addEventListener('click',()=>{
