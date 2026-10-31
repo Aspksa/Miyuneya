@@ -9,7 +9,7 @@ export type ChatSearchQuery=ChatQuery & {
 type Raw=Record<string,any>;
 export function searchInWorker(path:string,input:ChatSearchQuery):Promise<{
   schema:number;revision:number;selectedId:string|null;
-  conversations:(ChatMeta & {matchSnippet?:string;relevance?:number})[];
+  conversations:(ChatMeta & {matchSnippet?:string;relevance?:number;matchedMessageId?:string})[];
   total:number;elapsedMs:number;
 }>{
   return new Promise((resolve,reject)=>{
@@ -36,6 +36,7 @@ export function searchInWorker(path:string,input:ChatSearchQuery):Promise<{
           messageCount:Number(r.message_count),archived:!!r.archived,
           ...(r.parent_id?{parentId:r.parent_id,forkMessageId:r.fork_message_id}:{}),
           ...(r.excerpt?{matchSnippet:r.excerpt}:{}),
+          ...(r.message_id?{matchedMessageId:r.message_id}:{}),
           ...(r.rank!==undefined&&r.rank!==null?{relevance:Number(r.rank)}:{})
         }))
       };

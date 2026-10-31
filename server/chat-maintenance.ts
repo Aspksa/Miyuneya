@@ -7,6 +7,7 @@ import { Worker } from 'node:worker_threads';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import type { openSqliteChatArchive } from './chat-sqlite.ts';
 import { ensureSpace } from './chat-db-safety.ts';
+import { openChatMaintenanceJournal } from './chat-maintenance-journal.ts';
 type Store=Awaited<ReturnType<typeof openSqliteChatArchive>>;
 type Row=Record<string,any>;
 const now=()=>new Date().toISOString();
@@ -17,11 +18,18 @@ const fileDigest=async(path:string)=>digest(await readFile(path));
 
 export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}={}) {
   const db=store.db,root=join(dataDir,'chat-backups'),blobRoot=join(store.home,'attachments');
-  let stopped=false,active:Promise<unknown>|null=null;
+  let stopped=false,active:Promise<unknown>|null=null,scheduledJob:Promise<void>|null=null;
+  const journal=openChatMaintenanceJournal(dataDir);
+  const event=(name:Parameters<typeof journal.write>[0],result:Parameters<typeof journal.write>[1],code='none',durationMs=0)=>{
+    void journal.write(name,result,code,durationMs).catch(()=>{});
+  };
+  let nextRunAt:string|null=null;
+  const interval=()=>{const value=Number(store.getSetting('maintenanceIntervalMinutes')||30);
+    return [15,30,60].includes(value)?value:30;};
   let timer:ReturnType<typeof setTimeout>|undefined;
   const warnings=store.warnings;
   const workers=new Set<Worker>();
-  function background(action:'check'|'rebuild'|'optimize'):Promise<Row>{
+  function background(action:'check'|'rebuild'|'optimize'|'checkpoint'|'preflight'):Promise<Row>{
     if(stopped)throw fail('Архив закрывается.',503);
     return new Promise((resolve,reject)=>{
       const worker=new Worker(new URL('../scripts/chat-archive-worker.mjs',import.meta.url),{
@@ -39,10 +47,37 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   }
   async function reindex(){
     if(store.isImporting())throw fail('Импорт чата ещё выполняется.',423);
+    const started=performance.now();
     const result=await background('rebuild');
-    if(!result.ok)throw fail(result.error||'Не удалось восстановить FTS5.',503);
+    event('search-rebuild',result.ok?'ok':'failed',result.ok?'none':'fts-error',performance.now()-started);
+    if(!result.ok)throw fail('Не удалось восстановить FTS5.',503);
     store.setSetting('ftsRebuilt',now());
     return {ok:true};
+  }
+  async function postUpdatePreflight(){
+    if(store.isImporting())return {ok:false,busy:true};
+    const started=performance.now();
+    const result:Row=await background('preflight').catch(()=>({ok:false}));
+    event('update-preflight',result.ok?'ok':'failed',result.ok?'none':'sqlite-preflight',performance.now()-started);
+    return {ok:!!result.ok,schemaVersion:result.schemaVersion??null,
+      ftsHealthy:result.ftsHealthy===true,foreignKeyIssues:result.foreignKeyIssues??null};
+  }
+  function maintenanceConfiguration(){
+    return {intervalMinutes:interval(),nextRunAt,enabled:automatic};
+  }
+  function configureMaintenance(minutes:number){
+    if(!Number.isSafeInteger(minutes)||![15,30,60].includes(minutes))
+      throw fail('Доступные интервалы обслуживания: 15, 30 или 60 минут.');
+    store.write('maintenance-config',()=>store.setSetting('maintenanceIntervalMinutes',String(minutes)));
+    event('schedule','ok','interval-updated');
+    if(automatic){
+      if(timer)clearTimeout(timer);
+      schedule(minutes*60_000);
+    }
+    return maintenanceConfiguration();
+  }
+  async function maintenanceLog(limit=35){
+    return {schedule:maintenanceConfiguration(),events:await journal.recent(limit)};
   }
   async function saveAttachment(conversationId:string,bytes:Buffer,type:string,fileName:string,messageId?:string){
     store.getConversation(conversationId);
@@ -296,14 +331,22 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   function backupNow(){
     if(store.isImporting())return Promise.resolve({ok:false,error:'Дождитесь завершения импорта переписки.'});
     if(active)return Promise.resolve({ok:false,error:'Проверка или резервирование уже выполняется.'});
-    const job=performBackup();
+    const started=performance.now();
+    const job=performBackup().then(result=>{
+      event('backup',result.ok?'ok':'failed',result.ok?'none':'backup-failed',performance.now()-started);
+      if(result.external)event('external-backup',result.external.ok?'ok':'warning',
+        result.external.ok?'none':'external-unavailable');
+      return result;
+    });
     active=job;
     void job.finally(()=>{if(active===job)active=null;});
     return job;
   }
   async function check(){
     if(store.isImporting())return {ok:false,busy:true,details:'Импорт переписки ещё выполняется.'};
+    const started=performance.now();
     const result=await background('check');
+    event('check',result.ok?'ok':'failed',result.ok?'none':'integrity-error',performance.now()-started);
     if(!result.ok){
       store.lockWrites('SQLite не прошёл проверку целостности. Записи остановлены.');
       return result;
@@ -369,6 +412,8 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     })).sort((a,b)=>b.maxMs-a.maxMs).slice(0,12);
     if(slow.some(x=>x.name==='save'&&x.maxMs>500))
       alerts.push('Запись сообщений выполнялась дольше 500 мс. Проверьте состояние диска.');
+    if(walBytes>=256*1024*1024)
+      alerts.push('SQLite WAL занимает более 256 МБ. Проверьте длительные читающие операции.');
     return {...info,freeBytes,backupAt,dbFileBytes,walBytes,shmBytes,
       externalBackupPath:externalPath,lastExternalBackup:store.getSetting('lastExternalBackup')||null,
       backupCount:Number(store.getSetting('backupCount')||0),
@@ -376,39 +421,78 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       readOnly:store.readOnly(),wal:true,
       warnings:alerts,operations:slow,backupRunning:!!active};
   }
+  // Long-running readers may prevent complete WAL checkpointing. Only use
+  // PASSIVE (never TRUNCATE) while a conversation can be streamed.
+  async function inspectWal(){
+    if(store.isImporting()||stopped)return {ok:false,busy:true};
+    const bytes=(await stat(store.path+'-wal').catch(()=>null))?.size||0;
+    if(bytes<32*1024*1024)return {ok:true,skipped:true,walBytes:bytes};
+    const started=performance.now();
+    const result:Row=await background('checkpoint').catch(()=>({ok:false}));
+    event('checkpoint',result.ok?'ok':'warning',result.ok?'passive':'checkpoint-failed',performance.now()-started);
+    const after=(await stat(store.path+'-wal').catch(()=>null))?.size||0;
+    if(result.busy||after>=256*1024*1024)
+      warnings.push('WAL ещё занят активным читателем или превышает 256 МБ: это не повод удалять файлы SQLite.');
+    return {...result,walBytes:after};
+  }
   async function maintain(){
-    if(stopped||active||store.isImporting())return;
-    const lastCheck=store.getSetting('lastCheck');
-    try{
-      if(!lastCheck||Date.now()-Date.parse(lastCheck)>24*3600_000){
-        const checked=await check();
-        if(!checked.ok)return; // Do not optimize or copy a damaged archive.
-        const current=await statistics();
-        store.setSetting('growthBaseline',JSON.stringify({
-          bytes:current.dbFileBytes,messages:current.messages,at:now()
-        }));
-        const optimized=await background('optimize');
-        if(!optimized.ok)warnings.push('Не удалось обновить статистику индексов SQLite.');
+    if(stopped||active||scheduledJob||store.isImporting())return;
+    // Self-test, optimization, backup and WAL check have separate cadences,
+    // but share one non-overlapping scheduler.
+    const task=(async()=>{
+      try{
+        const lastCheck=store.getSetting('lastCheck');
+        if(!lastCheck||Date.now()-Date.parse(lastCheck)>24*3600_000){
+          const checked=await check();
+          if(!checked.ok){event('schedule','warning','integrity-not-ready');return;}
+          const current=await statistics();
+          store.setSetting('growthBaseline',JSON.stringify({
+            bytes:current.dbFileBytes,messages:current.messages,at:now()
+          }));
+          const started=performance.now();
+          const optimized=await background('optimize');
+          event('optimize',optimized.ok?'ok':'warning',optimized.ok?'none':'optimizer-failed',performance.now()-started);
+          if(!optimized.ok)warnings.push('Не удалось обновить статистику индексов SQLite.');
+        }
+        await inspectWal();
+        const last=store.getSetting('lastBackup');
+        if(!last||Date.now()-Date.parse(last)>24*3600_000)await backupNow();
+        const external=store.getSetting('externalBackupPath');
+        const recent=store.getSetting('lastExternalBackup');
+        if(external&&(!recent||Date.parse(recent)<Date.parse(store.getSetting('lastBackup')||now()))){
+          const copy=await retryExternalBackup();
+          event('external-backup',copy.ok?'ok':'warning',copy.ok?'none':'external-unavailable');
+        }
+        event('schedule','ok');
+      }catch{
+        warnings.push('Очередная операция обслуживания не завершилась. Проверьте журнал.');
+        event('schedule','failed','maintenance-error');
       }
-      const last=store.getSetting('lastBackup');
-      if(!last||Date.now()-Date.parse(last)>24*3600_000)await backupNow();
-      const external=store.getSetting('externalBackupPath');
-      const recent=store.getSetting('lastExternalBackup');
-      if(external&&(!recent||Date.parse(recent)<Date.parse(store.getSetting('lastBackup')||now())))
-        await retryExternalBackup();
-    }catch(e){warnings.push('Проверка архивов не завершилась: '+(e as Error).message);}
+    })();
+    scheduledJob=task;
+    try{await task;}finally{scheduledJob=null;}
   }
   function schedule(delay:number){
     if(stopped)return;
-    timer=setTimeout(async()=>{await maintain();if(!stopped)schedule(30*60_000);},delay);
+    nextRunAt=new Date(Date.now()+delay).toISOString();
+    timer=setTimeout(async()=>{
+      nextRunAt=null;
+      await maintain();
+      if(!stopped)schedule(interval()*60_000);
+    },delay);
     timer.unref?.();
   }
   if(automatic)schedule(12000);
   return {
     saveAttachment,listAttachments,attachment,backupNow,verifyBackup,latestBackup,check,statistics,
     reindex,configureExternal,externalConfiguration,inspectAttachments,retryExternalBackup,
-    shutdown:async()=>{stopped=true;if(timer)clearTimeout(timer);
+    postUpdatePreflight,maintenanceLog,maintenanceConfiguration,configureMaintenance,inspectWal,
+    runMaintenance:maintain,
+    shutdown:async()=>{stopped=true;nextRunAt=null;if(timer)clearTimeout(timer);
       await Promise.allSettled([...workers].map(worker=>worker.terminate()));
-      if(active)await active;}
+      if(scheduledJob)await scheduledJob;
+      if(active)await active;
+      await journal.shutdown();
+    }
   };
 }

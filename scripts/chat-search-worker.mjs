@@ -64,13 +64,16 @@ function query(ftsQuery,needle,archived,limit,offset,sort){
     'FROM lineage l JOIN conversations c ON c.id=l.ancestor',
     'WHERE c.parent_id IS NOT NULL AND l.depth<32',
     '), matching AS MATERIALIZED (',
-    "SELECT m.conversation_id,m.sequence,bm25(message_fts) relevance,snippet(message_fts,0,'‹','›','…',15) excerpt",
+    "SELECT m.id message_id,m.conversation_id,m.sequence,bm25(message_fts) relevance,snippet(message_fts,0,'‹','›','…',15) excerpt",
     'FROM message_fts JOIN messages m ON m.rowid=message_fts.rowid',
     'WHERE message_fts MATCH ?',
-    '), ranked AS MATERIALIZED (',
-    'SELECT l.root id,MIN(m.relevance) rank,MIN(m.excerpt) excerpt',
+    '), candidates AS MATERIALIZED (',
+    'SELECT l.root id,m.relevance rank,m.excerpt,m.message_id,',
+    'ROW_NUMBER() OVER (PARTITION BY l.root ORDER BY m.relevance ASC,m.sequence DESC,m.message_id) AS rn',
     'FROM matching m JOIN lineage l ON l.ancestor=m.conversation_id',
-    'WHERE m.sequence<=l.cutoff GROUP BY l.root',
+    'WHERE m.sequence<=l.cutoff',
+    '), ranked AS MATERIALIZED (',
+    'SELECT id,rank,excerpt,message_id FROM candidates WHERE rn=1',
     ')'
   ].join(' ');
   const filter=" FROM conversations c LEFT JOIN ranked r ON r.id=c.id WHERE c.archived=? AND (c.title LIKE ? ESCAPE '\\' OR r.id IS NOT NULL)";
@@ -79,7 +82,7 @@ function query(ftsQuery,needle,archived,limit,offset,sort){
     "CASE WHEN c.title LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END ASC,COALESCE(r.rank,1000) ASC,c.updated_at DESC,c.id DESC";
   const params=sort==='date'?[ftsQuery,archived,title,limit,offset]:
     [ftsQuery,archived,title,title,limit,offset];
-  const rows=db.prepare(cte+' SELECT c.*,r.rank,r.excerpt,COUNT(*) OVER() total'+filter+
+  const rows=db.prepare(cte+' SELECT c.*,r.rank,r.excerpt,r.message_id,COUNT(*) OVER() total'+filter+
     ' ORDER BY '+sortSql+' LIMIT ? OFFSET ?').all(...params);
   return {rows,total:rows.length?Number(rows[0].total):0};
 }
