@@ -5,8 +5,8 @@ const {path,input} = workerData || {};
 const db=new DatabaseSync(path,{readOnly:true,timeout:6500});
 const begin=performance.now();
 const stopWords=new Set(['и','в','во','на','с','со','к','у','по','о','об','а','но','или']);
-const tokenize=value=>(String(value||'').normalize('NFKC').toLocaleLowerCase('ru')
-  .match(/[\p{L}\p{N}]+/gu)||[]).filter(w=>!stopWords.has(w)).slice(0,8);
+const tokenize=(value,keepStopWords=false)=>(String(value||'').normalize('NFKC').toLocaleLowerCase('ru')
+  .match(/[\p{L}\p{N}]+/gu)||[]).filter(w=>keepStopWords||!stopWords.has(w)).slice(0,8);
 const endings=['иями','ями','ами','ого','ему','ыми','ими','ов','ев','ей','ам','ям','ах','ях','ом','ем','ую','ая','яя','ые','ие','ый','ий','ых','их','ым','им','ой','ое','ее','ете','ешь','ет','ут','ют','ться','ся','а','я','ы','и','е','у'];
 function stem(w){
   if(w.length<6)return w;
@@ -86,7 +86,8 @@ function query(ftsQuery,needle,archived,limit,offset,sort){
 try{
   if(typeof path!=='string')throw Error('Отсутствует путь к базе.');
   const text=String(input?.query||'').trim().slice(0,180);
-  const words=tokenize(text);
+  const mode=['phrase','exact','morphology'].includes(input?.mode)?input.mode:'morphology';
+  const words=tokenize(text,mode==='phrase');
   const archived=input?.archived?1:0;
   const sort=['date','relevance'].includes(input?.sort)?input.sort:'relevance';
   const limit=Number.isSafeInteger(input?.limit)?Math.min(100,Math.max(1,input.limit)):60;
@@ -96,7 +97,6 @@ try{
       .all(archived,limit,offset);
     parentPort?.postMessage({rows,total:rows[0]?.total||0,elapsedMs:performance.now()-begin});
   }else{
-    const mode=['phrase','exact','morphology'].includes(input?.mode)?input.mode:'morphology';
     if(mode!=='phrase'&&input?.typos)db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.fts_terms USING fts5vocab(main,message_fts,'row')");
     let result=query(buildMatch(words,mode,false),text,archived,limit,offset,sort);
     if(!result.rows.length&&input?.typos&&mode!=='phrase')
