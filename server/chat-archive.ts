@@ -184,6 +184,30 @@ export async function openChatArchive(dataDir: string) {
     return { schema: 2, revision: index.revision, selectedId: index.selectedId,
       total: results.length, conversations: results.slice(offset, offset + limit).map(c => ({ ...c })) };
   }
+  // Full-text search is on demand; the index never caches or truncates the
+  // contents of all messages. Reading is bounded to one message at a time.
+  async function search(input: { query?: string; offset?: number; limit?: number; archived?: boolean } = {}) {
+    const needle = (input.query || '').trim().toLocaleLowerCase('ru').slice(0, 200);
+    if (!needle) return list(input);
+    const results: ArchiveConversation[] = [];
+    const candidates = [...index.conversations].filter(c => c.archived === !!input.archived)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    for (const row of candidates) {
+      let found = row.title.toLocaleLowerCase('ru').includes(needle);
+      if (!found) {
+        for (const filename of position.get(row.id)!.values()) {
+          const record = parseStrict(await readFile(filePath(row.id, filename), 'utf8'),
+            filePath(row.id, filename), validMessage);
+          if (record.content.toLocaleLowerCase('ru').includes(needle)) { found = true; break; }
+        }
+      }
+      if (found) results.push(row);
+    }
+    const offset = Math.max(0, Number.isSafeInteger(input.offset) ? input.offset! : 0);
+    const limit = Math.max(1, Math.min(100, Number.isSafeInteger(input.limit) ? input.limit! : 60));
+    return { schema: 2, revision: index.revision, selectedId: index.selectedId,
+      total: results.length, conversations: results.slice(offset, offset + limit).map(c => ({ ...c })) };
+  }
   function create(input: { id?: string; title?: string } = {}) {
     return exclusive(async () => {
       if (input.id !== undefined && !validId(input.id)) throw error('Неверный идентификатор разговора.');
@@ -344,7 +368,7 @@ export async function openChatArchive(dataDir: string) {
     return { imported: count, conversations };
   }
   return {
-    list, create, modify, select, page, saveMessage, exportLines, importStream, importLegacy,
+    list, search, create, modify, select, page, saveMessage, exportLines, importStream, importLegacy,
     shutdown: async () => { await pending; }
   };
 }
