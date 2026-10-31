@@ -940,12 +940,13 @@
   }
 
   async function send(){
-    const content=input.value.trim();
-    if(!content||stream)return;
-    if(content.length>20000){setStatus('Слишком длинное сообщение — максимум 20 000 символов.');return;}
+    const raw=input.value.trim();
+    if(stream||(!raw&&!attachments?.hasPending))return;
+    if(raw.length>20000){setStatus('Слишком длинное сообщение — максимум 20 000 символов.');return;}
     const current=new AbortController();
     stream=current;sendButton.disabled=true;stopButton.hidden=false;
     avatar.classList.add('talking');
+    presence?.setActivity('answering');
     if(streamIndicator)streamIndicator.hidden=false;
     let savedUser=false,reply=null,conversation=null,checkpointChain=Promise.resolve();
     let version=0,lastCheckpointAt=0,checkpointError=null;
@@ -962,6 +963,8 @@
       return job;
     }
     try{
+      const content=attachments?await attachments.prepare(raw):raw;
+      if(content.length>20000)throw Error('Вопрос со вложениями превышает 20 000 символов.');
       await archiveReady;
       if(!remoteChats)throw Error('Хранилище переписки недоступно. Отправка остановлена, чтобы не потерять сообщение.');
       if(current.signal.aborted)throw Error('Отправка остановлена.');
@@ -973,6 +976,10 @@
       await persistMessage(conversation.id,user);
       savedUser=true;
       history.push(user);input.value='';renderChat();saveHistory();setStatus('');
+      if(attachments?.hasPending){
+        await attachments.upload(conversation.id,user.id,current.signal);
+        setStatus('Файлы сохранены в локальном архиве. Модели передан текст только при вашем согласии.');
+      }
       reply={id:conversationId(),role:'assistant',content:'',createdAt:nowISO(),version:0,complete:false};
       history.push(reply);renderChat();
 
@@ -1015,7 +1022,7 @@
       if(checkpointError)setStatus('Ответ получен. Проверьте сохранение истории на диск.');
     }catch(error){
       if(!savedUser){
-        input.value=content;
+        input.value=raw;
         setStatus('Сообщение не отправлено: '+(error?.message||'Ошибка локального архива.'));
       }else{
         await checkpointChain;
@@ -1027,11 +1034,15 @@
           history=history.filter(m=>m!==reply);
         }
         if(!checkpointError)setStatus(current.signal.aborted?'Запрос остановлен.':error?.message||'Нет связи с сервером.');
+        presence?.setActivity('error');
         trimVisibleHistory();saveHistory();renderChat();
       }
     }finally{
       stream=null;sendButton.disabled=false;stopButton.hidden=true;
       avatar.classList.remove('talking');
+      if(navigator.onLine===false)presence?.setActivity('offline');
+      else if(avatar.dataset.activity!=='error')presence?.setActivity('idle');
+      refreshRecovery();
       if(streamIndicator)streamIndicator.hidden=true;
     }
   }
