@@ -49,6 +49,7 @@ export function openCognitiveNotebook(dataDir:string,resolve:(id:string)=>Memory
     const list=db.prepare('SELECT * FROM notes ORDER BY last_seen DESC LIMIT ?');
     const all=db.prepare('SELECT * FROM notes');
     const del=db.prepare('DELETE FROM notes WHERE id=?');
+    const updateRefs=db.prepare('UPDATE notes SET refs=? WHERE id=?');
     const totals=db.prepare('SELECT kind,state,count(*) AS amount FROM notes GROUP BY kind,state');
     let closed=false;
     const validRefs=(refs:unknown)=>Array.isArray(refs) ? [...new Set(refs.filter(idOk))].slice(0,30) : [];
@@ -131,7 +132,7 @@ export function openCognitiveNotebook(dataDir:string,resolve:(id:string)=>Memory
             del.run(note.id);removed++;continue;
           }
           if(fresh.length!==note.refs.length){
-            db.prepare('UPDATE notes SET refs=? WHERE id=?').run(JSON.stringify(fresh),note.id);
+            updateRefs.run(JSON.stringify(fresh),note.id);
           }
         }
       });
@@ -147,7 +148,7 @@ export function openCognitiveNotebook(dataDir:string,resolve:(id:string)=>Memory
           if(!note.refs.includes(id))continue;
           const refs=note.refs.filter(x=>x!==id && permitted(resolve(x)));
           if(refs.length<needed(note.kind))del.run(note.id);
-          else db.prepare('UPDATE notes SET refs=? WHERE id=?').run(JSON.stringify(refs),id===note.id?note.id:note.id);
+          else updateRefs.run(JSON.stringify(refs),note.id);
         }
       });
     }
