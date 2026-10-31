@@ -97,7 +97,23 @@ async function main() {
     stage='build';const rebuilt=await ensureBuild(root);await logger.log('build',rebuilt?'repaired':'intact');
     if(stopping)return;
     stage='server';ready=await runServer();
+    // The quick HTTP health check is insufficient after changing code:
+    // validate the actual SQLite schema, FK links, FTS and integrity BEFORE
+    // marking an update installed. On failure, stop this candidate first.
+    if(transaction.applied){
+      stage='health';
+      const verified=await localRequest(ready.pointer.port,'/__miyuneya/post-update-check',{
+        method:'POST',headers:{'X-Miyuneya-Session':ready.pointer.launchId},
+        timeout:25000
+      });
+      let status={};
+      try{status=JSON.parse(verified.body);}catch{}
+      if(verified.status!==200 || status.ok!==true || status.schemaVersion!==4)
+        throw Object.assign(new Error('Post-update SQLite preflight failed'),{code:'UPDATE_PREFLIGHT_FAILED'});
+      await logger.log('update','sqlite-preflight-ok');
+    }
   } catch(e) {
+    if(ready?.state){await stopChild(ready.state);child=null;ready=undefined;}
     if(!transaction.applied)throw e;
     await logger.log(stage,'candidate-failed',40);await transaction.rollback();transaction.applied=false;
     stage='build';await ensureBuild(root);stage='server';ready=await runServer();
