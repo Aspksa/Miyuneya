@@ -17,6 +17,7 @@
     "diagnose": "node scripts/diagnose.mjs",
     "diagnose:full": "node scripts/diagnose.mjs --full",
     "update:prepare": "node scripts/update.mjs prepare",
-    "evaluate": "node scripts/evaluate.mjs"
+    "evaluate": "node scripts/evaluate.mjs",
+    "bench:chats": "node scripts/benchmark-chats.mjs"
   }
 }
