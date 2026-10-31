@@ -65,13 +65,14 @@ export async function openSqliteChatArchive(dataDir:string){
   const write=<T>(key:string,run:()=>T):T=>{
     if(readOnly)throw error('Хранилище повреждено. Режим только чтения: запись запрещена.',503);
     return timed(key,()=>{
-      db.exec('BEGIN IMMEDIATE');
+      let started=false;
       try{
-        const value=run();db.exec('COMMIT');
+        db.exec('BEGIN IMMEDIATE');started=true;
+        const value=run();db.exec('COMMIT');started=false;
         if(['save','create','modify'].includes(key))clearPageCache();
         return value;
       }catch(e){
-        try{db.exec('ROLLBACK');}catch{}
+        if(started)try{db.exec('ROLLBACK');}catch{}
         const message=(e as Error).message||'';
         if(/SQLITE_BUSY|database is locked/i.test(message)){
           busyMs=Math.min(12000,busyMs+1000);
