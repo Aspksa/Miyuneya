@@ -1,6 +1,6 @@
 // Bounded, privacy-preserving maintenance journal. Never store paths,
 // message bodies, API keys, SQL statements or untrusted exception strings.
-import { appendFile, mkdir, readFile, rename, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { retryFile } from '../scripts/runtime.mjs';
 
@@ -26,6 +26,9 @@ export function openChatMaintenanceJournal(dataDir:string){
         throw e;
       });
       if(size>MAX_BYTES){
+        // Windows rename cannot replace an existing target. Retain the latest
+        // complete generation and rotate only this bounded diagnostics log.
+        await retryFile(()=>rm(file+'.previous',{force:true}));
         await retryFile(()=>rename(file,file+'.previous'));
       }
       await appendFile(file,JSON.stringify(event)+'\n',{encoding:'utf8',mode:0o600});
