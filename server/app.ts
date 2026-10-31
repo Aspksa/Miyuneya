@@ -714,6 +714,12 @@ export async function createApp(root: string, instance: string, preview = false,
         const ok = () => send(200, memory.view());
         const background = (e: unknown) => send((e as { status?: number }).status || 500, { error: (e as Error).message || 'Не удалось обработать память.' });
         if (route === '' && req.method === 'GET') return ok();
+        if (route === '/archive' && req.method === 'GET') {
+          const search = new URL(req.url || '/', origin).searchParams;
+          const query = String(search.get('q') || '').slice(0, 300);
+          const limit = Math.min(50, Math.max(1, Number(search.get('limit')) || 20));
+          return send(200, { results: query ? memory.archiveSearch(query, limit) : [], summary: memory.view().archive });
+        }
         if (route === '' && req.method === 'PUT') {
           const input = await readJson(req, send, 10_000);
           if (input === undefined) return;

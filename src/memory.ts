@@ -36,7 +36,7 @@ export type CognitiveView = {
   questions:{id:string;kind:'gap'|'conflict';text:string;facts:string[]}[];
   generatedAt:string;
 };
-export type MemoryView = { cognitive?:CognitiveView; history?:{id:string;before:string;after:string;at:string;reason:string}[]; noteProgress?:Record<string,{offset:number}>; enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | 'think' | null; lastSleep: string | null; pending: number; newEpisodes: number;
+export type MemoryView = { archive?:{active:{facts:number;episodes:number;edges:number};archived:{facts:number;episodes:number;edges:number}}; cognitive?:CognitiveView; history?:{id:string;before:string;after:string;at:string;reason:string}[]; noteProgress?:Record<string,{offset:number}>; enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | 'think' | null; lastSleep: string | null; pending: number; newEpisodes: number;
   search: 'meaning' | 'words'; searchError: string; indexed: number;
   items: MemoryItemView[]; episodes: EpisodeView[]; entities: EntityView[]; edges: EdgeView[]; diary: DiaryView[]; journal: JournalView[];
   topics: TopicView[]; understanding: { text: string; updated: string } | null; questions: QuestionView[]; growth: GrowthView; reminders: ReminderView[]; promises: PromiseView[]; thoughts: ThoughtView[]; thinking: ThinkingView;
@@ -144,6 +144,8 @@ export function mountMemory(host: MemoryHost) {
   let settings = false;
   let filter: Category | 'all' = 'all';
   let cognitiveQuery='';
+  let archiveQuery='';
+  let archiveResults:{id:string;kind:string;text:string}[]=[];
   let editing = '';
   // Whoever sets the tab — a link from the chat, a reopen, the map — the group follows it.
   const goTab = (next: Tab) => { tab = next; group = groupOf(next); };
@@ -371,6 +373,7 @@ export function mountMemory(host: MemoryHost) {
       ['Контекстных связей',c.summary.associations],
       ['Непроверенных',c.summary.inferred+c.summary.contested]
     ];
+    const archiveCount=v.archive?.archived;
     const cards=counts.map(([name,value])=>
       '<div class="cognitive-metric"><strong>'+value+'</strong><span>'+name+'</span></div>').join('');
     const kind: Record<CognitiveView['associations'][number]['kind'],string>={
@@ -395,7 +398,11 @@ export function mountMemory(host: MemoryHost) {
     return '<div class="cognitive-overview"><h3>Когнитивная память</h3>'+
       '<p class="memory-note">Сопоставляет уже сохранённые факты, эпизоды, темы и граф связей. '+
       'Новые выводы не объявляются истиной автоматически. Совместное упоминание не доказывает причинность.</p>'+
-      '<div class="cognitive-metrics">'+cards+'</div>'+
+      '<div class="cognitive-metrics">'+cards+'</div>'+ 
+      (archiveCount?'<section class="memory-archive"><h3>Долговременный архив</h3>'+ 
+      '<p class="memory-note">Сохранено вне активной памяти: фактов и правил — '+archiveCount.facts+', эпизодов — '+archiveCount.episodes+', связей — '+archiveCount.edges+'. Архив хранится локально и используется в ответах по релевантной теме.</p>'+ 
+      '<form class="memory-archive-search"><label>Поиск старых записей <input type="search" name="query" maxlength="120" placeholder="Слово или тема" value="'+escape(archiveQuery)+'"></label> <button type="submit" class="button quiet">Найти в архиве</button></form>'+ 
+      (archiveQuery?'<div class="memory-archive-results" aria-live="polite">'+(archiveResults.length?archiveResults.map(r=>'<p><b>'+escape(r.kind==='episode'?'Эпизод':r.kind==='rule'?'Правило':'Факт')+':</b> '+escape(r.text)+'</p>').join(''):'<p class="memory-empty">По этому запросу архивных записей не найдено.</p>')+'</div>':'')+'</section>':'')+
       (c.summary.expired?'<p class="memory-note">Неактуальных или заменённых записей: '+c.summary.expired+'. Они не участвуют в контекстном поиске.</p>':'')+
       '<label class="cognitive-filter">Найти связь <input type="search" data-cognitive-search maxlength="120" placeholder="Тема, факт или эпизод" value="'+escape(cognitiveQuery)+'"></label>'+
       '<section class="cognitive-results" aria-label="Связи между записями">'+(rows||'<p class="memory-empty">Пока нет связанных записей. После изучения разговоров и документов здесь появятся связи с источниками.</p>')+'</section>'+
@@ -540,6 +547,17 @@ export function mountMemory(host: MemoryHost) {
     event.preventDefault();
     const form = event.target as HTMLFormElement;
     const field = (name: string) => (form.elements.namedItem(name) as HTMLInputElement | null)?.value.trim();
+    if (form.classList.contains('memory-archive-search')) {
+      archiveQuery=(field('query')||'').slice(0,120);
+      archiveResults=[];
+      if(archiveQuery)try{
+        const response=await fetch('/api/memory/archive?q='+encodeURIComponent(archiveQuery));
+        if(!response.ok)throw Error('Поиск архива недоступен');
+        const result=await response.json();
+        archiveResults=Array.isArray(result.results)?result.results.map((r:{id:string;kind:string;text:string})=>({id:r.id,kind:r.kind,text:r.text})).slice(0,20):[];
+      }catch{host.toast('Не удалось найти записи в архиве. Проверьте сервер.');}
+      render();return;
+    }
     if (form.classList.contains('memory-add')) {
       const text = field('text');
       if (text && await act('/items', { method: 'POST', json: { kind: tab, text, category: tab === 'fact' ? field('category') : undefined } }, tab === 'rule' ? 'Правило добавлено' : 'Факт добавлен')) panel.querySelector<HTMLInputElement>('.memory-add input')?.focus();
