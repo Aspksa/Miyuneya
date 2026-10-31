@@ -46,9 +46,9 @@ export async function openGithubUpdater(root:string,fetcher:typeof fetch=fetch){
   const stateFile=join(area,'settings.json');
   const pkg=await readJSON(join(root,'package.json'));
   ensureVersion(pkg.version);
-  const saved=await readJSON(stateFile).catch(e=>{if(e.code==='ENOENT')return {};throw e;});
+  const saved=await readJSON(stateFile).catch(e=>{if(e.code==='ENOENT'||e instanceof SyntaxError)return {};throw e;});
   let autoCheck=saved?.autoCheck===true,autoDownload=saved?.autoDownload===true;
-  let lastCheck=0,latest:null|{version:string;notes:string;url:string;published:string}=null;
+  let lastCheck=0,latest:null|{version:string;notes:string;url:string;published:string;digest:string|null}=null;
   let lastError='',busy=false;
   async function current(){
     try{
@@ -86,8 +86,9 @@ export async function openGithubUpdater(root:string,fetcher:typeof fetch=fetch){
       if(matching.size>LIMIT)throw new Error('Релиз слишком большой.');
       // Never accept an arbitrary URL from remote metadata.
       const url=BASE+tag+'/'+ASSET;
+      const assetDigest=typeof matching.digest==='string'&&/^sha256:[a-f0-9]{64}$/.test(matching.digest)?matching.digest.slice(7):null;
       latest={version:releaseVersion,notes:typeof data.body==='string'?data.body.slice(0,2400):'',
-        url,published:typeof data.published_at==='string'?data.published_at:''};
+        url,published:typeof data.published_at==='string'?data.published_at:'',digest:assetDigest};
       lastCheck=Date.now();return await view();
     }catch(e){lastError=(e as Error).message||normalizeError(e);throw e;}
     finally{busy=false;}
@@ -111,6 +112,7 @@ export async function openGithubUpdater(root:string,fetcher:typeof fetch=fetch){
       if(!newer(latest.version,installed))throw Object.assign(new Error('Новая версия не требуется.'),{status:409});
       const {response,bytes}=await limitedFetch(fetcher,latest.url);
       if(!response.ok)throw new Error('GitHub не выдал пакет обновления (HTTP '+response.status+').');
+      if(latest.digest&&sha256(bytes!)!==latest.digest)throw new Error('SHA-256 релиза GitHub не совпадает.');
       const bundle=JSON.parse(bytes!.toString('utf8'));
       if(bundle.schema!==1||bundle.version!==latest.version||!Array.isArray(bundle.files)||
         !bundle.files.length||bundle.files.length>100)throw new Error('Состав пакета обновления не прошёл проверку.');
