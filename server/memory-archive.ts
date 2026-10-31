@@ -50,6 +50,9 @@ export async function openMemoryArchive(dataDir: string) {
       ORDER BY bm25(entries_fts),e.rowid DESC LIMIT ?`);
     const coldItemRows = db.prepare("SELECT kind,id,searchable,payload,tier FROM entries WHERE tier=0 AND kind IN ('fact','rule','episode')");
     const allRows = db.prepare('SELECT kind,id,searchable,payload,tier FROM entries ORDER BY kind,id');
+    const pageRows = db.prepare("SELECT kind,id,payload FROM entries WHERE tier=0 AND kind IN ('fact','rule') ORDER BY kind,id LIMIT ? OFFSET ?");
+    const coldCount = db.prepare("SELECT count(*) AS total FROM entries WHERE tier=0 AND kind IN ('fact','rule')");
+
     let closed = false;
 
     function transaction(fn: () => void) {
@@ -82,6 +85,14 @@ export async function openMemoryArchive(dataDir: string) {
       memory.items = memory.items.filter(x=>keepItems.has(x.id));
       memory.episodes = memory.episodes.filter(x=>keepEpisodes.has(x.id));
       memory.edges = memory.edges.filter(x=>hotEdges.has(edgeId(x)));
+    }
+    // Bounded read-only archive pages for autonomous analysis; no bulk loading.
+    function page(offset=0,limit=48) {
+      const total=(coldCount.get() as {total:number}).total;
+      const start=total>0 ? Math.max(0,Math.trunc(Number.isFinite(offset)?offset:0))%total : 0;
+      const take=Math.max(1,Math.min(80,Math.trunc(Number.isFinite(limit)?limit:48)));
+      return {total,offset:start,items:(pageRows.all(take,start) as {kind:Kind;id:string;payload:string}[])
+        .map(row=>JSON.parse(row.payload) as MemoryItem)};
     }
     function stats() {
       const count = { active: {facts:0,episodes:0,edges:0}, archived:{facts:0,episodes:0,edges:0} };
@@ -152,6 +163,6 @@ export async function openMemoryArchive(dataDir: string) {
     function unlink(from:string,to:string) {transaction(()=>{deleteEdgePair.run(from,to,to,from);});}
     function clear() {transaction(()=>{db.exec('DELETE FROM entries');});}
     function close(){if(!closed){closed=true;db.close();}}
-    return {compact,stats,search,recall,forget,erase,unlink,clear,close};
+    return {compact,stats,page,search,recall,forget,erase,unlink,clear,close};
   } catch (error) { db.close(); throw error; }
 }

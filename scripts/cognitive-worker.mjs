@@ -1,3 +1,4 @@
+import { analyzeGrowth } from './cognitive-growth.mjs';
 // Dedicated low-privilege cognitive child process. It cannot access project files,
 // tokens or Cloud.ru; all inputs are bounded snapshots sent over IPC.
 import { createHash } from 'node:crypto';
@@ -80,7 +81,14 @@ if (typeof process.send==='function') {
     if(msg?.type==='stop'){process.exit(0);return;}
     if(msg?.type!=='analyze'||typeof msg.jobId!=='string')return;
     try{
-      const result=analyzeCognitive(msg.snapshot);
+      const base=analyzeCognitive(msg.snapshot);
+      const growth=analyzeGrowth(msg.snapshot);
+      // A new strategy runs in shadow first. The parent selects it only after
+      // stable held-out evaluations, never from the same snapshot's graph.
+      const result={...base,strategy:'lexical',growth,
+        metrics:{...base.metrics,retrievalExamples:growth.evaluation.examples,
+          lexicalRecallAt3:+growth.evaluation.lexical.toFixed(3),
+          graphRecallAt3:+growth.evaluation.graph.toFixed(3)}};
       process.send?.({type:'result',jobId:msg.jobId,result});
     }catch(e){
       process.send?.({type:'error',jobId:msg.jobId,reason:'Анализ не выполнен.'});

@@ -110,7 +110,7 @@ test('Open memory exposes cognitive view and adds relevant cognitive context to 
 });
 test('Safe update allowlist accepts the cognitive server module',async()=>{
   const update=await readFile(new URL('../scripts/update.mjs',import.meta.url),'utf8');
-  assert.match(update,/memory\|memory-archive\|cognitive\|cognitive-daemon\|recall/);
+  assert.match(update,/memory\|memory-archive\|cognitive\|cognitive-daemon\|cognitive-jobs\|recall/);
 });
 
 test('UI presents cognitive tab under Knowledge, sources, uncertainty and local search safely',async()=>{

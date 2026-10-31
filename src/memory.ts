@@ -42,6 +42,18 @@ export type MemoryView = { cognitiveAutonomy?:{
     generatedAt:string;strategy:'lexical'|'graph';
     metrics:{reviewed:number;verified:number;directLinks:number;candidateLinks:number;
       potentialConflicts:number;retrievalExamples:number;lexicalRecallAt3:number;graphRecallAt3:number};
+    growth?:{
+      reviewed:number;grounded:number;archiveReviewed:number;
+      branches:{title:string;category:string;records:number;status:string;reason:string}[];
+      paths:{ids:string[];description:string;from:{id:string;text:string};to:{id:string;text:string}}[];
+      sourceChecks:{id:string;reason:string}[];
+      ambiguities:{name:string;reason:string}[];
+      candidateLinks:{left:{id:string;text:string};right:{id:string;text:string};reason:string}[];
+      conflicts:{left:{id:string;text:string};right:{id:string;text:string};reason:string}[];
+      temporal:{ids:string[];years:string[];reason:string}[];
+      feedback:{corrected:number;memoryMistakes:number;retrievalMisses:number};
+      evaluation:{examples:number;lexical:number;graph:number;holdout:boolean};
+    };
     candidates:{id:string;left:{id:string;text:string};right:{id:string;text:string};reason:string}[];
     conflicts:{id:string;left:{id:string;text:string};right:{id:string;text:string};reason:string}[];
   };
@@ -399,6 +411,25 @@ export function mountMemory(host: MemoryHost) {
       (auto.result?.conflicts.length?'<h4>Нужна проверка</h4>'+auto.result.conflicts.slice(0,6).map(a=>
       '<p class="memory-note">'+escape(a.left.text)+' / '+escape(a.right.text)+' <small>Возможное противоречие</small></p>').join(''):'')+
       '</section>'):'';
+    const grow=auto?.result?.growth;
+    const growthInfo=grow?('<section class="memory-archive"><h3>Самостоятельный рост знаний</h3>'+
+      '<p class="memory-note">Изучено записей: '+grow.reviewed+
+      ', подтверждённых: '+grow.grounded+', из холодного архива: '+grow.archiveReviewed+
+      '. Найдено тем: '+grow.branches.length+', многошаговых путей: '+grow.paths.length+
+      ', кандидатов связей: '+grow.candidateLinks.length+
+      ', запросов на проверку источника: '+grow.sourceChecks.length+'.</p>'+
+      '<p class="memory-note">Проверка на скрытых связях (не точность ответов): '+grow.evaluation.examples+
+      ' примеров. Словесный поиск '+Math.round(grow.evaluation.lexical*100)+
+      '% · смешанный '+Math.round(grow.evaluation.graph*100)+
+      '%. Стратегия изменяется лишь после двух стабильных проверок.</p>'+
+      (grow.branches.length?'<h4>Предлагаемые ветви</h4>'+
+      grow.branches.slice(0,8).map(t=>'<p class="memory-note">'+escape(t.title)+' · '+
+      escape(t.category)+' · записей: '+t.records+' (гипотеза)</p>').join(''):'')+
+      (grow.sourceChecks.length?'<p class="memory-note">Нуждаются в первоисточнике: '+
+      grow.sourceChecks.length+' записей. Без источников они не превращаются в подтверждённые.</p>':'')+
+      (grow.temporal.length?'<p class="memory-note">Потенциальные изменения во времени: '+
+      grow.temporal.length+'; это не автоматические противоречия.</p>':'')+
+      '</section>'):'';
     const archiveCount=v.archive?.archived;
     const cards=counts.map(([name,value])=>
       '<div class="cognitive-metric"><strong>'+value+'</strong><span>'+name+'</span></div>').join('');
@@ -424,7 +455,7 @@ export function mountMemory(host: MemoryHost) {
     return '<div class="cognitive-overview"><h3>Когнитивная память</h3>'+
       '<p class="memory-note">Сопоставляет уже сохранённые факты, эпизоды, темы и граф связей. '+
       'Новые выводы не объявляются истиной автоматически. Совместное упоминание не доказывает причинность.</p>'+
-      '<div class="cognitive-metrics">'+cards+'</div>'+autoInfo+ 
+      '<div class="cognitive-metrics">'+cards+'</div>'+autoInfo+growthInfo+ 
       (archiveCount?'<section class="memory-archive"><h3>Долговременный архив</h3>'+ 
       '<p class="memory-note">Сохранено вне активной памяти: фактов и правил — '+archiveCount.facts+', эпизодов — '+archiveCount.episodes+', связей — '+archiveCount.edges+'. Архив хранится локально и используется в ответах по релевантной теме.</p>'+ 
       '<form class="memory-archive-search"><label>Поиск старых записей <input type="search" name="query" maxlength="120" placeholder="Слово или тема" value="'+escape(archiveQuery)+'"></label> <button type="submit" class="button quiet">Найти в архиве</button></form>'+ 
