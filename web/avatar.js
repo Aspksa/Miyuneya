@@ -41,7 +41,7 @@
   const avatarSizeValue = document.getElementById('kitsune-size-output');
   const opacityValue = document.getElementById('kitsune-opacity-output');
 
-  const defaults = { size: 180, opacity: 100, glow: true, animations: true, font: 15, width: 410, height: 550, snap: true, quietMode: false, chatMode: 'floating' };
+  const defaults = { size: 180, opacity: 100, glow: true, animations: true, font: 15, width: 410, height: 550, snap: true, quietMode: false, chatMode: 'floating', density:'normal', lineWidth:'normal', motionLevel:'auto' };
   const settingsKey = 'miyuneya.kitsune.settings.v1';
   const avatarKey = 'miyuneya.kitsune.position.v1';
   const positionKey = ()=>'miyuneya.kitsune.position.'+(window.innerWidth <= 700?'mobile':'desktop')+'.v2';
@@ -69,6 +69,9 @@
     if(typeof storedSettings.snap==='boolean')config.snap=storedSettings.snap;
     if(typeof storedSettings.quietMode==='boolean')config.quietMode=storedSettings.quietMode;
     if(['floating','dock','full'].includes(storedSettings.chatMode))config.chatMode=storedSettings.chatMode;
+    if(['compact','normal','spacious'].includes(storedSettings.density))config.density=storedSettings.density;
+    if(['narrow','normal','wide'].includes(storedSettings.lineWidth))config.lineWidth=storedSettings.lineWidth;
+    if(['auto','low','off'].includes(storedSettings.motionLevel))config.motionLevel=storedSettings.motionLevel;
     if(Number.isInteger(storedSettings.font)&&storedSettings.font>=13&&storedSettings.font<=20)config.font=storedSettings.font;
     if(Number.isInteger(storedSettings.width)&&storedSettings.width>=320&&storedSettings.width<=800)config.width=storedSettings.width;
     if(Number.isInteger(storedSettings.height)&&storedSettings.height>=350&&storedSettings.height<=900)config.height=storedSettings.height;
@@ -392,6 +395,9 @@
     }
     for(const key of ['glow','animations','snap','quietMode'])if(typeof candidate[key]==='boolean')config[key]=candidate[key];
     if(['floating','dock','full'].includes(candidate.chatMode))config.chatMode=candidate.chatMode;
+    if(['compact','normal','spacious'].includes(candidate.density))config.density=candidate.density;
+    if(['narrow','normal','wide'].includes(candidate.lineWidth))config.lineWidth=candidate.lineWidth;
+    if(['auto','low','off'].includes(candidate.motionLevel))config.motionLevel=candidate.motionLevel;
     applySettings();
   }).catch(()=>{});
 
@@ -447,6 +453,20 @@
   }
   headerModeSelect.className='kitsune-chat-mode-quick';
   chatTools.insertBefore(headerModeSelect,openSettings);
+  const densitySelect=document.createElement('select');densitySelect.id='kitsune-chat-density';
+  for(const [id,label] of [['compact','Компактная'],['normal','Обычная'],['spacious','Просторная']]){
+    const option=document.createElement('option');option.value=id;option.textContent=label;densitySelect.append(option);
+  }
+  const widthModeSelect=document.createElement('select');widthModeSelect.id='kitsune-chat-text-width';
+  for(const [id,label] of [['narrow','Узкая колонка'],['normal','Обычная'],['wide','На всю ширину']]){
+    const option=document.createElement('option');option.value=id;option.textContent=label;widthModeSelect.append(option);
+  }
+  densitySelect.addEventListener('change',()=>{
+    config.density=densitySelect.value;applySettings();persistConfig();
+  });
+  widthModeSelect.addEventListener('change',()=>{
+    config.lineWidth=widthModeSelect.value;applySettings();persistConfig();
+  });
   const advancedChat=document.createElement('details');advancedChat.className='kitsune-advanced';
   const chatAdvancedTitle=document.createElement('summary');chatAdvancedTitle.textContent='Дополнительно · размеры окна и шрифт';
   advancedChat.append(chatAdvancedTitle);
@@ -456,7 +476,7 @@
   }
   const chatLegend=chatPanelSettings?.querySelector('legend');
   if(chatLegend){
-    chatLegend.after(controlRow('Режим чата',chatModeSelect));
+    chatLegend.after(controlRow('Режим чата',chatModeSelect),controlRow('Плотность сообщений',densitySelect),controlRow('Ширина текста',widthModeSelect));
     chatPanelSettings.append(advancedChat);
     const cloudLink=document.createElement('a');cloudLink.href='/?settings=cloud';
     cloudLink.className='kitsune-cloud-settings-link';
@@ -477,6 +497,25 @@
     write(settingsKey,config);
     void savePersistentPreference('avatar',config);
   }
+  const presence=window.MiyuneyaAvatarState?.mount({
+    avatar,chat,input,settings,config,save:persistConfig
+  });
+  const attachments=window.MiyuneyaChatAttachments?.mount({form,setStatus});
+  function rememberUI(){presence?.remember();}
+  const recoveryButton=document.createElement('button');
+  recoveryButton.type='button';recoveryButton.className='kitsune-recover-button';
+  recoveryButton.textContent='Продолжить ответ';recoveryButton.hidden=true;
+  status.insertAdjacentElement('afterend',recoveryButton);
+  function refreshRecovery(){
+    const last=history.at(-1);
+    recoveryButton.hidden=!last||last.role!=='assistant'||last.complete!==false||!!stream;
+    recoveryButton.disabled=!remoteChats;
+  }
+  recoveryButton.onclick=()=>{
+    if(stream||recoveryButton.hidden)return;
+    input.value='Продолжи последний прерванный ответ с места остановки, не повторяй уже написанное.';
+    input.focus();void send();
+  };
   function setChatMode(mode,save=true){
     if(!['floating','dock','full'].includes(mode))return;
     config.chatMode=mode;
@@ -547,6 +586,11 @@
     avatar.classList.toggle('no-glow',!config.glow);
     avatar.classList.toggle('no-motion',!preferredMotion());
     avatar.classList.toggle('kitsune-quiet',!!config.quietMode);
+    chat.classList.toggle('density-compact',config.density==='compact');
+    chat.classList.toggle('density-spacious',config.density==='spacious');
+    chat.dataset.lineWidth=config.lineWidth;
+    densitySelect.value=config.density;widthModeSelect.value=config.lineWidth;
+    presence?.updateMotion();
     chat.classList.toggle('mode-floating',config.chatMode==='floating');
     chat.classList.toggle('mode-dock',config.chatMode==='dock');
     chat.classList.toggle('mode-full',config.chatMode==='full');
@@ -669,18 +713,19 @@
     }
     while(log.children.length>history.length)log.lastElementChild.remove();
     log.scrollTop=preserveScroll?previousTop+(log.scrollHeight-previousHeight):log.scrollHeight;
+    refreshRecovery();
   }
   function openChat(){
     chat.classList.remove('mini');
     chat.hidden=false;avatar.setAttribute('aria-expanded','true');
     document.documentElement.dataset.kitsuneChatMode=config.chatMode;
-    placeChat();renderChat();input.focus();
+    placeChat();renderChat();input.focus();rememberUI();
   }
   function closeChat(){
     chat.classList.remove('mini');
     chat.hidden=true;avatar.setAttribute('aria-expanded','false');
     document.documentElement.dataset.kitsuneChatMode='closed';
-    avatar.focus({preventScroll:true});
+    avatar.focus({preventScroll:true});rememberUI();
   }
   function openSettingsDialog(){
     settingsReturnFocus=document.activeElement;
@@ -771,10 +816,10 @@
     chatPos={x:clamp((avatarPos?.x||20)+Math.min(config.size,150)+8,10,maxX),
       y:clamp((avatarPos?.y||20)+20,10,maxY)};
     placeChat();
-    expandButton.focus();
+    expandButton.focus();rememberUI();
   });
   expandButton?.addEventListener('click',()=>{
-    chat.classList.remove('mini');applySettings();placeChat();input.focus();
+    chat.classList.remove('mini');applySettings();placeChat();input.focus();rememberUI();
   });
   settingsClose.addEventListener('click',closeSettingsDialog);
   settingsBackdrop.addEventListener('click',closeSettingsDialog);
@@ -1190,4 +1235,9 @@
 
   }
   renderChat();
+  void archiveReady.finally(()=>{
+    const saved=presence?.restore();
+    if(saved?.open){openChat();if(saved.mini)minimizeButton?.click();}
+    refreshRecovery();
+  }).catch(()=>{});
 })();
