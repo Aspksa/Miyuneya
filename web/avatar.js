@@ -518,6 +518,7 @@
     }
     sizes.value=String(config.size);
     snap.checked=config.snap;quiet.checked=config.quietMode;
+    presetSelect.value=config.glow?(config.animations?'alive':'gold'):(config.animations?'gentle':'off');
     headerModeSelect.value=config.chatMode;chatModeSelect.value=config.chatMode;
   }
   image.addEventListener('load',updatePreview);
