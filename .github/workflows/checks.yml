@@ -28,6 +28,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
+      - run: npm run build
       - run: npm test
       - run: npm run check
       - name: Строгая проверка TypeScript (только CI, не требуется при запуске)
