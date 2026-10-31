@@ -394,6 +394,135 @@
     applySettings();
   }).catch(()=>{});
 
+  // Basic controls first; additional geometry is kept behind one disclosure.
+  const avatarPanel=settings.querySelector('[data-kitsune-panel="avatar"]');
+  const chatPanelSettings=settings.querySelector('[data-kitsune-panel="chat"]');
+  const effectsPanel=settings.querySelector('[data-kitsune-panel="effects"]');
+  const controlRow=(label,node)=>{
+    const wrap=document.createElement('label');
+    wrap.className='kitsune-control kitsune-new-control';
+    const title=document.createElement('span');title.textContent=label;
+    wrap.append(title,node);return wrap;
+  };
+  const sizes=document.createElement('select');sizes.id='kitsune-size-preset';
+  sizes.setAttribute('aria-label','Готовый размер аватара');
+  for(const [value,name] of [[100,'Компактный · 100 px'],[180,'Обычный · 180 px'],[260,'Крупный · 260 px']]){
+    const option=document.createElement('option');option.value=String(value);option.textContent=name;sizes.append(option);
+  }
+  const sizeChoice=controlRow('Размер аватара на компьютере',sizes);
+  const automaticHint=document.createElement('p');automaticHint.className='kitsune-help';
+  automaticHint.textContent='На телефоне аватар автоматически уменьшается до 56–72 px. Размер компьютера сохраняется отдельно.';
+  const snap=document.createElement('input');snap.type='checkbox';snap.id='kitsune-snap';
+  const snapLabel=document.createElement('label');snapLabel.className='kitsune-check';
+  snapLabel.append(snap,' Притягивать аватар к ближайшему краю после перемещения');
+  const quiet=document.createElement('input');quiet.type='checkbox';quiet.id='kitsune-quiet';
+  const quietLabel=document.createElement('label');quietLabel.className='kitsune-check';
+  quietLabel.append(quiet,' Не мешать: уменьшить внимание к аватару при работе');
+  const inlinePreview=document.createElement('div');inlinePreview.className='kitsune-live-preview';
+  inlinePreview.setAttribute('aria-label','Живой предпросмотр текущего аватара');
+  const previewImage=document.createElement('img');previewImage.alt='Предпросмотр Миюнэи';
+  const previewNote=document.createElement('p');previewNote.textContent='Предпросмотр изменяется сразу. Изменения сохраняются локально.';
+  inlinePreview.append(previewImage,previewNote);
+  const advancedAvatar=document.createElement('details');advancedAvatar.className='kitsune-advanced';
+  const advancedTitle=document.createElement('summary');advancedTitle.textContent='Дополнительно · кадрирование и тонкая настройка';
+  advancedAvatar.append(advancedTitle);
+  for(const id of ['kitsune-avatar-size','kitsune-framing','kitsune-vertical','kitsune-auto-trim']){
+    const node=document.getElementById(id)?.closest('label');
+    if(node)advancedAvatar.append(node);
+  }
+  const diagnostic=document.getElementById('kitsune-image-diagnostic');
+  if(diagnostic)advancedAvatar.append(diagnostic);
+  const avatarTitle=avatarPanel?.querySelector('legend');
+  if(avatarTitle)avatarTitle.after(inlinePreview,sizeChoice,automaticHint,snapLabel,quietLabel);
+  avatarPanel?.append(advancedAvatar);
+  const chatModeSelect=document.createElement('select');chatModeSelect.id='kitsune-chat-mode';
+  chatModeSelect.setAttribute('aria-label','Режим размещения чата');
+  const headerModeSelect=document.createElement('select');headerModeSelect.id='kitsune-chat-mode-quick';
+  headerModeSelect.setAttribute('aria-label','Быстро переключить режим чата');
+  for(const [id,text] of [['floating','Плавающий'],['dock','Справа'],['full','На весь экран']]){
+    for(const control of [chatModeSelect,headerModeSelect]){
+      const option=document.createElement('option');option.value=id;option.textContent=text;control.append(option);
+    }
+  }
+  headerModeSelect.className='kitsune-chat-mode-quick';
+  chatTools.insertBefore(headerModeSelect,openSettings);
+  const advancedChat=document.createElement('details');advancedChat.className='kitsune-advanced';
+  const chatAdvancedTitle=document.createElement('summary');chatAdvancedTitle.textContent='Дополнительно · размеры окна и шрифт';
+  advancedChat.append(chatAdvancedTitle);
+  for(const id of ['kitsune-chat-width','kitsune-chat-height','kitsune-chat-font']){
+    const node=document.getElementById(id)?.closest('label');
+    if(node)advancedChat.append(node);
+  }
+  const chatLegend=chatPanelSettings?.querySelector('legend');
+  if(chatLegend){
+    chatLegend.after(controlRow('Режим чата',chatModeSelect));
+    chatPanelSettings.append(advancedChat);
+    const cloudLink=document.createElement('a');cloudLink.href='/?settings=cloud';
+    cloudLink.className='kitsune-cloud-settings-link';
+    cloudLink.textContent='Настроить Cloud.ru и модель в настройках проекта';
+    const explain=document.createElement('p');explain.className='kitsune-help';
+    explain.textContent='API-ключ и выбор модели находятся только в настройках проекта. В чате используется сохранённое подключение.';
+    chatPanelSettings.append(cloudLink,explain);
+  }
+  const presetSelect=document.createElement('select');presetSelect.id='kitsune-effect-preset';
+  presetSelect.setAttribute('aria-label','Готовый профиль эффектов');
+  for(const [id,label] of [
+    ['off','Без эффектов'],['gentle','Нежный'],['gold','Золотое сияние'],['alive','Живой']
+  ]){const option=document.createElement('option');option.value=id;option.textContent=label;presetSelect.append(option);}
+  const presetRow=controlRow('Готовые эффекты',presetSelect);
+  effectsPanel?.querySelector('legend')?.after(presetRow);
+  function persistConfig(){
+    userChangedSettings=true;
+    write(settingsKey,config);
+    void savePersistentPreference('avatar',config);
+  }
+  function setChatMode(mode,save=true){
+    if(!['floating','dock','full'].includes(mode))return;
+    config.chatMode=mode;
+    chat.classList.remove('mini');
+    headerModeSelect.value=mode;chatModeSelect.value=mode;
+    applySettings();
+    if(save)persistConfig();
+  }
+  headerModeSelect.onchange=()=>setChatMode(headerModeSelect.value);
+  chatModeSelect.onchange=()=>setChatMode(chatModeSelect.value);
+  function usePreset(mode){
+    const settingsByPreset={
+      off:{glow:false,animations:false,gold:false,dragEase:false},
+      gentle:{glow:false,animations:true,gold:false,dragEase:true},
+      gold:{glow:true,animations:false,gold:true,dragEase:false},
+      alive:{glow:true,animations:true,gold:true,dragEase:true}
+    };
+    const selected=settingsByPreset[mode];if(!selected)return;
+    config.glow=selected.glow;config.animations=selected.animations;
+    applySettings();persistConfig();
+    window.dispatchEvent(new CustomEvent('miyuneya-avatar-effect-preset',{detail:selected}));
+  }
+  presetSelect.addEventListener('change',()=>usePreset(presetSelect.value));
+  sizes.onchange=()=>{config.size=Number(sizes.value);applySettings();persistConfig();};
+  snap.onchange=()=>{config.snap=snap.checked;applySettings();persistConfig();};
+  quiet.onchange=()=>{config.quietMode=quiet.checked;applySettings();persistConfig();};
+  function updatePreview(){
+    previewImage.src=image.currentSrc||image.src;
+    previewImage.style.opacity=String(config.opacity/100);
+    previewImage.classList.toggle('preview-glow',config.glow);
+    previewImage.classList.toggle('preview-quiet',config.quietMode);
+    sizes.value=[100,180,260].includes(config.size)?String(config.size):'180';
+    snap.checked=config.snap;quiet.checked=config.quietMode;
+    headerModeSelect.value=config.chatMode;chatModeSelect.value=config.chatMode;
+  }
+  image.addEventListener('load',updatePreview);
+  if(window.MutationObserver)new MutationObserver(updatePreview).observe(image,{attributes:true,attributeFilter:['src','srcset']});
+  // Never suppress normal workbench input; only mute avatar decoration while editing.
+  function adaptQuiet(){
+    const target=document.activeElement;
+    const editing=target&&!(chat.contains(target)||settings.contains(target))&&
+      (target.matches('textarea,[contenteditable="true"]') || target.closest('dialog')?.id==='editor');
+    avatar.classList.toggle('kitsune-quiet-automatic',Boolean(editing));
+  }
+  document.addEventListener('focusin',adaptQuiet);
+  document.addEventListener('focusout',()=>requestAnimationFrame(adaptQuiet));
+
   function setStatus(message=''){status.textContent=message;status.hidden=!message;}
   function preferredMotion(){
     return config.animations && document.documentElement.dataset.motion!=='off'
@@ -426,6 +555,7 @@
     heightValue.textContent=config.height+' px';
     avatarSizeValue.textContent=config.size+' px';
     opacityValue.textContent=config.opacity+'%';
+    updatePreview();
     placeAvatar();
     placeChat();
   }
