@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { atomicWrite, readJSON, removeTree, retryFile } from './runtime.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-const allowed = /^(?:src\/[a-zA-Z0-9_-]+\.ts|server\/(?:app|memory|memory-archive|cognitive|recall|growth|logic|disk|integrity|workflows|chat-[a-z0-9-]+)\.ts|scripts\/(?:serve|chat-(?:archive|search)-worker)\.mjs|web\/(?:blank\.(?:html|css|js)|unified-ui\.css|workspace-layout\.css|avatar-layout\.css|avatar-experience\.css|avatar-state\.js|chat-format\.js|chat-attachments\.js|avatar(?:-studio)?\.(?:css|js)|index\.html|style\.css|fox\.svg|favicon\.svg|avatars\/avatar[1-4]\.png))$/;
+const allowed = /^(?:src\/[a-zA-Z0-9_-]+\.ts|server\/(?:app|memory|memory-archive|cognitive|cognitive-daemon|recall|growth|logic|disk|integrity|workflows|chat-[a-z0-9-]+)\.ts|scripts\/(?:serve|cognitive-worker|chat-(?:archive|search)-worker)\.mjs|web\/(?:blank\.(?:html|css|js)|unified-ui\.css|workspace-layout\.css|avatar-layout\.css|avatar-experience\.css|avatar-state\.js|chat-format\.js|chat-attachments\.js|avatar(?:-studio)?\.(?:css|js)|index\.html|style\.css|fox\.svg|favicon\.svg|avatars\/avatar[1-4]\.png))$/;
 async function plainPath(root,relative,missing=false) {
   const pieces=relative.split('/');
   for(let i=1;i<=pieces.length;i++) {
