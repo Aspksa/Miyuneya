@@ -367,7 +367,7 @@ export function mountMemory(host: MemoryHost) {
     if(!c)return '<p class="memory-empty">Когнитивная память пока не готова. Проверьте версию локального сервера.</p>';
     const counts=[
       ['Записанных фактов',c.summary.active],
-      ['Со ссылками на источники',c.summary.withEvidence],
+      ['От вас / с источником',c.summary.withEvidence],
       ['Контекстных связей',c.summary.associations],
       ['Непроверенных',c.summary.inferred+c.summary.contested]
     ];
