@@ -49,7 +49,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     if(!/^[a-z0-9+.-]+\/[a-z0-9+.-]+$/i.test(type)||type.length>100)throw fail('Неверный тип вложения.');
     const name=basename(String(fileName||'файл')).replace(/[\x00-\x1f]/g,'').slice(0,180)||'файл';
     if(messageId&&!store.visible(conversationId,messageId))throw fail('Сообщение для вложения не найдено.',404);
-    await ensureSpace(blobRoot===store.home?store.home:store.home,bytes.length*2,'сохранение вложения');
+    await ensureSpace(store.home,bytes.length*2,'сохранение вложения');
     const id=randomUUID(),sha256=digest(bytes),date=now();
     const file=join(blobRoot,id+'.blob');
     await mkdir(blobRoot,{recursive:true});
@@ -79,6 +79,53 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       throw fail('Контрольная сумма вложения не совпадает.',503);
     }
     return {meta,bytes};
+  }
+  async function configureExternal(destination:string|null){
+    if(destination===null||destination===''){
+      store.write('backup-config',()=>store.setSetting('externalBackupPath',''));
+      return {configured:false,destination:null};
+    }
+    if(typeof destination!=='string'||destination.length>512||!isAbsolute(destination))
+      throw fail('Укажите абсолютный путь к папке на другом физическом диске.');
+    const target=await realpath(destination).catch(()=>{throw fail('Диск резервного хранения не подключён или папка отсутствует.',404);});
+    const targetStat=await stat(target);
+    if(!targetStat.isDirectory())throw fail('Указан путь к файлу вместо папки.');
+    const main=await realpath(store.home);
+    if(process.platform==='win32'){
+      if(parse(target).root.toLowerCase()===parse(main).root.toLowerCase())
+        throw fail('Для независимых копий выберите другой диск Windows.');
+      if(target.startsWith('\\'))throw fail('Укажите локальный внешний SSD, а не сетевой путь.');
+    }else if(targetStat.dev===(await stat(main)).dev)
+      throw fail('Резервный путь должен находиться на другой файловой системе.');
+    await ensureSpace(target,128*1024*1024,'копирование на внешний SSD');
+    const path=join(target,'Miyuneya-chat-backups');
+    await mkdir(path,{recursive:true});
+    store.write('backup-config',()=>store.setSetting('externalBackupPath',path));
+    return {configured:true,destination:path};
+  }
+  function externalConfiguration(){
+    const path=store.getSetting('externalBackupPath');
+    return {configured:!!path,destination:path||null};
+  }
+  async function inspectAttachments(max=200){
+    const after=store.getSetting('attachmentScanCursor');
+    const query='SELECT id,conversation_id,message_id,byte_size FROM attachments WHERE id>? ORDER BY id LIMIT ?';
+    let rows=db.prepare(query).all(after,max) as Row[];
+    if(!rows.length)rows=db.prepare(query).all('',max) as Row[];
+    const issues:string[]=[];
+    for(const row of rows){
+      const file=join(blobRoot,row.id+'.blob');
+      const size=await stat(file).catch(()=>null);
+      if(!size||size.size!==Number(row.byte_size))issues.push('Отсутствует или повреждён файл '+row.id);
+      if(row.message_id && !store.visible(row.conversation_id,row.message_id))
+        issues.push('Вложение связано с отсутствующим сообщением '+row.id);
+      if(issues.length>=15)break;
+      // Yield to HTTP events on low-end SSDs.
+      if(issues.length%20===0)await new Promise(resolve=>setImmediate(resolve));
+    }
+    if(!issues.length&&rows.length)
+      store.setSetting('attachmentScanCursor',rows[rows.length-1].id);
+    return issues;
   }
   async function verifyBackup(dir:string){
     const issues:string[]=[];
