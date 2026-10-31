@@ -1,5 +1,6 @@
 import { DatabaseSync, backup } from 'node:sqlite';
 import { acquireDatabaseWriter, ensureSpace } from './chat-db-safety.ts';
+import { searchInWorker } from './chat-search.ts';
 import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { mkdir, stat } from 'node:fs/promises';
@@ -140,6 +141,9 @@ export async function openSqliteChatArchive(dataDir:string){
   const setSetting=(key:string,val:string)=>db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,val);
   const conversationStmt=db.prepare('SELECT * FROM conversations WHERE id=?');
   const messageStmt=db.prepare('SELECT * FROM messages WHERE id=?');
+  const sequenceStmt=db.prepare('SELECT * FROM messages WHERE conversation_id=? AND sequence>? AND sequence<=? ORDER BY sequence');
+  const insertStmt=db.prepare('INSERT INTO messages(id,conversation_id,sequence,role,content,created_at,version,complete,parent_message_id) VALUES(?,?,?,?,?,?,?,?,?)');
+  const updateMessageStmt=db.prepare('UPDATE messages SET content=?,version=?,complete=? WHERE id=?');
   const getConversation=(id:string):Row=>{
     const c=conversationStmt.get(safeId(id)) as Row|undefined;
     if(!c)throw error('Разговор не найден.',404);return c;
@@ -159,8 +163,7 @@ export async function openSqliteChatArchive(dataDir:string){
     const c=getConversation(id),split=Number(c.inherited_count);
     const inherited=start<split?scan(c.parent_id,start,Math.min(end,split),depth+1):[];
     const lower=Math.max(start,split);
-    const own=lower<end?db.prepare('SELECT * FROM messages WHERE conversation_id=? AND sequence>? AND sequence<=? ORDER BY sequence')
-      .all(id,lower,end) as Row[]:[];
+    const own=lower<end?sequenceStmt.all(id,lower,end) as Row[]:[];
     return inherited.concat(own);
   };
   const visible=(conversationId:string,id:string,depth=0):Row|undefined=>{
@@ -245,8 +248,7 @@ export async function openSqliteChatArchive(dataDir:string){
         if(msg.version<previous.version||(msg.version===previous.version&&previous.content===msg.content&&!!previous.complete===msg.complete))
           return {message:formatMessage(previous),conversation:formatConversation(c)};
         if(msg.version===previous.version||(previous.complete&&!msg.complete))throw error('Конфликт версии сообщения.',409);
-        db.prepare('UPDATE messages SET content=?,version=?,complete=? WHERE id=?')
-          .run(msg.content,msg.version,msg.complete?1:0,id);
+        updateMessageStmt.run(msg.content,msg.version,msg.complete?1:0,id);
       }else{
         const count=Number(c.message_count);
         if(expectedCount!==undefined&&expectedCount!==count)throw error('Другая вкладка изменила разговор.',409);
@@ -256,8 +258,7 @@ export async function openSqliteChatArchive(dataDir:string){
           if(!found)throw error('Связанное сообщение не найдено.',409);
           parent=found.id;
         }else if(count)parent=scan(conversationId,count-1,count)[0]?.id||null;
-        db.prepare('INSERT INTO messages(id,conversation_id,sequence,role,content,created_at,version,complete,parent_message_id) VALUES(?,?,?,?,?,?,?,?,?)')
-          .run(id,conversationId,count+1,msg.role,msg.content,msg.createdAt,msg.version,msg.complete?1:0,parent);
+        insertStmt.run(id,conversationId,count+1,msg.role,msg.content,msg.createdAt,msg.version,msg.complete?1:0,parent);
         db.prepare('UPDATE conversations SET message_count=message_count+1 WHERE id=?').run(conversationId);
       }
       db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(now(),conversationId);
@@ -271,8 +272,23 @@ export async function openSqliteChatArchive(dataDir:string){
       const end=before===undefined?count:Math.min(count,integer(before,0));
       const take=Math.max(1,Math.min(150,integer(limit,100)));
       const start=Math.max(0,end-take);
-      return {conversation:formatConversation(c),messages:scan(id,start,end).map(formatMessage),
-        total:count,nextBefore:start?start:null};
+      const key=id+':'+start+':'+end;
+      const hit=pageCache.get(key);
+      if(hit){
+        pageCache.delete(key);pageCache.set(key,hit);
+        return structuredClone(hit.result);
+      }
+      const result=makePage(c,scan(id,start,end),start,count);
+      const bytes=Buffer.byteLength(JSON.stringify(result));
+      if(bytes<=2*1024*1024){
+        pageCache.set(key,{size:bytes,result:structuredClone(result)});
+        cachedBytes+=bytes;
+        while((pageCache.size>12||cachedBytes>8*1024*1024)&&pageCache.size){
+          const oldest=pageCache.keys().next().value!;
+          cachedBytes-=pageCache.get(oldest)!.size;pageCache.delete(oldest);
+        }
+      }
+      return result;
     });
   }
   async function* exportLines(){
@@ -401,6 +417,16 @@ export async function openSqliteChatArchive(dataDir:string){
       return {imported:records,conversations};
     }finally{await rm(temp,{force:true}).catch(()=>{});}
   }
+  async function searchAdvanced(input:ChatQuery={}){
+    if(!(input.query||'').trim())return list(input);
+    const result=await searchInWorker(path,input);
+    const latency=result.elapsedMs;
+    const metric=timings.get('indexed-search')||{count:0,sum:0,max:0};
+    metric.count++;metric.sum+=latency;metric.max=Math.max(metric.max,latency);
+    timings.set('indexed-search',metric);
+    return {...result,revision:Number(getSetting('revision')||0),
+      selectedId:getSetting('selectedId')||null};
+  }
   const rebuildSearch=()=>write('fts-rebuild',()=>{
     db.prepare("INSERT INTO message_fts(message_fts) VALUES('rebuild')").run();
     setSetting('ftsRebuilt',now());return {ok:true};
@@ -449,7 +475,7 @@ export async function openSqliteChatArchive(dataDir:string){
   return {
     path,db,home,readOnly:()=>readOnly,lockWrites:(reason:string)=>{readOnly=true;warnings.push(reason);},
     warnings,timings,timed,getSetting,setSetting,write,
-    getConversation,formatConversation,visible,list,search:list,create,modify,select,
+    getConversation,formatConversation,visible,list,search:list,searchAdvanced,create,modify,select,
     saveMessage,page,exportLines,importLegacy,importStream,rebuildSearch,quickCheck,
     shutdown:async()=>{if(!closed){closed=true;db.close();await releaseLock();}}
   };
