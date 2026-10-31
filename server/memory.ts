@@ -173,7 +173,7 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
   memory.lastSleep = typeof raw.lastSleep === 'string' && Number.isFinite(Date.parse(raw.lastSleep)) ? raw.lastSleep : null;
   memory.notesSeen = typeof raw.notesSeen === 'string' && Number.isFinite(Date.parse(raw.notesSeen)) ? raw.notesSeen : null;
   if(raw.noteVersions && typeof raw.noteVersions==='object' && !Array.isArray(raw.noteVersions))memory.noteVersions=Object.fromEntries(Object.entries(raw.noteVersions).filter(([id,version])=>id.length<=100 && typeof version==='string' && (Number.isFinite(Date.parse(version)) || /^[a-f0-9]{64}$/.test(version))).slice(0,5000)) as Record<string,string>;
-  memory.noteProgress = Object.fromEntries(Object.entries(raw.noteProgress || {}).filter(([id,p]: any) => id.length <= 100 && p && typeof p.version === 'string' && Number.isSafeInteger(p.offset) && p.offset >= 0));
+  memory.noteProgress = Object.fromEntries(Object.entries(raw.noteProgress || {}).filter(([id,p]: any) => id.length <= 100 && p && typeof p.version === 'string' && Number.isSafeInteger(p.offset) && p.offset >= 0)) as Record<string,{version:string;offset:number}>;
   memory.history = (Array.isArray(raw.history) ? raw.history : []).filter((h:any)=>h && typeof h.id==='string' && typeof h.before==='string' && typeof h.after==='string').slice(-200).map((h:any)=>({id:h.id.slice(0,100),before:clip(h.before),after:clip(h.after),at:iso(h.at,now),reason:clip(h.reason,100),evidence:savedEvidence(h.evidence)}));
   memory.forgotten = (Array.isArray(raw.forgotten) ? raw.forgotten : []).filter((v:any)=>Array.isArray(v)&&v.length&&v.length<=100&&v.every((x:any)=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x))).slice(-100);
   return memory;
@@ -930,7 +930,7 @@ export async function openMemory(dataDir: string, options: Options) {
 
   const titles = (): Titles => {
     const data = options.workspace();
-    return new Map(data ? [...data.notes.map(n => [n.id, { kind: 'note', title: n.title }] as const), ...data.tasks.map(t => [t.id, { kind: 'task', title: t.title }] as const)] : []);
+    return new Map<string,{kind:'note'|'task';title:string}>(data ? [...data.notes.map(n => [n.id, { kind: 'note', title: n.title }] as const), ...data.tasks.map(t => [t.id, { kind: 'task', title: t.title }] as const)] : []);
   };
   const embedReady = () => !!options.embed && !!options.embedModel?.() && options.available() && memory.settings.enabled && Date.now() >= embedRetryAt;
   const embedFailed = (e: unknown) => { embedRetryAt = Date.now() + 30 * 60_000; embedError = (e as Error).message || 'Поиск по смыслу недоступен.'; };
