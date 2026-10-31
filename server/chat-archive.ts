@@ -262,8 +262,11 @@ export async function openChatArchive(dataDir: string) {
         const old = parseStrict(await readFile(filePath(conversationId, existing), 'utf8'),
           filePath(conversationId, existing), validMessage);
         if (old.role !== msg.role || old.createdAt !== msg.createdAt) throw error('Идентификатор сообщения уже занят.', 409);
-        if (importOnly && (old.content !== msg.content || old.version !== msg.version || old.complete !== msg.complete))
-          throw error('Импорт не может заменить существующее сообщение. Архив на диске не изменён.', 409);
+        if (importOnly) {
+          if (old.version > msg.version) return { message: old, conversation: { ...meta } };
+          if (old.content !== msg.content || old.version !== msg.version || old.complete !== msg.complete)
+            throw error('Импорт не может заменить существующее сообщение. Архив на диске не изменён.', 409);
+        }
         if (msg.version < old.version || (msg.version === old.version && msg.content === old.content && msg.complete === old.complete))
           return { message: old, conversation: { ...meta } };
         if (msg.version === old.version || (old.complete && !msg.complete)) throw error('Конфликт версии сообщения.', 409);
