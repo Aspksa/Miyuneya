@@ -60,7 +60,7 @@ test('Forgetting, source expiry and private reset invalidate all dependent deriv
   store.learn(growth,'changes:'+hashB);
   assert.equal(store.overview().total,2);
   map.get('f1').status='inferred';
-  assert.equal(store.reconcile(),1,'topic loses its three grounded source records');
+  assert.equal(store.reconcile(),2,'both topic and association lose their grounded source records');
   assert.equal(store.overview().total,0,'hypothesis also loses enough source records');
   store.clear();
   assert.equal(store.overview().total,0);
