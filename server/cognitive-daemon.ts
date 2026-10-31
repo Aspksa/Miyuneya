@@ -81,8 +81,10 @@ export async function openCognitiveDaemon(dataDir:string, getMemory:()=>Memory) 
   };
   const send=async(jobId:string,data:ReturnType<typeof snapshot>)=>{
     if(!child){
+      // windowsHide is supported at runtime, but omitted from older
+      // @types/node ForkOptions bundled by the CI typechecker.
       child=fork(childFile,[],{cwd:dataDir,execArgv:[],windowsHide:true,
-        stdio:['ignore','ignore','ignore','ipc']});
+        stdio:['ignore','ignore','ignore','ipc']} as Parameters<typeof fork>[2]);
       const started=child;
       child.on('exit',()=>{if(child===started)child=null;});
       child.on('error',()=>{if(child===started)child=null;});
