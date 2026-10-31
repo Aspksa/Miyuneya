@@ -261,6 +261,21 @@
         <p class="cloud-note">Проверка доступа к каталогу и тест генерации — разные действия. Тест генерации отправит короткий запрос к модели и может расходовать платные токены.</p>
         <p class="cloud-note">Ключ хранится в <code>data/assistant.json</code> в исходном виде (без шифрования). Не пересылайте и не публикуйте этот файл.</p>
       </fieldset>
+      <fieldset class="setting-group project-updates" id="project-updates">
+        <legend><span class="setting-heading"><svg class="setting-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#mi-refresh"></use></svg><span>Обновления Miyuneya</span></span></legend>
+        <p>Проверка официальных стабильных выпусков GitHub. Установка выполняется с резервной копией и восстановлением при ошибке.</p>
+        <div class="update-version" id="update-version">Текущая версия: проверяется…</div>
+        <p class="setting-hint" id="update-state" role="status" aria-live="polite">Сведения о релизе ещё не загружены.</p>
+        <div class="update-actions">
+          <button type="button" class="cloud-button" id="update-check">Проверить GitHub</button>
+          <button type="button" class="cloud-button primary" id="update-download" hidden>Скачать и проверить</button>
+          <button type="button" class="cloud-button" id="update-restart" hidden>Установить и перезапустить</button>
+        </div>
+        <label class="setting-check"><input type="checkbox" id="update-auto-check"><span class="setting-check-name">Автоматическая проверка раз в сутки</span></label>
+        <label class="setting-check"><input type="checkbox" id="update-auto-download"><span class="setting-check-name">Автоматически скачивать и проверять новые пакеты (без установки)</span></label>
+        <details class="update-notes"><summary>Что изменилось в обновлении</summary><p id="update-notes">Список изменений появится после проверки GitHub.</p></details>
+        <p class="setting-hint">Обновление устанавливается только после подтверждения. При ошибке запуска проект возвращается к предыдущему коду. Данные и настройки не удаляются. Без опубликованного релиза GitHub установка недоступна.</p>
+      </fieldset>
       <button class="reset-button" type="button" id="appearance-reset"><svg class="setting-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><use href="#mi-refresh"></use></svg><span>Сбросить оформление</span></button>
       <p class="save-caption">Изменения сохраняются автоматически.</p>
     </div>
