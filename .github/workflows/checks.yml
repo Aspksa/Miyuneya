@@ -42,6 +42,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - run: npm run diagnose
+  typecheck:
+    name: TypeScript — проверка типов (без изменения portable-сборки)
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Отдельная среда проверки типов
+        run: npm install --prefix tools/typecheck --ignore-scripts --no-audit --no-fund
+      - name: Проверка типов src и server
+        run: node tools/typecheck/node_modules/typescript/bin/tsc --project tools/typecheck/tsconfig.json
   windows-bootstrap:
     name: Windows — официальная загрузка и автономный повтор
     runs-on: windows-latest
