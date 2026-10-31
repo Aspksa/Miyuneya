@@ -480,3 +480,21 @@
   .kitsune-chat-tools button { min-width: 30px; min-height: 32px; }
   #kitsune-clear { padding-inline: 3px; font-size: .72em; }
 }
+
+/* The complete archive is loaded one page at a time, inside the existing chat. */
+.kitsune-load-older {
+  flex: 0 0 auto;
+  display: block;
+  margin: 8px auto 0;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--icon-hover);
+  font: inherit;
+  font-size: .8em;
+  cursor: pointer;
+}
+.kitsune-load-older[hidden], .kitsune-chat.mini .kitsune-load-older { display: none !important; }
+.kitsune-history-panel > button { width: 100%; min-height: 32px; }
+.kitsune-history-panel > button[hidden] { display: none !important; }

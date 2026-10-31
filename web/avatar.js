@@ -19,6 +19,9 @@
   const reset = document.getElementById('kitsune-settings-reset');
   const clearChat = document.getElementById('kitsune-clear');
   const chatTools = chat.querySelector('.kitsune-chat-tools');
+  clearChat.textContent='Новый чат';
+  clearChat.title='Начать новый разговор, сохранив предыдущий';
+  clearChat.setAttribute('aria-label','Начать новый разговор; предыдущий сохраняется');
   const openSettings = document.getElementById('kitsune-chat-settings');
   const status = document.getElementById('kitsune-chat-status');
   const sizeInput = document.getElementById('kitsune-avatar-size');
@@ -69,145 +72,243 @@
   let avatarPos=validPosition(savedAvatar)?savedAvatar:null;
   let chatPos=validPosition(savedChat)?savedChat:null;
   let suppressClick=false, stream=null, settingsReturnFocus=null;
-  let history=read(historyKey,[]);
-  if(!Array.isArray(history)) history=[];
-  history=history.filter(m=>m && (m.role==='user'||m.role==='assistant') && typeof m.content==='string' && m.content.length<=20000);
-  // The browser copy is retained as a recovery source until server migration succeeds.
-  let chatState={revision:0,conversations:[],selectedId:null};
-  let remoteChats=false, saveQueue=Promise.resolve(), preferenceQueue=Promise.resolve();
+  // The old browser copy is kept untouched as an emergency migration source.
+  const legacyHistory=read(historyKey,[]);
+  let history=Array.isArray(legacyHistory)?legacyHistory.filter(m=>m &&
+    (m.role==='user'||m.role==='assistant') && typeof m.content==='string'):[];
+  const recoveryKey='miyuneya.kitsune.recovery.v3';
+  let chatState={conversations:[],selectedId:null,total:0};
+  let remoteChats=false, loadingOlder=false, nextBefore=null, showArchived=false, activeMeta=null;
   let userChangedSettings=false, userTouchedChats=false;
-  const conversationId=()=>crypto.randomUUID?.()||'chat-'+Date.now()+'-'+Math.floor(Math.random()*1e6);
+  let saveQueue=Promise.resolve(), preferenceQueue=Promise.resolve(), listRequest=0;
+  const base='/api/assistant/conversations';
+  const conversationId=()=>crypto.randomUUID?.()||'chat-'+Date.now()+'-'+Math.floor(Math.random()*1e8);
   const firstTitle=messages=>(messages.find(m=>m.role==='user')?.content||'Новый разговор').slice(0,90);
-  function activeConversation(){return chatState.conversations.find(row=>row.id===chatState.selectedId);}
+  const currentRow=()=>activeMeta?.id===chatState.selectedId?activeMeta:
+    chatState.conversations.find(c=>c.id===chatState.selectedId);
+  const nowISO=()=>new Date().toISOString();
+  function trimVisibleHistory(){
+    if(history.length<=240)return;
+    const removed=history.length-200;
+    history=history.slice(removed);
+    nextBefore=(nextBefore??0)+removed;
+    updateOlderButton();
+  }
   function saveHistory(){
-    // Never erase the legacy browser copy: users can still recover after a failed disk write.
-    if(!write(historyKey,history))setStatus('История не помещается в браузере; проверьте сохранение на сервере.');
-    if(!remoteChats)return;
-    if(!activeConversation() && !history.length){persistChatState();return;}
-    let row=activeConversation();
-    if(!row){
-      row={id:conversationId(),title:firstTitle(history),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages:[]};
-      chatState.conversations.push(row);chatState.selectedId=row.id;
-    }
-    row.messages=history.map(m=>({role:m.role,content:m.content}));
-    if(row.title==='Новый разговор' && history.some(m=>m.role==='user'))row.title=firstTitle(history);
-    row.updatedAt=new Date().toISOString();
-    persistChatState();
-    renderConversationList();
+    // Only keep a small extra browser recovery window; disk archive is authoritative.
+    if(!write(recoveryKey,history.slice(-40).map(({role,content})=>({role,content}))))
+      setStatus('Браузерная резервная копия заполнена. Проверьте доступ к папке проекта.');
   }
-  function persistChatState(){
-    const snapshot=structuredClone(chatState);
-    saveQueue=saveQueue.then(async()=>{
-      const response=await fetch('/api/assistant/conversations',{method:'PUT',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({...snapshot,revision:chatState.revision})});
-      const body=await response.json().catch(()=>({}));
-      if(!response.ok)throw Error(body.error||'Не удалось сохранить переписку.');
-      chatState.revision=body.revision;
-    }).catch(error=>setStatus('История осталась в браузере. Сервер: '+error.message));
+  async function requestArchive(url,options){
+    const response=await fetch(url,{cache:'no-store',...options});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw Error(data.error||'Ошибка сохранения архива переписки.');
+    return data;
   }
-  // Appearance is synchronized separately and cannot overwrite chat messages.
+  function jsonOptions(method,data){
+    return {method,headers:{'Content-Type':'application/json'},body:JSON.stringify(data)};
+  }
+  function queued(task){
+    const next=saveQueue.catch(()=>{}).then(task);
+    saveQueue=next.catch(()=>{});
+    return next;
+  }
   function savePersistentPreference(field,value){
     preferenceQueue=preferenceQueue.then(async()=>{
-      const response=await fetch('/api/assistant/preferences',{method:'PATCH',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({[field]:value})});
-      if(!response.ok)throw Error('Ошибка сохранения настроек');
+      await requestArchive('/api/assistant/preferences',jsonOptions('PATCH',{[field]:value}));
     }).catch(()=>setStatus('Настройки сохранены в браузере, но не на сервере.'));
     return preferenceQueue;
   }
   window.miyuneyaAvatarPreferences={
-    load:async()=>{const response=await fetch('/api/assistant/preferences',{cache:'no-store'});if(!response.ok)throw Error('Настройки недоступны');return response.json();},
+    load:()=>requestArchive('/api/assistant/preferences'),
     save:savePersistentPreference
   };
+
+  // Chat controls stay inside the existing floating widget.
   const historyButton=document.createElement('button');
-  historyButton.type='button';historyButton.id='kitsune-history';historyButton.textContent='◷';historyButton.setAttribute('aria-label','История диалогов');
+  historyButton.type='button';historyButton.id='kitsune-history';historyButton.textContent='◷';
+  historyButton.setAttribute('aria-label','История диалогов');
   historyButton.title='Предыдущие разговоры';historyButton.setAttribute('aria-expanded','false');
   const historyPanel=document.createElement('div');historyPanel.className='kitsune-history-panel';historyPanel.hidden=true;
-  const searchHistory=document.createElement('input');searchHistory.type='search';searchHistory.placeholder='Поиск по разговорам';
-  searchHistory.setAttribute('aria-label','Поиск по истории');
+  const searchHistory=document.createElement('input');searchHistory.type='search';
+  searchHistory.placeholder='Поиск по всей переписке';
+  searchHistory.setAttribute('aria-label','Поиск по всем сохранённым сообщениям');
   const newButton=document.createElement('button');newButton.type='button';newButton.textContent='+ Новый разговор';
+  const archiveToggle=document.createElement('button');archiveToggle.type='button';archiveToggle.textContent='Архив';
   const historyList=document.createElement('div');historyList.className='kitsune-history-list';
-  historyPanel.append(searchHistory,newButton,historyList);
-  chatTools.insertBefore(historyButton,clearChat);chat.querySelector('.kitsune-chat-header').after(historyPanel);
+  const moreChats=document.createElement('button');moreChats.type='button';moreChats.textContent='Показать ещё';
+  historyPanel.append(searchHistory,newButton,archiveToggle,historyList,moreChats);
+  chatTools.insertBefore(historyButton,clearChat);
+  chat.querySelector('.kitsune-chat-header').after(historyPanel);
+  const moreMessages=document.createElement('button');moreMessages.type='button';
+  moreMessages.className='kitsune-load-older';moreMessages.textContent='Загрузить предыдущие сообщения';
+  moreMessages.hidden=true;log.before(moreMessages);
+  const closeHistory=()=>{historyPanel.hidden=true;historyButton.setAttribute('aria-expanded','false');};
+  function updateOlderButton(){moreMessages.hidden=nextBefore===null||!remoteChats;}
+  async function loadConversation(id){
+    if(stream){setStatus('Сначала остановите текущий ответ.');return;}
+    await saveQueue;
+    const page=await requestArchive(base+'/'+encodeURIComponent(id)+'/messages?limit=100');
+    await requestArchive(base+'/selection',jsonOptions('PATCH',{id}));
+    chatState.selectedId=id;
+    activeMeta=page.conversation;
+    history=page.messages;
+    nextBefore=page.nextBefore;
+    updateOlderButton();saveHistory();renderChat();renderConversationList();
+  }
+  async function fetchConversationList(){
+    const ticket=++listRequest;
+    const query=new URLSearchParams({offset:'0',limit:'60',q:searchHistory.value,
+      archived:showArchived?'1':'0'});
+    const data=await requestArchive(base+'?'+query);
+    if(ticket!==listRequest)return;
+    chatState.conversations=data.conversations;
+    chatState.total=data.total;
+    renderConversationList();
+  }
+  async function loadMoreConversations(){
+    if(chatState.conversations.length>=chatState.total)return;
+    const query=new URLSearchParams({offset:String(chatState.conversations.length),limit:'60',
+      q:searchHistory.value,archived:showArchived?'1':'0'});
+    const data=await requestArchive(base+'?'+query);
+    chatState.conversations.push(...data.conversations);
+    chatState.total=data.total;renderConversationList();
+  }
   function renderConversationList(){
     if(historyPanel.hidden)return;
     historyList.replaceChildren();
-    const query=searchHistory.value.toLocaleLowerCase('ru');
-    for(const row of [...chatState.conversations].sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt))
-      .filter(r=>(r.title+' '+r.messages.map(m=>m.content).join(' ')).toLocaleLowerCase('ru').includes(query))){
+    for(const row of chatState.conversations){
       const wrapper=document.createElement('div');wrapper.className='kitsune-history-entry';
       const select=document.createElement('button');select.type='button';select.textContent=row.title||'Без названия';
       select.title=row.title;select.setAttribute('aria-current',String(row.id===chatState.selectedId));
-      select.onclick=()=>{
-        if(stream){setStatus('Остановите ответ перед переключением диалога.');return;}
-        chatState.selectedId=row.id;history=row.messages.map(m=>({...m}));
-        write(historyKey,history);renderChat();saveHistory();renderConversationList();
-        historyPanel.hidden=true;historyButton.setAttribute('aria-expanded','false');
+      select.onclick=()=>void loadConversation(row.id).then(closeHistory)
+        .catch(e=>setStatus('Не удалось открыть разговор: '+e.message));
+      const rename=document.createElement('button');rename.type='button';
+      rename.textContent='✎';rename.title='Переименовать';
+      rename.onclick=async()=>{
+        const title=prompt('Название разговора',row.title);
+        if(title===null)return;
+        try{
+          await requestArchive(base+'/'+encodeURIComponent(row.id),jsonOptions('PATCH',{title:title.slice(0,140)}));
+          await fetchConversationList();
+        }catch(e){setStatus(e.message);}
       };
-      const rename=document.createElement('button');rename.type='button';rename.textContent='✎';rename.title='Переименовать';
-      rename.onclick=()=>{
-        const name=prompt('Название разговора',row.title);
-        if(name===null)return;
-        row.title=name.trim().slice(0,140)||'Без названия';
-        saveHistory();renderConversationList();
+      const archive=document.createElement('button');archive.type='button';
+      archive.textContent=showArchived?'↶':'↧';archive.title=showArchived?'Вернуть из архива':'Переместить в архив';
+      archive.setAttribute('aria-label',archive.title+' — '+row.title);
+      archive.onclick=async()=>{
+        if(stream){setStatus('Остановите ответ перед переносом в архив.');return;}
+        if(!showArchived && !confirm('Переместить разговор в архив? Сообщения сохранятся.'))return;
+        try{
+          await saveQueue;
+          await requestArchive(base+'/'+encodeURIComponent(row.id),jsonOptions('PATCH',{archived:!showArchived}));
+          if(row.id===chatState.selectedId){chatState.selectedId=null;activeMeta=null;history=[];nextBefore=null;renderChat();updateOlderButton();}
+          await fetchConversationList();
+          setStatus(showArchived?'Разговор восстановлен.':'Разговор сохранён в архиве.');
+        }catch(e){setStatus(e.message);}
       };
-      const remove=document.createElement('button');remove.type='button';remove.textContent='×';remove.title='Удалить диалог';
-      remove.onclick=()=>{
-        if(stream){setStatus('Остановите ответ перед удалением.');return;}
-        if(!confirm('Удалить разговор «'+row.title+'»?'))return;
-        chatState.conversations=chatState.conversations.filter(x=>x.id!==row.id);
-        if(chatState.selectedId===row.id){
-          chatState.selectedId=chatState.conversations[0]?.id||null;
-          history=activeConversation()?.messages.map(m=>({...m}))||[];
-          renderChat();
-        }
-        saveHistory();renderConversationList();
-      };
-      wrapper.append(select,rename,remove);historyList.append(wrapper);
+      wrapper.append(select,rename,archive);historyList.append(wrapper);
     }
+    moreChats.hidden=chatState.conversations.length>=chatState.total;
   }
-  historyButton.onclick=()=>{historyPanel.hidden=!historyPanel.hidden;historyButton.setAttribute('aria-expanded',String(!historyPanel.hidden));renderConversationList();};
-  searchHistory.oninput=renderConversationList;
-  newButton.onclick=()=>{
-    if(stream){setStatus('Остановите ответ перед созданием диалога.');return;}
-    userTouchedChats=true;chatState.selectedId=null;history=[];renderChat();saveHistory();
-    historyPanel.hidden=true;historyButton.setAttribute('aria-expanded','false');
-    input.focus();
+  historyButton.onclick=()=>{
+    historyPanel.hidden=!historyPanel.hidden;
+    historyButton.setAttribute('aria-expanded',String(!historyPanel.hidden));
+    if(!historyPanel.hidden)void fetchConversationList().catch(e=>setStatus(e.message));
   };
+  let searchTimer=null;
+  searchHistory.oninput=()=>{
+    clearTimeout(searchTimer);
+    searchTimer=setTimeout(()=>void fetchConversationList().catch(e=>setStatus(e.message)),250);
+  };
+  moreChats.onclick=()=>void loadMoreConversations().catch(e=>setStatus(e.message));
+  archiveToggle.onclick=()=>{
+    showArchived=!showArchived;
+    archiveToggle.textContent=showArchived?'Обычные разговоры':'Архив';
+    void fetchConversationList().catch(e=>setStatus(e.message));
+  };
+  function startNewConversation(){
+    if(stream){setStatus('Сначала остановите текущий ответ.');return;}
+    userTouchedChats=true;
+    chatState.selectedId=null;activeMeta=null;history=[];nextBefore=null;updateOlderButton();
+    renderChat();closeHistory();input.focus();
+    if(remoteChats)void queued(()=>requestArchive(base+'/selection',jsonOptions('PATCH',{id:null})))
+      .catch(e=>setStatus(e.message));
+  }
+  newButton.onclick=startNewConversation;
+  moreMessages.onclick=async()=>{
+    if(loadingOlder||nextBefore===null||!chatState.selectedId)return;
+    if(stream){setStatus('Сначала остановите ответ, чтобы загрузить предыдущие сообщения.');return;}
+    loadingOlder=true;moreMessages.disabled=true;
+    try {
+      const page=await requestArchive(base+'/'+encodeURIComponent(chatState.selectedId)+
+        '/messages?before='+nextBefore+'&limit=100');
+      history.unshift(...page.messages);
+      nextBefore=page.nextBefore;updateOlderButton();renderChat(true);
+    }catch(e){setStatus('Не удалось загрузить старые сообщения: '+e.message);}
+    finally{loadingOlder=false;moreMessages.disabled=false;}
+  };
+  async function ensureConversation(title){
+    if(!remoteChats)throw Error('Нет связи с локальным архивом. Сообщение не отправлено во избежание потери.');
+    await saveQueue; // finish pending selection changes before creating a new dialog
+    let row=currentRow();
+    if(row)return row;
+    const created=await requestArchive(base,jsonOptions('POST',{title:title.slice(0,140)}));
+    row=created.conversation;
+    chatState.selectedId=row.id;activeMeta=row;
+    chatState.conversations.unshift(row);chatState.total++;
+    renderConversationList();
+    return row;
+  }
+  function persistMessage(conversationId,message){
+    return queued(async()=>{
+      const row=activeMeta?.id===conversationId?activeMeta:chatState.conversations.find(c=>c.id===conversationId);
+      const result=await requestArchive(base+'/'+encodeURIComponent(conversationId)+'/messages',
+        jsonOptions('POST',{message,expectedCount:row?.messageCount}));
+      if(row)Object.assign(row,result.conversation);
+      const listed=chatState.conversations.find(c=>c.id===conversationId);
+      if(listed&&listed!==row)Object.assign(listed,result.conversation);
+      return result;
+    });
+  }
   async function loadPersistentChats(){
-    try{
-      const response=await fetch('/api/assistant/conversations',{cache:'no-store'});
-      if(!response.ok)throw Error('Сервер недоступен');
-      const storedState=await response.json();
-      if(userTouchedChats){setStatus('Диалог изменён во время загрузки истории. Текущие сообщения сохранены в браузере. Перезагрузите страницу после отправки ответа.');return;}
-      chatState=storedState;
-      const legacy=history.map(m=>({...m}));
-      const stored=read('miyuneya.kitsune.migrated.v2',false);
+    try {
+      const listing=await requestArchive(base+'?limit=60');
       remoteChats=true;
-      if(!stored && legacy.length){
-        // Stable hash prevents importing the same legacy conversation on every launch.
-        let hash=2166136261;
-        for(const char of JSON.stringify(legacy)){hash=Math.imul(hash^char.charCodeAt(0),16777619)>>>0;}
-        const id='legacy-'+hash.toString(16);
-        if(!chatState.conversations.some(x=>x.id===id)){
-          chatState.conversations.push({id,title:firstTitle(legacy),createdAt:new Date().toISOString(),
-            updatedAt:new Date().toISOString(),messages:legacy});
-          chatState.selectedId=id;
-          const response=await fetch('/api/assistant/conversations',{method:'PUT',
-            headers:{'Content-Type':'application/json'},body:JSON.stringify(chatState)});
-          const result=await response.json().catch(()=>({}));
-          if(!response.ok)throw Error(result.error||'Не удалось перенести старую переписку.');
-          chatState=result;
-        }
-        write('miyuneya.kitsune.migrated.v2',true);
+      if(userTouchedChats){
+        chatState.conversations=listing.conversations;
+        chatState.total=listing.total;
+        return;
       }
-      history=activeConversation()?.messages.map(m=>({...m}))||[];
-      renderChat();renderConversationList();
-    }catch(error){
+      // A legacy localStorage history could be from a different port or from
+      // unsynced messages. Import once; never delete the browser original.
+      const migrationKey='miyuneya.kitsune.migrated.v3';
+      if(!read(migrationKey,false) && history.length){
+        let hash=2166136261;
+        for(const char of JSON.stringify(history))hash=Math.imul(hash^char.charCodeAt(0),16777619)>>>0;
+        const id='browser-'+hash.toString(16);
+        const payload={revision:0,selectedId:id,conversations:[{id,title:firstTitle(history),
+          createdAt:nowISO(),updatedAt:nowISO(),
+          messages:history.map(m=>({role:m.role,content:m.content}))}]};
+        await requestArchive(base+'/import',jsonOptions('POST',payload));
+        write(migrationKey,true);
+      }
+      if(userTouchedChats)return;
+      const data=await requestArchive(base+'?limit=60');
+      chatState={conversations:data.conversations,selectedId:data.selectedId,total:data.total};
+      remoteChats=true;
+      if(chatState.selectedId){
+        const page=await requestArchive(base+'/'+encodeURIComponent(chatState.selectedId)+'/messages?limit=100');
+        if(userTouchedChats)return;
+        history=page.messages;activeMeta=page.conversation;nextBefore=page.nextBefore;updateOlderButton();
+      }else{history=[];activeMeta=null;nextBefore=null;}
+      renderChat();saveHistory();renderConversationList();
+    }catch(e){
       remoteChats=false;
-      setStatus('Работаем с резервной копией истории в браузере: '+error.message);
+      setStatus('Архив на диске недоступен. Старые записи браузера не удалены: '+e.message);
     }
   }
-  void loadPersistentChats();
+  const archiveReady=loadPersistentChats();
   void window.miyuneyaAvatarPreferences.load().then(prefs=>{
     if(userChangedSettings||!prefs?.avatar||typeof prefs.avatar!=='object')return;
     const candidate=prefs.avatar;
@@ -218,7 +319,6 @@
     for(const key of ['glow','animations'])if(typeof candidate[key]==='boolean')config[key]=candidate[key];
     applySettings();
   }).catch(()=>{});
-
 
   function setStatus(message=''){status.textContent=message;status.hidden=!message;}
   function preferredMotion(){
@@ -293,7 +393,8 @@
       code.append(document.createTextNode(text.slice(pos)));pre.append(header,code);body.append(pre);
     }
   }
-  function renderChat(){
+  function renderChat(preserveScroll=false){
+    const previousTop=log.scrollTop,previousHeight=log.scrollHeight;
     for(let i=0;i<history.length;i++){
       const item=history[i];
       let bubble=log.children[i];
@@ -305,6 +406,8 @@
         const name=document.createElement('strong');name.textContent=item.role==='assistant'?'Миюнэя':'Вы';
         const body=document.createElement('p');bubble.append(name,body);log.append(bubble);
       }
+      const name=bubble.querySelector('strong');
+      name.textContent=item.role==='assistant'?(item.complete===false?'Миюнэя · ответ прерван':'Миюнэя'):'Вы';
       const body=bubble.querySelector('p');
       if(body.dataset.raw!==item.content){
         formatMessage(body,item.content);
@@ -312,7 +415,7 @@
       }
     }
     while(log.children.length>history.length)log.lastElementChild.remove();
-    log.scrollTop=log.scrollHeight;
+    log.scrollTop=preserveScroll?previousTop+(log.scrollHeight-previousHeight):log.scrollHeight;
   }
   function openChat(){
     chat.classList.remove('mini');
@@ -460,8 +563,9 @@
   void syncCustomImage();
 
   clearChat.addEventListener('click',()=>{
-    if(stream)stream.abort();
-    userTouchedChats=true;history=[];saveHistory();renderChat();setStatus('Сообщения текущего разговора очищены.');
+    if(stream){setStatus('Остановите ответ перед созданием нового разговора.');return;}
+    startNewConversation();
+    setStatus('Предыдущий разговор сохранён. Открыт новый.');
   });
   stopButton.addEventListener('click',()=>stream?.abort());
   window.addEventListener('resize',()=>{placeAvatar();placeChat();});
@@ -500,26 +604,50 @@
   async function send(){
     const content=input.value.trim();
     if(!content||stream)return;
-    userTouchedChats=true;
     if(content.length>20000){setStatus('Слишком длинное сообщение — максимум 20 000 символов.');return;}
-    const outgoing=[...history,{role:'user',content}].slice(-40).map(m=>({role:m.role,content:m.content}));
-    history.push({role:'user',content});input.value='';renderChat();saveHistory();setStatus('');
-    const current=new AbortController();stream=current;
-    sendButton.disabled=true;stopButton.hidden=false;avatar.classList.add('talking');
+    const current=new AbortController();
+    stream=current;sendButton.disabled=true;stopButton.hidden=false;
+    avatar.classList.add('talking');
     if(streamIndicator)streamIndicator.hidden=false;
-    const reply={role:'assistant',content:''};history.push(reply);renderChat();
-    let complete=false;
+    let savedUser=false,reply=null,conversation=null,checkpointChain=Promise.resolve();
+    let version=0,lastCheckpointAt=0,checkpointError=null;
+    function checkpoint(complete=false){
+      if(!reply?.content)return Promise.resolve();
+      const copy={...reply,version:++version,complete};
+      const job=checkpointChain.then(()=>persistMessage(conversation.id,copy)).then(result=>{
+        checkpointError=null;return result;
+      });
+      checkpointChain=job.catch(e=>{
+        checkpointError=e;
+        setStatus('Не удалось сохранить часть ответа на диск: '+e.message);
+      });
+      return job;
+    }
     try{
+      await archiveReady;
+      if(!remoteChats)throw Error('Хранилище переписки недоступно. Отправка остановлена, чтобы не потерять сообщение.');
+      if(current.signal.aborted)throw Error('Отправка остановлена.');
+      userTouchedChats=true;
+      const outgoing=[...history,{role:'user',content}].slice(-40)
+        .map(m=>({role:m.role,content:m.content}));
+      conversation=await ensureConversation(content);
+      const user={id:conversationId(),role:'user',content,createdAt:nowISO(),version:1,complete:true};
+      await persistMessage(conversation.id,user);
+      savedUser=true;
+      history.push(user);input.value='';renderChat();saveHistory();setStatus('');
+      reply={id:conversationId(),role:'assistant',content:'',createdAt:nowISO(),version:0,complete:false};
+      history.push(reply);renderChat();
+
       const response=await fetch('/api/assistant/chat',{
         method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({messages:outgoing}),signal:current.signal
       });
       if(!response.ok||!response.body){
         const body=await response.json().catch(()=>({}));
-        throw new Error(typeof body.error==='string'?body.error:'Не удалось получить ответ Cloud.ru.');
+        throw Error(typeof body.error==='string'?body.error:'Не удалось получить ответ Cloud.ru.');
       }
       const reader=response.body.getReader(),decoder=new TextDecoder();
-      let buffer='';
+      let buffer='',complete=false;
       for(;;){
         const {done,value}=await reader.read();
         if(done)break;
@@ -529,20 +657,40 @@
           const line=buffer.slice(0,end).trim();buffer=buffer.slice(end+1);
           if(!line)continue;
           let event;try{event=JSON.parse(line);}catch{continue;}
-          if(event.error)throw new Error(String(event.error));
+          if(event.error)throw Error(String(event.error));
           if(typeof event.delta==='string')reply.content+=event.delta;
           if(typeof event.memory==='string')setStatus(event.memory);
           if(event.done)complete=true;
           renderChat();
         }
+        if(reply.content && Date.now()-lastCheckpointAt>=1000){
+          lastCheckpointAt=Date.now();
+          // A bounded number of checkpoints protects streamed text on a crash.
+          void checkpoint(false).catch(()=>{});
+        }
         if(complete)break;
       }
-      if(!complete)throw new Error('Ответ прервался до завершения.');
-      saveHistory();
+      if(!complete)throw Error('Ответ прервался до завершения.');
+      await checkpointChain;
+      if(reply.content)await checkpoint(true);
+      trimVisibleHistory();saveHistory();
+      if(checkpointError)setStatus('Ответ получен. Проверьте сохранение истории на диск.');
     }catch(error){
-      if(!reply.content)history=history.filter(m=>m!==reply);
-      setStatus(current.signal.aborted?'Запрос остановлен.':error?.message||'Нет связи с сервером.');
-      saveHistory();renderChat();
+      if(!savedUser){
+        input.value=content;
+        setStatus('Сообщение не отправлено: '+(error?.message||'Ошибка локального архива.'));
+      }else{
+        await checkpointChain;
+        if(reply?.content){
+          try{await checkpoint(false);}catch(e){
+            setStatus('Часть ответа пока только в браузере: '+e.message);
+          }
+        }else if(reply){
+          history=history.filter(m=>m!==reply);
+        }
+        if(!checkpointError)setStatus(current.signal.aborted?'Запрос остановлен.':error?.message||'Нет связи с сервером.');
+        trimVisibleHistory();saveHistory();renderChat();
+      }
     }finally{
       stream=null;sendButton.disabled=false;stopButton.hidden=true;
       avatar.classList.remove('talking');
@@ -553,39 +701,38 @@
   input.addEventListener('keydown',event=>{
     if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();void send();}
   });
-  // Chat backup is explicit. It does not include Cloud.ru secrets or personal documents.
+  // Stream the whole archive directly from the local server, never a browser
+  // snapshot. Imports merge and do not delete newer conversations.
   const chatPanel=settings.querySelector('[data-kitsune-panel="chat"]');
   if(chatPanel){
     const actions=document.createElement('div');actions.className='kitsune-history-actions';
-    const backup=document.createElement('button');backup.type='button';backup.textContent='Сохранить историю';
+    const backup=document.createElement('button');backup.type='button';backup.textContent='Сохранить весь архив';
     backup.onclick=async()=>{
       await saveQueue;
-      const payload=remoteChats?chatState:{revision:0,selectedId:null,conversations:[{
-        id:conversationId(),title:firstTitle(history),createdAt:new Date().toISOString(),
-        updatedAt:new Date().toISOString(),messages:history}]};
-      const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}));
-      const link=document.createElement('a');link.href=url;link.download='miyuneya-chat-backup.json';link.click();
-      setTimeout(()=>URL.revokeObjectURL(url),1000);
+      if(!remoteChats){setStatus('Архив недоступен. Экспорт невозможен.');return;}
+      const link=document.createElement('a');
+      link.href=base+'/export';link.download='miyuneya-chat-archive.jsonl';
+      document.body.append(link);link.click();link.remove();
+      setStatus('Экспорт начат. Сохраните скачанный архив вне папки проекта.');
     };
-    const restore=document.createElement('label');restore.textContent='Восстановить историю';
-    const restoreFile=document.createElement('input');restoreFile.type='file';restoreFile.accept='.json,application/json';
+    const restore=document.createElement('label');restore.textContent='Импорт архива';
+    const restoreFile=document.createElement('input');restoreFile.type='file';
+    restoreFile.accept='.json,.jsonl,application/json,application/x-ndjson';
     restore.append(restoreFile);
     restoreFile.onchange=async()=>{
       const file=restoreFile.files?.[0];restoreFile.value='';
       if(!file)return;
-      if(!remoteChats){setStatus('Для восстановления требуется доступный локальный сервер.');return;}
-      if(file.size>8_000_000){setStatus('Копия истории больше 8 МБ.');return;}
+      if(!remoteChats){setStatus('Для восстановления требуется локальный сервер.');return;}
+      if(!confirm('Добавить переписку из копии? Существующие разговоры не будут удалены.'))return;
+      restoreFile.disabled=true;
       try{
-        const data=JSON.parse(await file.text());
-        if(!Array.isArray(data.conversations)||!confirm('Заменить историю чатов содержимым резервной копии?'))return;
         await saveQueue;
-        const response=await fetch('/api/assistant/conversations',{method:'PUT',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({...data,revision:chatState.revision})});
-        const restored=await response.json().catch(()=>({}));
-        if(!response.ok)throw Error(restored.error||'Неверная резервная копия.');
-        chatState=restored;history=activeConversation()?.messages.map(m=>({...m}))||[];
-        write(historyKey,history);renderChat();renderConversationList();setStatus('История восстановлена.');
-      }catch(error){setStatus('Восстановление не выполнено: '+error.message);}
+        const type=file.name.toLowerCase().endsWith('.jsonl')?'application/x-ndjson':'application/json';
+        const imported=await requestArchive(base+'/import',{method:'POST',headers:{'Content-Type':type},body:file});
+        await fetchConversationList();
+        setStatus('Импортировано сообщений: '+imported.imported+'. Существующие чаты сохранены.');
+      }catch(e){setStatus('Импорт остановлен без удаления имеющихся чатов: '+e.message);}
+      finally{restoreFile.disabled=false;}
     };
     actions.append(backup,restore);chatPanel.append(actions);
   }

@@ -1,5 +1,6 @@
 import { openWorkflows } from './workflows.ts';
 import { openPersonalVault } from './personal-vault.ts';
+import { openChatArchive } from './chat-archive.ts';
 import { createHash } from 'node:crypto';
 import { reconcileTasks } from '../src/productivity.ts';
 import { randomUUID } from 'node:crypto';
@@ -87,6 +88,7 @@ export async function createApp(root: string, instance: string, preview = false,
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Не удалось прочитать data/workspace.json. Сохраните копию и проверьте файл; данные не перезаписаны.', { cause: e });
   }
   const vault = await openPersonalVault(dataDir);
+  const chatArchive = await openChatArchive(dataDir);
   let queue = Promise.resolve();
   const files: Record<string, [string, string]> = {
     '/': ['blank.html', 'text/html'], '/blank.css': ['blank.css', 'text/css'], '/blank.js': ['blank.js', 'text/javascript'],
@@ -255,14 +257,84 @@ export async function createApp(root: string, instance: string, preview = false,
         try{if(req.method==='PUT')return send(200,await workflows.configure(input.revision,input.rules));if(req.method==='POST')return send(200,await workflows.retry(input.id));return send(405,{error:'Метод не поддерживается'});}catch(e){return send(409,{error:e.message});}
       }
 
-      // Persistent browser-independent chat and avatar storage. Only local-origin requests are accepted.
-      if (path === '/api/assistant/conversations') {
-        if (req.method === 'GET') return send(200, vault.chats());
-        if (req.method !== 'PUT') return send(405, { error: 'Метод не поддерживается' });
-        const input = await readJson(req, send, 8_000_000);
-        if (input === undefined) return;
-        try { return send(200, await vault.saveChats(input)); }
-        catch (e) { return send((e as { status?: number }).status || 500, { error: (e as Error).message }); }
+      // Complete chat archive: paged metadata, individual durable messages and
+      // streaming backups. No destructive automatic pruning of old conversations.
+      const chatRoot = '/api/assistant/conversations';
+      const chatFailure = (e: unknown) => send((e as { status?: number }).status || 500,
+        { error: (e as Error).message || 'Не удалось сохранить историю.' });
+      if (path === chatRoot) {
+        if (req.method === 'GET') {
+          const query = new URL(req.url || '/', origin).searchParams;
+          try { return send(200, await chatArchive.search({ query: query.get('q') || '',
+            archived: query.get('archived') === '1',
+            offset: Number(query.get('offset') || 0), limit: Number(query.get('limit') || 60) })); }
+          catch (e) { return chatFailure(e); }
+        }
+        if (req.method === 'POST') {
+          const data = await readJson(req, send, 2000);
+          if (data === undefined) return;
+          try { return send(201, await chatArchive.create(data)); } catch (e) { return chatFailure(e); }
+        }
+        // Old browser tabs used PUT with a complete legacy backup. Merge it
+        // without clearing later messages, rather than silently dropping it.
+        if (req.method === 'PUT') {
+          const data = await readJson(req, send, 32_000_000);
+          if (data === undefined) return;
+          try { return send(200, await chatArchive.importLegacy(data)); } catch (e) { return chatFailure(e); }
+        }
+        return send(405, { error: 'Метод не поддерживается' });
+      }
+      if (path === chatRoot + '/selection') {
+        if (req.method !== 'PATCH') return send(405, { error: 'Метод не поддерживается' });
+        const data = await readJson(req, send, 1000);
+        if (data === undefined) return;
+        try { return send(200, await chatArchive.select(data?.id)); } catch (e) { return chatFailure(e); }
+      }
+      if (path === chatRoot + '/export' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Content-Disposition': 'attachment; filename="miyuneya-chat-archive.jsonl"',
+          'Cache-Control': 'no-store' });
+        try {
+          for await (const line of chatArchive.exportLines()) {
+            if (res.destroyed) return;
+            if (!res.write(line)) {
+              await new Promise<void>((resolve, reject) => {
+                const drain = () => { res.off('close', closed); resolve(); };
+                const closed = () => { res.off('drain', drain); reject(Error('download cancelled')); };
+                res.once('drain', drain); res.once('close', closed);
+              });
+            }
+          }
+          res.end();
+        } catch { res.destroy(); }
+        return;
+      }
+      if (path === chatRoot + '/import') {
+        if (req.method !== 'POST') return send(405, { error: 'Метод не поддерживается' });
+        try { return send(200, await chatArchive.importStream(req, String(req.headers['content-type'] || ''))); }
+        catch (e) { return chatFailure(e); }
+      }
+      const chatMatch = /^\/api\/assistant\/conversations\/([a-zA-Z0-9_-]{1,80})(\/messages)?$/.exec(path);
+      if (chatMatch) {
+        const id = chatMatch[1];
+        if (chatMatch[2]) {
+          if (req.method === 'GET') {
+            const query = new URL(req.url || '/', origin).searchParams;
+            const before = query.has('before') ? Number(query.get('before')) : undefined;
+            try { return send(200, await chatArchive.page(id, before, Number(query.get('limit') || 100))); }
+            catch (e) { return chatFailure(e); }
+          }
+          if (req.method !== 'POST') return send(405, { error: 'Метод не поддерживается' });
+          const data = await readJson(req, send, 12_000_000);
+          if (data === undefined) return;
+          try { return send(200, await chatArchive.saveMessage(id, data?.message, data?.expectedCount)); }
+          catch (e) { return chatFailure(e); }
+        }
+        if (req.method !== 'PATCH') return send(405, { error: 'Метод не поддерживается' });
+        const data = await readJson(req, send, 2000);
+        if (data === undefined) return;
+        try { return send(200, await chatArchive.modify(id, data)); }
+        catch (e) { return chatFailure(e); }
       }
       if (path === '/api/assistant/preferences') {
         if (req.method === 'GET') return send(200, vault.preferences());
@@ -692,6 +764,7 @@ export async function createApp(root: string, instance: string, preview = false,
         await disk?.shutdown();
         await queue;
         await vault.shutdown();
+        await chatArchive.shutdown();
       })();
       return shutdownPromise;
     }

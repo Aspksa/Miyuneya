@@ -3,33 +3,15 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { atomicWrite } from '../scripts/runtime.mjs';
 
-export type SavedMessage = { role: 'user' | 'assistant'; content: string };
-export type SavedConversation = { id: string; title: string; createdAt: string; updatedAt: string; messages: SavedMessage[] };
-type ChatIndex = { revision: number; conversations: SavedConversation[]; selectedId: string | null };
 type AvatarRecord = { id: string; name: string; type: string; size: number; createdAt: string };
 const TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
-const LIMIT_CHAT_BYTES = 8_000_000;
 const validId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value);
 const validDate = (value: unknown): value is string => typeof value === 'string' && value.length <= 35 && !Number.isNaN(Date.parse(value));
-const validMessages = (value: unknown): value is SavedMessage[] => Array.isArray(value) && value.length <= 2000 && value.every(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.length <= 20_000);
-function validChats(input: unknown): input is ChatIndex {
-  if (!input || typeof input !== 'object') return false;
-  const c = input as ChatIndex;
-  if (!Number.isSafeInteger(c.revision) || c.revision < 0 || !Array.isArray(c.conversations) || c.conversations.length > 100) return false;
-  const ids = new Set<string>();
-  for (const row of c.conversations) {
-    if (!row || !validId(row.id) || ids.has(row.id) || typeof row.title !== 'string' || row.title.length > 140
-      || !validDate(row.createdAt) || !validDate(row.updatedAt) || !validMessages(row.messages)) return false;
-    ids.add(row.id);
-  }
-  return c.selectedId === null || (validId(c.selectedId) && ids.has(c.selectedId));
-}
 function validAvatarIndex(value: unknown): value is AvatarRecord[] {
   return Array.isArray(value) && value.length <= 20 && value.every(v => v && validId(v.id) && typeof v.name === 'string'
     && v.name.length <= 100 && TYPES[v.type] && Number.isSafeInteger(v.size) && v.size > 0 && v.size <= 15_000_000 && validDate(v.createdAt))
     && new Set(value.map(v => v.id)).size === value.length;
 }
-const chatEmpty = (): ChatIndex => ({ revision: 0, conversations: [], selectedId: null });
 async function readJsonOr<T>(path: string, fallback: T, guard: (value: unknown) => value is T): Promise<T> {
   let raw: string;
   try { raw = await readFile(path, 'utf8'); }
@@ -41,11 +23,9 @@ async function readJsonOr<T>(path: string, fallback: T, guard: (value: unknown) 
   return parsed;
 }
 export async function openPersonalVault(dataDir: string) {
-  const chatsFile = join(dataDir, 'chats', 'index.json');
   const prefsFile = join(dataDir, 'ui-preferences.json');
   const avatarDir = join(dataDir, 'avatars');
   const avatarIndex = join(avatarDir, 'index.json');
-  let chats = await readJsonOr(chatsFile, chatEmpty(), validChats);
   let preferences = await readJsonOr(prefsFile, {} as Record<string, unknown>,
     (v): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v) && JSON.stringify(v).length <= 15_000);
   let avatars = await readJsonOr(avatarIndex, [] as AvatarRecord[], validAvatarIndex);
@@ -56,19 +36,6 @@ export async function openPersonalVault(dataDir: string) {
     return next;
   };
   return {
-    chats: () => structuredClone(chats),
-    saveChats(input: unknown) {
-      return exclusive(async () => {
-        if (!validChats(input) || Buffer.byteLength(JSON.stringify(input)) > LIMIT_CHAT_BYTES)
-          throw Object.assign(new Error('История переписки слишком большая или имеет неверный формат.'), { status: 400 });
-        if (input.revision !== chats.revision)
-          throw Object.assign(new Error('История изменилась в другой вкладке. Перезагрузите чат, чтобы не потерять изменения.'), { status: 409 });
-        const next = { ...structuredClone(input), revision: chats.revision + 1 };
-        await atomicWrite(chatsFile, JSON.stringify(next, null, 2));
-        chats = next;
-        return structuredClone(chats);
-      });
-    },
     preferences: () => structuredClone(preferences),
     patchPreferences(input: unknown) {
       return exclusive(async () => {
