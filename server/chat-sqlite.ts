@@ -337,9 +337,9 @@ export async function openSqliteChatArchive(dataDir:string){
             }
             const c=getConversation(row.conversationId);
             const seq=Number(c.message_count)+1;
-            const parent=msg.parentMessageId&&visible(row.conversationId,msg.parentMessageId)
-              ? visible(row.conversationId,msg.parentMessageId).id
-              : seq>1?scan(row.conversationId,seq-2,seq-1)[0]?.id||null:null;
+            const reference=msg.parentMessageId?visible(row.conversationId,msg.parentMessageId):undefined;
+            const parent=reference?.id||(
+              seq>1?scan(row.conversationId,seq-2,seq-1)[0]?.id||null:null);
             db.prepare('INSERT INTO messages(id,conversation_id,sequence,role,content,created_at,version,complete,parent_message_id) VALUES(?,?,?,?,?,?,?,?,?)')
               .run(id,row.conversationId,seq,msg.role,msg.content,msg.createdAt,msg.version,msg.complete?1:0,parent);
             db.prepare('UPDATE conversations SET message_count=message_count+1 WHERE id=?').run(row.conversationId);
