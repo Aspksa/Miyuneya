@@ -70,7 +70,7 @@ export async function openSqliteChatArchive(dataDir:string){
       try{
         db.exec('BEGIN IMMEDIATE');started=true;
         const value=run();db.exec('COMMIT');started=false;
-        if(['save','create','modify'].includes(key))clearPageCache();
+        if(['save','create','modify','import-legacy'].includes(key))clearPageCache();
         return value;
       }catch(e){
         if(started)try{db.exec('ROLLBACK');}catch{}
