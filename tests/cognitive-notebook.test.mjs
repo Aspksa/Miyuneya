@@ -45,6 +45,9 @@ test('Self-written memory grows, deduplicates, persists and recalls only observe
   const byKind=store.overview().latest;
   assert.ok(byKind.every(x=>x.observations===2),'repeat analysis is not counted as independent evidence');
   assert.equal(store.learn(growth,'changes:'+hashB),0);
+  map.get('f2').text='Исправленная владельцем информация о другой теме';
+  assert.equal(store.context('транспорт'),'','edited source must invalidate old summaries immediately');
+  assert.equal(store.reconcile(),2);
 });
 test('Forgetting, source expiry and private reset invalidate all dependent derived notes',async t=>{
   const dir=await mkdtemp(join(tmpdir(),'Miyuneya notebook forget '));
