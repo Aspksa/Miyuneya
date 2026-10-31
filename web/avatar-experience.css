@@ -1,0 +1,51 @@
+/* Separate avatar presence and chat ergonomics from avatar.css geometry. */
+.kitsune-avatar {will-change:auto;}
+.kitsune-avatar.kitsune-ready{animation:miyu-arrival .4s ease-out both}
+.kitsune-avatar[data-activity="answering"] .kitsune-image-viewport{
+  box-shadow:0 0 0 2px rgba(194,151,77,.24);
+}
+.kitsune-avatar[data-activity="error"] .kitsune-image-viewport{
+  outline:2px solid rgba(194,91,82,.65);outline-offset:2px;
+}
+.kitsune-avatar[data-activity="offline"]{filter:grayscale(.45)}
+.kitsune-avatar[data-activity="composing"]{filter:drop-shadow(0 1px 5px rgba(196,145,63,.16))}
+.kitsune-avatar[data-motion-level="low"] img {animation-duration:9s!important}
+.kitsune-avatar[data-motion-level="off"] img,
+.kitsune-avatar[data-visibility="paused"] img{animation:none!important}
+@keyframes miyu-arrival {from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:var(--kitsune-alpha,1);transform:none}}
+/* Hide only while an essential modal is active; the chat/settings themselves remain interactive. */
+body:has(#editor[open]) #kitsune-avatar,
+body:has(#confirm[open]) #kitsune-avatar{opacity:.25;pointer-events:none}
+body:has(#editor[open]) #kitsune-chat:not([hidden]),
+body:has(#confirm[open]) #kitsune-chat:not([hidden]){pointer-events:none;filter:brightness(.9)}
+.kitsune-chat .kitsune-chat-type-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.kitsune-chat .kitsune-attachments-toolbar{display:flex;align-items:center;gap:8px}
+.kitsune-attach-button{
+  background:var(--icon-hover);color:var(--text);border:1px solid var(--line);
+  border-radius:10px;padding:7px 11px;min-height:36px;font:inherit;font-size:.82em;cursor:pointer;
+}
+.kitsune-file-input{position:absolute;width:1px;height:1px;opacity:0;clip-path:inset(50%)}
+.kitsune-selected-files{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.kitsune-file-chip{
+  display:flex;align-items:center;gap:5px;max-width:100%;padding:5px 8px;border-radius:10px;
+  background:var(--icon-hover);color:var(--text);font-size:.77em;border:1px solid var(--line);
+}
+.kitsune-file-chip span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}
+.kitsune-file-chip button{background:transparent;border:0;font:inherit;cursor:pointer;color:var(--text)}
+.kitsune-attachments-help{margin:4px 0 8px;color:var(--secondary);font-size:.74em;line-height:1.4}
+.kitsune-attachments-help label{display:inline-flex;align-items:center;gap:5px}
+.kitsune-recover-button{border:1px solid var(--line);border-radius:9px;background:var(--icon-hover);
+  color:var(--text);padding:5px 9px;margin-left:8px;font:inherit;cursor:pointer}
+.kitsune-chat.density-compact .kitsune-log{gap:5px;padding:10px}
+.kitsune-chat.density-compact .kitsune-bubble{padding:8px 10px;line-height:1.36}
+.kitsune-chat.density-spacious .kitsune-log{gap:17px;padding:20px}
+.kitsune-chat.density-spacious .kitsune-bubble{line-height:1.75}
+.kitsune-chat[data-line-width="narrow"] .kitsune-bubble{max-width:min(84%,520px)}
+.kitsune-chat[data-line-width="wide"] .kitsune-bubble{max-width:96%}
+.kitsune-chat .kitsune-presence-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#949aa5;margin-right:4px}
+.kitsune-chat .kitsune-presence-dot[data-state="answering"]{background:#5bba87}
+.kitsune-chat .kitsune-presence-dot[data-state="error"]{background:#da7269}
+.kitsune-chat .kitsune-presence-dot[data-state="offline"]{background:#bfa468}
+.kitsune-chat :is(.kitsune-attach-button,.kitsune-recover-button):focus-visible{outline:var(--miyu-focus);outline-offset:2px}
+@media(max-width:430px){.kitsune-selected-files{max-height:80px;overflow-y:auto}.kitsune-attachments-help{font-size:.7em}}
+@media(prefers-reduced-motion:reduce){.kitsune-avatar.kitsune-ready{animation:none}.kitsune-chat *{scroll-behavior:auto!important}}
