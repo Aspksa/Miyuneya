@@ -74,6 +74,8 @@ test('Индексированный поиск знает русские фор
   assert.equal(phrase.total,2);
   const phraseMiss=await store.searchAdvanced({query:'листы путевые',mode:'phrase'});
   assert.equal(phraseMiss.total,0);
+  const phraseStop=await store.searchAdvanced({query:'путевые и листы',mode:'phrase'});
+  assert.equal(phraseStop.total,0);
   const exact=await store.searchAdvanced({query:'документы',mode:'exact',sort:'date'});
   assert.equal(exact.total,1);
   const absent=await store.searchAdvanced({query:'Ремонт двигателя'});
