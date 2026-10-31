@@ -380,6 +380,7 @@
   document.getElementById('kitsune-chat-close').addEventListener('click',closeChat);
   openSettings.addEventListener('click',openSettingsDialog);
   minimizeButton?.addEventListener('click',()=>{
+    historyPanel.hidden=true;historyButton.setAttribute('aria-expanded','false');
     chat.classList.add('mini');
     const maxX=Math.max(10,innerWidth-180),maxY=Math.max(10,innerHeight-60);
     chatPos={x:clamp((avatarPos?.x||20)+Math.min(config.size,150)+8,10,maxX),
