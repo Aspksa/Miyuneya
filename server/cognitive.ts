@@ -85,7 +85,7 @@ export function buildCognitiveSnapshot(memory: Memory, now = Date.now()): Cognit
   // Episodes are real recorded contexts: co-occurrence does NOT mean causation.
   for (const e of memory.episodes.slice(-400).reverse()) {
     if (associations.length >= MAX) break;
-    const linked = current.filter(i => i.origin === e.id || i.links.includes(e.id)).slice(0, 9);
+    const linked = current.filter(i => e.links.includes(i.id) || i.origin === e.id || i.links.includes(e.id)).slice(0, 9);
     for (let i = 0; i < linked.length && associations.length < MAX; i++)
       for (let j = i + 1; j < linked.length && associations.length < MAX; j++)
         add(linked[i].id, linked[j].id, 'episode', e.id, 'Эпизод: ' + e.topic);
