@@ -1,6 +1,6 @@
 import { mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { atomicWrite } from '../scripts/runtime.mjs';
 
 // Each message is an independently and atomically saved file. Neither the index
@@ -250,7 +250,7 @@ export async function openChatArchive(dataDir: string) {
       return { selectedId: id };
     });
   }
-  function saveMessage(conversationId: string, input: unknown, expectedCount?: number) {
+  function saveMessage(conversationId: string, input: unknown, expectedCount?: number, importOnly = false) {
     return exclusive(async () => {
       const meta = getMeta(conversationId);
       if (meta.archived) throw error('Разговор в архиве. Сначала восстановите его.', 409);
@@ -262,6 +262,8 @@ export async function openChatArchive(dataDir: string) {
         const old = parseStrict(await readFile(filePath(conversationId, existing), 'utf8'),
           filePath(conversationId, existing), validMessage);
         if (old.role !== msg.role || old.createdAt !== msg.createdAt) throw error('Идентификатор сообщения уже занят.', 409);
+        if (importOnly && (old.content !== msg.content || old.version !== msg.version || old.complete !== msg.complete))
+          throw error('Импорт не может заменить существующее сообщение. Архив на диске не изменён.', 409);
         if (msg.version < old.version || (msg.version === old.version && msg.content === old.content && msg.complete === old.complete))
           return { message: old, conversation: { ...meta } };
         if (msg.version === old.version || (old.complete && !msg.complete)) throw error('Конфликт версии сообщения.', 409);
@@ -293,15 +295,21 @@ export async function openChatArchive(dataDir: string) {
     return { conversation: { ...meta }, messages, total: count, nextBefore: start > 0 ? start : null };
   }
   async function* exportLines() {
-    yield JSON.stringify({ format: 'miyuneya-chats', schema: 2, exportedAt: iso() }) + '\n';
+    const hash = createHash('sha256');
+    let conversations = 0, messages = 0;
+    const head = JSON.stringify({ format: 'miyuneya-chats', schema: 2, exportedAt: iso() }) + '\n';
+    hash.update(head); yield head;
     for (const meta of index.conversations) {
-      yield JSON.stringify({ kind: 'conversation', conversation: meta }) + '\n';
+      const line = JSON.stringify({ kind: 'conversation', conversation: meta }) + '\n';
+      hash.update(line);yield line;conversations++;
       for (const filename of position.get(meta.id)!.values()) {
         const msg = parseStrict(await readFile(filePath(meta.id, filename), 'utf8'),
           filePath(meta.id, filename), validMessage);
-        yield JSON.stringify({ kind: 'message', conversationId: meta.id, message: msg }) + '\n';
+        const record = JSON.stringify({ kind: 'message', conversationId: meta.id, message: msg }) + '\n';
+        hash.update(record);yield record;messages++;
       }
     }
+    yield JSON.stringify({ kind: 'end', conversations, messages, sha256: hash.digest('hex') }) + '\n';
   }
   async function importLegacy(data: unknown) {
     if (!validLegacy(data)) throw error('Неверный формат резервной копии.');
@@ -311,7 +319,7 @@ export async function openChatArchive(dataDir: string) {
       for (let i = 0; i < row.messages.length; i++) {
         const msg = row.messages[i];
         await saveMessage(row.id, { id: 'legacy-' + String(i + 1).padStart(12, '0'),
-          role: msg.role, content: msg.content, createdAt: row.createdAt, version: 1, complete: true });
+          role: msg.role, content: msg.content, createdAt: row.createdAt, version: 1, complete: true }, undefined, true);
         imported++;
       }
     }
@@ -333,15 +341,23 @@ export async function openChatArchive(dataDir: string) {
     if (!contentType.startsWith('application/x-ndjson')) throw error('Ожидается JSONL или старый JSON.', 415);
     const decoder = new TextDecoder();
     let buffer = '';
-    let header = false, count = 0, conversations = 0;
+    let header = false, count = 0, conversations = 0, ended = false;
+    const hash = createHash('sha256');
     async function processLine(line: string) {
       if (!line.trim()) return;
+      if(ended)throw error('Лишние данные после контрольной записи архива.');
       let data: any;
       try { data = JSON.parse(line); } catch { throw error('Повреждённая строка архивного файла.'); }
       if (!header) {
         if (data?.format !== 'miyuneya-chats' || data?.schema !== 2) throw error('Неизвестный формат архива.');
-        header = true; return;
+        header = true;hash.update(line+'\n');return;
       }
+      if (data.kind === 'end') {
+        if (data.conversations !== conversations || data.messages !== count
+          || data.sha256 !== hash.digest('hex')) throw error('Контрольная сумма архива не совпадает. Копия неполная или изменена.');
+        ended = true;return;
+      }
+      hash.update(line+'\n');
       if (data.kind === 'conversation') {
         if (!validMeta(data.conversation)) throw error('Повреждённая информация о разговоре.');
         await create({ id: data.conversation.id, title: data.conversation.title });
@@ -349,7 +365,7 @@ export async function openChatArchive(dataDir: string) {
       }
       if (data.kind === 'message') {
         if (!validId(data.conversationId)) throw error('Неверный идентификатор диалога.');
-        await saveMessage(data.conversationId, data.message);
+        await saveMessage(data.conversationId, data.message, undefined, true);
         count++; return;
       }
       throw error('Неизвестная запись в резервной копии.');
@@ -367,6 +383,7 @@ export async function openChatArchive(dataDir: string) {
     buffer += decoder.decode();
     if (buffer.trim()) await processLine(buffer);
     if (!header) throw error('Резервная копия пуста.');
+    if (!ended) throw error('Резервная копия оборвана: отсутствует контрольная запись.');
     return { imported: count, conversations };
   }
   return {
