@@ -394,3 +394,34 @@
 @media (forced-colors: active) {
   .kitsune-settings .kitsune-ui-icon { stroke: ButtonText; }
 }
+
+/* UI audit: keep both draggable surfaces inside short and narrow viewports. */
+.kitsune-avatar {
+  width:min(var(--kitsune-size), calc(100vw - 20px), calc(100dvh - 20px));
+  height:min(var(--kitsune-size), calc(100vw - 20px), calc(100dvh - 20px));
+}
+@media (max-height: 400px) {
+  .kitsune-chat {
+    min-height:0;
+    height:calc(100dvh - 12px);
+    max-height:calc(100dvh - 12px);
+  }
+  .kitsune-chat-header {padding-block:6px;}
+  .kitsune-chat-form {padding:6px;gap:4px;}
+  .kitsune-chat-form textarea {min-height:32px;max-height:60px;}
+  .kitsune-log {padding:8px;}
+  .kitsune-settings {max-height:calc(100dvh - 12px);}
+}
+@media (max-width: 400px) {
+  .kitsune-settings-header h2 {font-size:1.12em;}
+  .kitsune-settings-header {gap:7px;}
+  .kitsune-settings-tabs {gap:2px;}
+  .kitsune-tab {white-space:normal;overflow-wrap:anywhere;line-height:1.2;}
+  .kitsune-preview-actions {flex-wrap:wrap;}
+}
+
+/* The avatar modal title wraps on phones: a fixed tab offset can overlap it.
+   Keep the header sticky, let the tab bar scroll naturally on narrow screens. */
+@media (max-width: 700px) {
+  .kitsune-settings-tabs { position: relative; top: auto; }
+}
