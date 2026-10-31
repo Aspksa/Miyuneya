@@ -5,10 +5,30 @@ import { DatabaseSync } from 'node:sqlite';
 let db;
 try {
   const { path, action } = workerData || {};
-  if (typeof path !== 'string' || !['check', 'rebuild', 'optimize'].includes(action))
+  if (typeof path !== 'string' || !['check', 'rebuild', 'optimize', 'checkpoint', 'preflight'].includes(action))
     throw new Error('Неверная фоновая операция.');
   db = new DatabaseSync(path,{timeout:7000});
-  if(action==='check') {
+  if(action==='preflight'){
+    // This endpoint is used BEFORE committing a staged program update.
+    // It must not modify the user's DB schema, messages or attachments.
+    const version=Number(db.prepare('PRAGMA user_version').get().user_version);
+    const tables=new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row=>row.name));
+    const required=['conversations','messages','settings','attachments','message_fts'];
+    const missing=required.filter(name=>!tables.has(name));
+    const quick=db.prepare('PRAGMA quick_check(1)').get().quick_check;
+    const foreign=db.prepare('PRAGMA foreign_key_check').all().length;
+    let fts=true;
+    try{db.prepare("INSERT INTO message_fts(message_fts,rank) VALUES('integrity-check',1)").run();}
+    catch{fts=false;}
+    const ok=version===4&&!missing.length&&quick==='ok'&&!foreign&&fts;
+    parentPort?.postMessage({ok,schemaVersion:version,missingTables:missing.length,
+      foreignKeyIssues:foreign,ftsHealthy:fts,details:quick==='ok'?'ok':'integrity-failed'});
+  }else if(action==='checkpoint'){
+    // PASSIVE is non-destructive and never waits for a long-lived reader.
+    const row=db.prepare('PRAGMA wal_checkpoint(PASSIVE)').get();
+    parentPort?.postMessage({ok:true,busy:Number(row.busy),walFrames:Number(row.log),
+      checkpointedFrames:Number(row.checkpointed)});
+  }else if(action==='check') {
     const integrity=String(db.prepare('PRAGMA quick_check(1)').get().quick_check);
     const foreign=db.prepare('PRAGMA foreign_key_check').all().slice(0,20)
       .map(row=>({table:String(row.table),rowid:Number(row.rowid)}));
