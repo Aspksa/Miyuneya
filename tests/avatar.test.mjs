@@ -5,7 +5,9 @@ import { readFile } from 'node:fs/promises';
 const root = new URL('../', import.meta.url);
 const html = await readFile(new URL('web/blank.html', root), 'utf8');
 const css = await readFile(new URL('web/avatar.css', root), 'utf8');
+const layoutCss = await readFile(new URL('web/avatar-layout.css', root), 'utf8');
 const js = await readFile(new URL('web/avatar.js', root), 'utf8');
+const formatter=await readFile(new URL('web/chat-format.js',root),'utf8');
 const app = await readFile(new URL('server/app.ts', root), 'utf8');
 const build = await readFile(new URL('scripts/build.mjs', root), 'utf8');
 const portrait = await readFile(new URL('web/avatars/hayumeri-kitsune.avif', root));
@@ -36,9 +38,9 @@ test('New avatar/chat UX offers size, mobile, dock, full, quiet, preset and one 
   assert.match(js,/\.\/\?settings=cloud|\/?settings=cloud/);
   assert.match(studio,/previewLibraryImage/);
   assert.match(studio,/miyuneya-avatar-effect-preset/);
-  assert.match(css,/mode-dock/);
-  assert.match(css,/mode-full/);
-  assert.match(css,/max-width:72px/);
+  assert.match(layoutCss,/mode-dock/);
+  assert.match(layoutCss,/mode-full/);
+  assert.match(layoutCss,/max-width:72px/);
 });
 test('All avatar and chat controls exist, script parses, and modal is centered', () => {
   assert.doesNotThrow(() => new Function(js));
@@ -90,10 +92,12 @@ test('Studio provides a complete local library with preview, alpha cropping and 
 
 test('Streaming code formatter uses DOM text nodes instead of untrusted HTML',()=>{
   assert.match(js,/function formatMessage\(/);
-  assert.match(js,/document\.createTextNode/);
-  assert.match(js,/kitsune-token-keyword/);
+  assert.match(formatter,/document\.createTextNode/);
+  assert.match(formatter,/kitsune-token-keyword/);
   assert.match(js,/kitsune-bubble/);
   assert.doesNotMatch(js,/innerHTML\s*=/);
+  assert.doesNotThrow(()=>new Function(formatter));
+  assert.doesNotMatch(formatter,/innerHTML\s*=/);
   assert.match(js,/ResizeObserver/);
   assert.match(js,/classList\.add\('mini'\)/);
   assert.match(js,/classList\.remove\('mini'\)/);

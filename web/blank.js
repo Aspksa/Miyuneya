@@ -429,7 +429,8 @@
     const active = window.location.hash === '#brains';
     hub.hidden = !active;
     link.setAttribute('aria-current', active ? 'page' : 'false');
-    area.setAttribute('aria-label', active ? 'Мозги Hayumeri' : 'Пустая рабочая область');
+    area.setAttribute('aria-label', active ? 'Мозги Hayumeri' : 'Главная Miyuneya');
+    const home=document.getElementById('miyu-portal-home');if(home)home.setAttribute('aria-current',active?'false':'page');
     document.title = active ? 'Мозги Hayumeri' : '';
   }
   window.addEventListener('hashchange', renderBrainLocation);

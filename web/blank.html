@@ -7,12 +7,25 @@
   <title></title>
   <link rel="stylesheet" href="/blank.css">
   <script type="module" src="/blank.js"></script>
+  <link rel="stylesheet" href="/unified-ui.css">
   <link rel="stylesheet" href="/avatar.css">
+  <link rel="stylesheet" href="/avatar-layout.css">
+  <link rel="stylesheet" href="/avatar-experience.css">
+  <script src="/chat-format.js" defer></script>
+  <script src="/chat-attachments.js" defer></script>
+  <script src="/avatar-state.js" defer></script>
   <script defer src="/avatar.js"></script>
   <script defer src="/avatar-studio.js"></script>
 </head>
 <body>
-  <main class="work-area" id="work-area" aria-label="Пустая рабочая область">
+  <nav class="miyu-portal-nav" aria-label="Навигация по Miyuneya">
+    <span class="miyu-portal-logo" aria-hidden="true">✦</span>
+    <a href="/" aria-current="page" id="miyu-portal-home">Главная</a>
+    <a href="/workspace#notes">Заметки и задачи</a>
+    <a href="/workspace#disk">Документы</a>
+    <span class="miyu-portal-notice">Ваше пространство — одна система</span>
+  </nav>
+  <main class="work-area" id="work-area" aria-label="Главная Miyuneya">
     <section class="brain-workspace" id="brain-workspace" aria-labelledby="brain-heading" hidden>
       <header class="brain-workspace-header">
         <div>

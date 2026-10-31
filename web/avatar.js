@@ -41,7 +41,7 @@
   const avatarSizeValue = document.getElementById('kitsune-size-output');
   const opacityValue = document.getElementById('kitsune-opacity-output');
 
-  const defaults = { size: 180, opacity: 100, glow: true, animations: true, font: 15, width: 410, height: 550, snap: true, quietMode: false, chatMode: 'floating' };
+  const defaults = { size: 180, opacity: 100, glow: true, animations: true, font: 15, width: 410, height: 550, snap: true, quietMode: false, chatMode: 'floating', density:'normal', lineWidth:'normal', motionLevel:'auto' };
   const settingsKey = 'miyuneya.kitsune.settings.v1';
   const avatarKey = 'miyuneya.kitsune.position.v1';
   const positionKey = ()=>'miyuneya.kitsune.position.'+(window.innerWidth <= 700?'mobile':'desktop')+'.v2';
@@ -69,6 +69,9 @@
     if(typeof storedSettings.snap==='boolean')config.snap=storedSettings.snap;
     if(typeof storedSettings.quietMode==='boolean')config.quietMode=storedSettings.quietMode;
     if(['floating','dock','full'].includes(storedSettings.chatMode))config.chatMode=storedSettings.chatMode;
+    if(['compact','normal','spacious'].includes(storedSettings.density))config.density=storedSettings.density;
+    if(['narrow','normal','wide'].includes(storedSettings.lineWidth))config.lineWidth=storedSettings.lineWidth;
+    if(['auto','low','off'].includes(storedSettings.motionLevel))config.motionLevel=storedSettings.motionLevel;
     if(Number.isInteger(storedSettings.font)&&storedSettings.font>=13&&storedSettings.font<=20)config.font=storedSettings.font;
     if(Number.isInteger(storedSettings.width)&&storedSettings.width>=320&&storedSettings.width<=800)config.width=storedSettings.width;
     if(Number.isInteger(storedSettings.height)&&storedSettings.height>=350&&storedSettings.height<=900)config.height=storedSettings.height;
@@ -79,7 +82,7 @@
   let avatarPos=validPosition(savedAvatar)?savedAvatar:null;
   let chatPos=validPosition(savedChat)?savedChat:null;
   let positionScreen=window.innerWidth<=700?'mobile':'desktop';
-  let suppressClick=false, stream=null, settingsReturnFocus=null;
+  let suppressClick=false, stream=null, settingsReturnFocus=null, avatarDragging=false;
   // The old browser copy is kept untouched as an emergency migration source.
   const legacyHistory=read(historyKey,[]);
   let history=Array.isArray(legacyHistory)?legacyHistory.filter(m=>m &&
@@ -392,6 +395,9 @@
     }
     for(const key of ['glow','animations','snap','quietMode'])if(typeof candidate[key]==='boolean')config[key]=candidate[key];
     if(['floating','dock','full'].includes(candidate.chatMode))config.chatMode=candidate.chatMode;
+    if(['compact','normal','spacious'].includes(candidate.density))config.density=candidate.density;
+    if(['narrow','normal','wide'].includes(candidate.lineWidth))config.lineWidth=candidate.lineWidth;
+    if(['auto','low','off'].includes(candidate.motionLevel))config.motionLevel=candidate.motionLevel;
     applySettings();
   }).catch(()=>{});
 
@@ -447,6 +453,20 @@
   }
   headerModeSelect.className='kitsune-chat-mode-quick';
   chatTools.insertBefore(headerModeSelect,openSettings);
+  const densitySelect=document.createElement('select');densitySelect.id='kitsune-chat-density';
+  for(const [id,label] of [['compact','Компактная'],['normal','Обычная'],['spacious','Просторная']]){
+    const option=document.createElement('option');option.value=id;option.textContent=label;densitySelect.append(option);
+  }
+  const widthModeSelect=document.createElement('select');widthModeSelect.id='kitsune-chat-text-width';
+  for(const [id,label] of [['narrow','Узкая колонка'],['normal','Обычная'],['wide','На всю ширину']]){
+    const option=document.createElement('option');option.value=id;option.textContent=label;widthModeSelect.append(option);
+  }
+  densitySelect.addEventListener('change',()=>{
+    config.density=densitySelect.value;applySettings();persistConfig();
+  });
+  widthModeSelect.addEventListener('change',()=>{
+    config.lineWidth=widthModeSelect.value;applySettings();persistConfig();
+  });
   const advancedChat=document.createElement('details');advancedChat.className='kitsune-advanced';
   const chatAdvancedTitle=document.createElement('summary');chatAdvancedTitle.textContent='Дополнительно · размеры окна и шрифт';
   advancedChat.append(chatAdvancedTitle);
@@ -456,7 +476,7 @@
   }
   const chatLegend=chatPanelSettings?.querySelector('legend');
   if(chatLegend){
-    chatLegend.after(controlRow('Режим чата',chatModeSelect));
+    chatLegend.after(controlRow('Режим чата',chatModeSelect),controlRow('Плотность сообщений',densitySelect),controlRow('Ширина текста',widthModeSelect));
     chatPanelSettings.append(advancedChat);
     const cloudLink=document.createElement('a');cloudLink.href='/?settings=cloud';
     cloudLink.className='kitsune-cloud-settings-link';
@@ -477,6 +497,25 @@
     write(settingsKey,config);
     void savePersistentPreference('avatar',config);
   }
+  const presence=window.MiyuneyaAvatarState?.mount({
+    avatar,chat,input,settings,config,save:persistConfig
+  });
+  const attachments=window.MiyuneyaChatAttachments?.mount({form,setStatus});
+  function rememberUI(){presence?.remember();}
+  const recoveryButton=document.createElement('button');
+  recoveryButton.type='button';recoveryButton.className='kitsune-recover-button';
+  recoveryButton.textContent='Продолжить ответ';recoveryButton.hidden=true;
+  status.insertAdjacentElement('afterend',recoveryButton);
+  function refreshRecovery(){
+    const last=history.at(-1);
+    recoveryButton.hidden=!last||last.role!=='assistant'||last.complete!==false||!!stream;
+    recoveryButton.disabled=!remoteChats;
+  }
+  recoveryButton.onclick=()=>{
+    if(stream||recoveryButton.hidden)return;
+    input.value='Продолжи последний прерванный ответ с места остановки, не повторяй уже написанное.';
+    input.focus();void send();
+  };
   function setChatMode(mode,save=true){
     if(!['floating','dock','full'].includes(mode))return;
     config.chatMode=mode;
@@ -533,6 +572,7 @@
   }
   document.addEventListener('focusin',adaptQuiet);
   document.addEventListener('focusout',()=>requestAnimationFrame(adaptQuiet));
+  document.addEventListener('focusin',()=>{if(!avatarDragging)requestAnimationFrame(placeAvatar);});
 
   function setStatus(message=''){status.textContent=message;status.hidden=!message;}
   function preferredMotion(){
@@ -547,6 +587,11 @@
     avatar.classList.toggle('no-glow',!config.glow);
     avatar.classList.toggle('no-motion',!preferredMotion());
     avatar.classList.toggle('kitsune-quiet',!!config.quietMode);
+    chat.classList.toggle('density-compact',config.density==='compact');
+    chat.classList.toggle('density-spacious',config.density==='spacious');
+    chat.dataset.lineWidth=config.lineWidth;
+    densitySelect.value=config.density;widthModeSelect.value=config.lineWidth;
+    presence?.updateMotion();
     chat.classList.toggle('mode-floating',config.chatMode==='floating');
     chat.classList.toggle('mode-dock',config.chatMode==='dock');
     chat.classList.toggle('mode-full',config.chatMode==='full');
@@ -576,6 +621,7 @@
     const safeW=Math.max(10,innerWidth-size-10),safeH=Math.max(10,innerHeight-size-10);
     if(!avatarPos)avatarPos={x:Math.min(32,safeW),y:safeH};
     avatarPos={x:clamp(avatarPos.x,10,safeW),y:clamp(avatarPos.y,10,safeH)};
+    if(!avatarDragging && presence?.avoidAvatar)avatarPos=presence.avoidAvatar(avatarPos,size);
     avatar.style.left=avatarPos.x+'px';
     avatar.style.top=avatarPos.y+'px';
   }
@@ -600,27 +646,8 @@
     chat.style.top=chatPos.y+'px';
   }
   // Reuse message elements while streaming: no full chat flicker on each token.
-  function formatMessage(body,value) {
-    body.replaceChildren();
-    const blocks=String(value).split(/(```[a-zA-Z0-9+#.-]*\n[\s\S]*?```)/g);
-    const lexer=/\/\/[^\n]*|#[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:const|let|var|function|async|await|export|import|return|type|interface|class|if|else|for|while|def|lambda|print|from|try|except|None|True|False|new|throw|public|private|fn|match|impl|struct)\b|\b\d+(?:\.\d+)?\b/g;
-    for(const block of blocks){
-      if(!block.startsWith('```') || !block.endsWith('```')) {
-        body.append(document.createTextNode(block));continue;
-      }
-      const first=block.indexOf('\n'),language=block.slice(3,first).trim().slice(0,25);
-      const text=block.slice(first+1,-3);
-      const pre=document.createElement('pre');pre.className='kitsune-code';
-      const header=document.createElement('span');header.className='kitsune-code-header';header.textContent=language||'Код';
-      const code=document.createElement('code');let pos=0;
-      for(const m of text.matchAll(lexer)){
-        if(m.index>pos)code.append(document.createTextNode(text.slice(pos,m.index)));
-        const piece=document.createElement('span'),t=m[0];
-        piece.className=/^(?:\/\/|#)/.test(t)?'kitsune-token-comment':/^(?:"|')/.test(t)?'kitsune-token-string':/^\d/.test(t)?'kitsune-token-number':'kitsune-token-keyword';
-        piece.textContent=t;code.append(piece);pos=m.index+t.length;
-      }
-      code.append(document.createTextNode(text.slice(pos)));pre.append(header,code);body.append(pre);
-    }
+  function formatMessage(body,value){
+    return window.MiyuneyaChatFormat.render(body,value);
   }
   function renderChat(preserveScroll=false){
     const previousTop=log.scrollTop,previousHeight=log.scrollHeight;
@@ -669,18 +696,19 @@
     }
     while(log.children.length>history.length)log.lastElementChild.remove();
     log.scrollTop=preserveScroll?previousTop+(log.scrollHeight-previousHeight):log.scrollHeight;
+    refreshRecovery();
   }
   function openChat(){
     chat.classList.remove('mini');
     chat.hidden=false;avatar.setAttribute('aria-expanded','true');
     document.documentElement.dataset.kitsuneChatMode=config.chatMode;
-    placeChat();renderChat();input.focus();
+    placeChat();renderChat();input.focus();rememberUI();
   }
   function closeChat(){
     chat.classList.remove('mini');
     chat.hidden=true;avatar.setAttribute('aria-expanded','false');
     document.documentElement.dataset.kitsuneChatMode='closed';
-    avatar.focus({preventScroll:true});
+    avatar.focus({preventScroll:true});rememberUI();
   }
   function openSettingsDialog(){
     settingsReturnFocus=document.activeElement;
@@ -710,6 +738,7 @@
       if(event.button!==0 || (handle===chatHeader && config.chatMode!=='floating') ||
         (handle!==avatar && event.target.closest('button,input,textarea,select')))return;
       pointer={id:event.pointerId,x:event.clientX,y:event.clientY,pos:{...getPosition()},moved:false,longPress:false};
+      if(handle===avatar)avatarDragging=true;
       handle.setPointerCapture?.(event.pointerId);
       if(handle===avatar && event.pointerType==='touch'){
         holdTimer=setTimeout(()=>{
@@ -731,7 +760,7 @@
       cancelHold();
       if(!pointer||event.pointerId!==pointer.id)return;
       const {moved,longPress}=pointer;pointer=null;
-      if(handle===avatar){
+      if(handle===avatar){avatarDragging=false;
         suppressClick=(moved||longPress) && event.type==='pointerup';
         if(suppressClick)setTimeout(()=>{suppressClick=false;},150);
         if(moved)snapAvatar();
@@ -771,10 +800,10 @@
     chatPos={x:clamp((avatarPos?.x||20)+Math.min(config.size,150)+8,10,maxX),
       y:clamp((avatarPos?.y||20)+20,10,maxY)};
     placeChat();
-    expandButton.focus();
+    expandButton.focus();rememberUI();
   });
   expandButton?.addEventListener('click',()=>{
-    chat.classList.remove('mini');applySettings();placeChat();input.focus();
+    chat.classList.remove('mini');applySettings();placeChat();input.focus();rememberUI();
   });
   settingsClose.addEventListener('click',closeSettingsDialog);
   settingsBackdrop.addEventListener('click',closeSettingsDialog);
@@ -895,12 +924,13 @@
   }
 
   async function send(){
-    const content=input.value.trim();
-    if(!content||stream)return;
-    if(content.length>20000){setStatus('Слишком длинное сообщение — максимум 20 000 символов.');return;}
+    const raw=input.value.trim();
+    if(stream||(!raw&&!attachments?.hasPending))return;
+    if(raw.length>20000){setStatus('Слишком длинное сообщение — максимум 20 000 символов.');return;}
     const current=new AbortController();
     stream=current;sendButton.disabled=true;stopButton.hidden=false;
     avatar.classList.add('talking');
+    presence?.setActivity('answering');
     if(streamIndicator)streamIndicator.hidden=false;
     let savedUser=false,reply=null,conversation=null,checkpointChain=Promise.resolve();
     let version=0,lastCheckpointAt=0,checkpointError=null;
@@ -917,6 +947,8 @@
       return job;
     }
     try{
+      const content=attachments?await attachments.prepare(raw):raw;
+      if(content.length>20000)throw Error('Вопрос со вложениями превышает 20 000 символов.');
       await archiveReady;
       if(!remoteChats)throw Error('Хранилище переписки недоступно. Отправка остановлена, чтобы не потерять сообщение.');
       if(current.signal.aborted)throw Error('Отправка остановлена.');
@@ -928,6 +960,10 @@
       await persistMessage(conversation.id,user);
       savedUser=true;
       history.push(user);input.value='';renderChat();saveHistory();setStatus('');
+      if(attachments?.hasPending){
+        await attachments.upload(conversation.id,user.id,current.signal);
+        setStatus('Файлы сохранены в локальном архиве. Модели передан текст только при вашем согласии.');
+      }
       reply={id:conversationId(),role:'assistant',content:'',createdAt:nowISO(),version:0,complete:false};
       history.push(reply);renderChat();
 
@@ -970,7 +1006,7 @@
       if(checkpointError)setStatus('Ответ получен. Проверьте сохранение истории на диск.');
     }catch(error){
       if(!savedUser){
-        input.value=content;
+        input.value=raw;
         setStatus('Сообщение не отправлено: '+(error?.message||'Ошибка локального архива.'));
       }else{
         await checkpointChain;
@@ -982,11 +1018,15 @@
           history=history.filter(m=>m!==reply);
         }
         if(!checkpointError)setStatus(current.signal.aborted?'Запрос остановлен.':error?.message||'Нет связи с сервером.');
+        presence?.setActivity('error');
         trimVisibleHistory();saveHistory();renderChat();
       }
     }finally{
       stream=null;sendButton.disabled=false;stopButton.hidden=true;
       avatar.classList.remove('talking');
+      if(navigator.onLine===false)presence?.setActivity('offline');
+      else if(avatar.dataset.activity!=='error')presence?.setActivity('idle');
+      refreshRecovery();
       if(streamIndicator)streamIndicator.hidden=true;
     }
   }
@@ -1190,4 +1230,9 @@
 
   }
   renderChat();
+  void archiveReady.finally(()=>{
+    const saved=presence?.restore();
+    if(saved?.open){openChat();if(saved.mini)minimizeButton?.click();}
+    refreshRecovery();
+  }).catch(()=>{});
 })();

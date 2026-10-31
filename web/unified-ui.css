@@ -1,0 +1,75 @@
+/* Miyuneya shared design tokens: homepage and workspace use the same visual language. */
+:root[data-theme="light"] {
+  --page:#f8f7f4;--rail:#fff;--panel:#fff;--text:#292923;--secondary:#686b68;
+  --line:#e7e4dc;--icon-hover:#f3f1eb;--accent:#7761bb;
+  --accent-wash:#f0ecfc;--shadow:0 20px 56px rgba(42,34,28,.11),0 5px 18px rgba(42,34,28,.035);
+  --veil:rgba(27,27,33,.28);
+}
+:root[data-theme="dark"] {
+  --page:#18191c;--rail:#222328;--panel:#25262b;--text:#f5f2ed;
+  --secondary:#bdc0c4;--line:#3f4046;--icon-hover:#303239;
+  --accent:#c1b0fa;--accent-wash:#39354c;
+  --shadow:0 20px 56px rgba(0,0,0,.42),0 5px 18px rgba(0,0,0,.18);
+  --veil:rgba(0,0,0,.54);
+}
+:root {--miyu-radius:16px;--miyu-gap:12px;--miyu-focus:2px solid #947ce0;}
+body {color:var(--text,var(--fg));background:var(--page,var(--bg));}
+:is(button,input,select,textarea,a):focus-visible{outline:var(--miyu-focus);outline-offset:3px}
+button,select,input,textarea {font-family:inherit}
+.miyu-portal-nav {
+  position:fixed;inset:18px auto auto 18px;z-index:15;display:flex;align-items:center;
+  gap:7px;padding:7px;border-radius:16px;border:1px solid var(--line);
+  background:var(--panel);box-shadow:0 7px 28px rgba(30,29,32,.075);
+  max-width:calc(100vw - 116px);
+}
+.miyu-portal-nav a {
+  color:var(--text);padding:9px 13px;min-height:39px;display:inline-flex;
+  align-items:center;text-decoration:none;white-space:nowrap;font-weight:600;font-size:13px;
+  border-radius:10px;transition:background .15s ease;
+}
+.miyu-portal-nav a:is(:hover,:focus-visible),.miyu-portal-nav a[aria-current="page"] {
+  background:var(--accent-wash);color:var(--accent);
+}
+.miyu-portal-logo{color:var(--accent);font-size:18px;padding-inline:12px}
+.miyu-portal-notice{
+  position:absolute;top:calc(100% + 9px);left:0;
+  color:var(--secondary);font-size:12px;white-space:nowrap;max-width:100%;
+}
+@media(max-width:680px){
+  .miyu-portal-nav {left:8px;top:10px;gap:0;padding:4px;max-width:calc(100vw - 80px)}
+  .miyu-portal-nav a{padding:7px 8px;font-size:11px;min-height:37px;}
+  .miyu-portal-logo{padding-inline:6px;font-size:15px}
+  .miyu-portal-notice{display:none}
+}
+@media(prefers-reduced-motion:reduce){
+  .miyu-portal-nav a {transition:none}
+}
+/* Workspace: compact sidebar is a first-class user preference, not a hover trick. */
+@media(min-width:621px){
+  .shell.miyu-nav-compact{grid-template-columns:76px minmax(0,1fr)!important}
+  .shell.miyu-nav-compact .sidebar{padding-inline:10px}
+  .shell.miyu-nav-compact .sidebar .nav-text,
+  .shell.miyu-nav-compact .sidebar .count{display:none}
+  .shell.miyu-nav-compact .sidebar .nav a{padding:11px 7px;justify-content:center}
+  .shell.miyu-nav-compact .sidebar .nav-icon{margin-inline:auto}
+  .shell.miyu-nav-compact .miyu-nav-collapse{width:100%;justify-content:center}
+  .shell.miyu-nav-compact .miyu-nav-collapse span{display:none}
+}
+.miyu-nav-collapse {
+  display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:10px;
+  border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--muted,var(--secondary));
+  font:inherit;font-size:13px;cursor:pointer;margin-bottom:12px;
+}
+.miyu-nav-collapse:hover{background:var(--soft,var(--icon-hover))}
+.miyu-nav-collapse .miyu-collapse-icon{font-size:18px;line-height:1}
+@media(max-width:620px){.miyu-nav-collapse{display:none}}
+/* Reuse workspace color variables without overriding per-user accent, radius or scale. */
+body:has(#app){
+  --page:var(--bg,#f8f7f4);--text:var(--fg,#292923);
+  --secondary:var(--muted,#73736b);--accent:var(--gold,#907344);
+  --accent-wash:var(--tint,#f2ecdf);--icon-hover:var(--soft,#f4f2ed);
+}
+body:has(#app) .nav a,
+body:has(#app) .button,
+body:has(#app) .icon-button{transition:background-color .14s ease, color .14s ease,border-color .14s ease}
+@media(prefers-reduced-motion:reduce){body:has(#app) .nav a,body:has(#app) .button{transition:none}}
