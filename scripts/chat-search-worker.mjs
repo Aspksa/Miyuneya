@@ -97,7 +97,7 @@ try{
     parentPort?.postMessage({rows,total:rows[0]?.total||0,elapsedMs:performance.now()-begin});
   }else{
     const mode=['phrase','exact','morphology'].includes(input?.mode)?input.mode:'morphology';
-    if(mode!=='phrase'&&input?.typos)db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.fts_terms USING fts5vocab(message_fts,'row')");
+    if(mode!=='phrase'&&input?.typos)db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS temp.fts_terms USING fts5vocab(main,message_fts,'row')");
     let result=query(buildMatch(words,mode,false),text,archived,limit,offset,sort);
     if(!result.rows.length&&input?.typos&&mode!=='phrase')
       result=query(buildMatch(words,mode,true),text,archived,limit,offset,sort);
