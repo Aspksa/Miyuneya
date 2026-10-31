@@ -314,7 +314,7 @@ export function answer(memory: Memory, id: string, text: unknown, now = new Date
     // Only a user's explicit answer to the displayed question is accepted.
     // A model-generated reflection must never verify its own speculation.
     if(source!=='user'||!isUsefulClarification(value))return null;
-    const fact=clip(`Уточнение пользователя: «${value.slice(0,195)}» (на вопрос «${question.text.slice(0,140)}»)`);
+    const fact=clip(`Уточнение пользователя к вопросу ${question.id}: «${value.slice(0,260)}»`);
     const added=upsert(memory,'fact',fact,{source:'user',now,origin:question.id,
       links:question.facts.slice(0,10),
       category:memory.items.find(i=>i.id===question.facts[0])?.category||'other'});
@@ -324,7 +324,7 @@ export function answer(memory: Memory, id: string, text: unknown, now = new Date
       at:now,role:'user' as const
     }].slice(-8);
     memory.questions=memory.questions.filter(q=>q!==question);
-    journal(memory,'question',`Получено уточнение владельца: ${value}`,now);
+    journal(memory,'question',`Уточнение к «${question.text}»: ${value}`,now);
     return added.item;
   }
   const entity = memory.entities.find(e => e.id === question.entity);
