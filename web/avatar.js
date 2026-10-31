@@ -7,6 +7,7 @@
   if (!avatar || !chat || !settings) return;
   const form = document.getElementById('kitsune-chat-form');
   const input = document.getElementById('kitsune-message');
+  const desktopMessagePlaceholder=input?.placeholder||'Напишите сообщение…';
   const log = document.getElementById('kitsune-log');
   const chatHeader = document.getElementById('kitsune-chat-header');
   const minimizeButton = document.getElementById('kitsune-minimize');
@@ -552,6 +553,7 @@
     chat.dataset.mode=config.chatMode;
     document.documentElement.dataset.kitsuneChatMode=chat.hidden?'closed':config.chatMode;
     chat.style.setProperty('--kitsune-font',config.font+'px');
+    input.placeholder=mobile?'Напишите сообщение…':desktopMessagePlaceholder;
     chat.style.width='min('+config.width+'px, calc(100vw - 20px))';
     chat.style.height='min('+config.height+'px, calc(100dvh - 24px))';
     sizeInput.value=String(config.size);
