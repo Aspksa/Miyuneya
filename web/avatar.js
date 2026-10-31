@@ -19,6 +19,9 @@
   const reset = document.getElementById('kitsune-settings-reset');
   const clearChat = document.getElementById('kitsune-clear');
   const chatTools = chat.querySelector('.kitsune-chat-tools');
+  clearChat.textContent='Новый чат';
+  clearChat.title='Начать новый разговор, сохранив предыдущий';
+  clearChat.setAttribute('aria-label','Начать новый разговор; предыдущий сохраняется');
   const openSettings = document.getElementById('kitsune-chat-settings');
   const status = document.getElementById('kitsune-chat-status');
   const sizeInput = document.getElementById('kitsune-avatar-size');
@@ -191,7 +194,8 @@
         }catch(e){setStatus(e.message);}
       };
       const archive=document.createElement('button');archive.type='button';
-      archive.textContent=showArchived?'↶':'×';archive.title=showArchived?'Вернуть из архива':'Переместить в архив';
+      archive.textContent=showArchived?'↶':'↧';archive.title=showArchived?'Вернуть из архива':'Переместить в архив';
+      archive.setAttribute('aria-label',archive.title+' — '+row.title);
       archive.onclick=async()=>{
         if(stream){setStatus('Остановите ответ перед переносом в архив.');return;}
         if(!showArchived && !confirm('Переместить разговор в архив? Сообщения сохранятся.'))return;
