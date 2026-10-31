@@ -89,6 +89,10 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   const stylesheet=await readFile(join(root,'web','blank.css'),'utf8');
   const script=await readFile(join(root,'web','blank.js'),'utf8');
   const avatarStyles=await readFile(join(root,'web','avatar.css'),'utf8');
+  const sharedStyles=await readFile(join(root,'web','unified-ui.css'),'utf8');
+  const experienceStyles=await readFile(join(root,'web','avatar-experience.css'),'utf8');
+  const stateScript=await readFile(join(root,'web','avatar-state.js'),'utf8');
+  const attachmentScript=await readFile(join(root,'web','chat-attachments.js'),'utf8');
   const avatarScript=await readFile(join(root,'web','avatar.js'),'utf8');
   const studioScript=await readFile(join(root,'web','avatar-studio.js'),'utf8');
   const avatarBytes=await readFile(join(root,'web','avatars','avatar1.png'));
@@ -98,6 +102,10 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   const documentHTML=source.replace('<link rel="stylesheet" href="/blank.css">','<style>'+stylesheet+'</style>')
     .replace('<script type="module" src="/blank.js"></script>','')
     .replace('<link rel="stylesheet" href="/avatar.css">','<style>'+avatarStyles+'</style>')
+    .replace('<link rel="stylesheet" href="/unified-ui.css">','<style>'+sharedStyles+'</style>')
+    .replace('<link rel="stylesheet" href="/avatar-experience.css">','<style>'+experienceStyles+'</style>')
+    .replace('<script src="/chat-attachments.js" defer></script>','')
+    .replace('<script src="/avatar-state.js" defer></script>','')
     .replace('<script defer src="/avatar.js"></script>','')
     .replace('<script defer src="/avatar-studio.js"></script>','')
     .replace('src="/avatars/avatar1.png"','src="data:image/png;base64,'+avatarBytes.toString('base64')+'"');
@@ -110,6 +118,8 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   }
   assert.equal(await evalJS('document.readyState'),'complete');
   await evalJS(script);
+  await evalJS(attachmentScript);
+  await evalJS(stateScript);
   await evalJS(avatarScript);
   await evalJS(studioScript);
   const brainInitially=await evalJS(`(()=>{
@@ -152,6 +162,10 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   })()`);
   assert.equal(kitsuneInitial.imageNatural,1254,'Full-resolution local PNG must decode correctly');
   assert.equal(kitsuneInitial.chatHidden,true);
+  assert.equal(await evalJS("document.querySelectorAll('.miyu-portal-nav a').length"),3);
+  assert.equal(await evalJS("document.getElementById('kitsune-chat-attachment-input') !== null"),true);
+  assert.equal(await evalJS("document.getElementById('kitsune-motion-level') !== null"),true);
+  assert.equal(await evalJS("document.getElementById('kitsune-chat-density') !== null"),true);
   assert.equal(kitsuneInitial.settingsHidden,true);
   await evalJS('document.getElementById("kitsune-avatar").click()');
   assert.equal(await evalJS('document.getElementById("kitsune-chat").hidden'),false,'Left click opens real chat');
