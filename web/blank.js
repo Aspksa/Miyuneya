@@ -147,6 +147,21 @@
     else toggle.focus();
   }
   toggle.addEventListener('click', () => setOpen(dialog.hidden));
+  // The avatar's settings link opens this single authoritative Cloud.ru panel.
+  // Never put a secret or draft model into a URL.
+  try{
+    const url=new URL(window.location.href);
+    if(url.searchParams.get('settings')==='cloud'){
+      setOpen(true);
+      requestAnimationFrame(()=>{
+        document.getElementById('cloud-panel')?.scrollIntoView({block:'start',behavior:'instant'});
+        document.getElementById('cloud-model')?.focus({preventScroll:true});
+      });
+      url.searchParams.delete('settings');
+      window.history.replaceState(null,'',url.pathname+url.search+url.hash);
+    }
+  }catch{}
+
   closeButton.addEventListener('click', () => setOpen(false));
   backdrop.addEventListener('click', () => setOpen(false));
   document.addEventListener('keydown', event => {
