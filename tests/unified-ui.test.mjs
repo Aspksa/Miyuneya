@@ -1,3 +1,4 @@
+import { allowed } from '../scripts/update.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
@@ -37,8 +38,10 @@ test('All new assets are allowed by offline build, HTTP server and safe updater'
     assert.ok(build.includes("'"+path+"'"),'Build must package '+path);
     assert.ok(server.includes("'/"+path+"'"),'Server must serve '+path);
   }
+  assert.match(updater,/export const allowed/);
   for(const expression of ['unified-ui','avatar-experience','avatar-state','chat-attachments'])
-    assert.ok(updater.includes(expression),'Update allowlist must cover '+expression);
+    assert.ok(allowed.test('web/'+expression+(expression==='avatar-state'||expression==='chat-attachments'?'.js':'.css')),
+      'Update allowlist must cover '+expression);
 });
 test('Attachment composer is browser-local and never posts bytes directly to Cloud.ru',()=>{
   assert.doesNotThrow(()=>new Function(attachments));

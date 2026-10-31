@@ -819,3 +819,13 @@ input[type="color"]:focus-visible, input[type="range"]:focus-visible,
 .brain-empty-state .brain-cognitive-footnote{font-size:.8em;max-width:44ch}
 @media(max-width:420px){.brain-cognitive-stats{font-size:.76em;padding:8px 9px}.brain-cognitive-open{max-width:100%}}
 @media(prefers-reduced-motion:reduce){.brain-cognitive-open{transition:none}}
+
+/* Project updates — quiet, readable status without badges or extra navigation. */
+.project-updates .update-version{font-weight:650;font-size:14px;margin:12px 0 6px;color:var(--text)}
+.project-updates .update-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.project-updates .update-actions button{flex:1 1 145px;min-width:0}
+.project-updates .update-notes{margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:var(--ui-radius,12px)}
+.project-updates .update-notes summary{cursor:pointer;font-weight:600}
+.project-updates #update-notes{white-space:pre-wrap;overflow-wrap:anywhere;max-height:220px;overflow-y:auto}
+.project-updates .setting-check{margin-top:10px}
+.project-updates #update-state{min-height:2.4em;overflow-wrap:anywhere}

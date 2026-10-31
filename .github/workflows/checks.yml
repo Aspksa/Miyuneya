@@ -31,6 +31,9 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run check
+      - name: Проверка создания пакета обновления для GitHub Releases
+        if: matrix.os == 'ubuntu-latest'
+        run: node scripts/package-release.mjs
       - name: Строгая проверка TypeScript (только CI, не требуется при запуске)
         if: matrix.os == 'ubuntu-latest'
         run: |

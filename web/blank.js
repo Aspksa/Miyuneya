@@ -456,3 +456,99 @@
   window.addEventListener('hashchange', renderBrainLocation);
   renderBrainLocation();
 })();
+
+
+// GitHub project updates are independent of Cloud.ru, notes and avatar options.
+// All downloads and integrity checks happen on the loopback server.
+(() => {
+  'use strict';
+  const field = document.getElementById('project-updates');
+  if (!field) return;
+  const version = document.getElementById('update-version');
+  const status = document.getElementById('update-state');
+  const notes = document.getElementById('update-notes');
+  const checkButton = document.getElementById('update-check');
+  const downloadButton = document.getElementById('update-download');
+  const restartButton = document.getElementById('update-restart');
+  const checkAuto = document.getElementById('update-auto-check');
+  const downloadAuto = document.getElementById('update-auto-download');
+  let active = false;
+  let current = null;
+  const isNewer = (a,b) => {
+    if (!a || !b) return false;
+    const x=a.split('.').map(Number),y=b.split('.').map(Number);
+    for (let i=0;i<3;i++){if(x[i]!==y[i])return x[i]>y[i];}
+    return false;
+  };
+  function draw(data) {
+    current = data;
+    version.textContent = 'Текущая версия: ' + data.current +
+      (data.available ? ' · GitHub: ' + data.available : '');
+    checkAuto.checked = !!data.autoCheck;
+    downloadAuto.checked = !!data.autoDownload;
+    downloadAuto.disabled = active || !checkAuto.checked;
+    notes.textContent = data.notes || 'Описание изменений пока не опубликовано.';
+    const newer=isNewer(data.available,data.current);
+    downloadButton.hidden = !newer || !!data.pending;
+    restartButton.hidden = !data.pending;
+    if(data.pending)status.textContent='Пакет '+data.pending+' проверен и подготовлен. Можно устанавливать.';
+    else if(data.lastError)status.textContent=data.lastError;
+    else if(newer)status.textContent='Доступна новая версия. Просмотрите изменения и подтвердите загрузку.';
+    else if(data.noRelease)status.textContent='В репозитории пока нет опубликованного стабильного релиза GitHub.';
+    else if(data.checkedAt)status.textContent='Обновлений нет. Последняя проверка: '+new Date(data.checkedAt).toLocaleString('ru-RU');
+    else status.textContent='Можно проверить наличие новой версии в GitHub.';
+  }
+  async function request(method='GET',body) {
+    const response=await fetch('/api/updates',{method,headers:body?{'Content-Type':'application/json'}:{},
+      body:body?JSON.stringify(body):undefined,cache:'no-store'});
+    const data=await response.json();
+    if(!response.ok)throw new Error(data.error||'Сервис обновлений недоступен.');
+    return data;
+  }
+  async function task(action,working) {
+    if(active)return;
+    active=true;
+    for(const button of [checkButton,downloadButton,restartButton])button.disabled=true;
+    status.textContent=working;
+    try{
+      const result=await request('POST',{action});
+      if(action==='restart'){
+        status.textContent='Перезапуск Miyuneya. Проверяем новую версию…';
+        const expected=current?.pending;
+        const started=Date.now();
+        const poll=async()=>{
+          if(Date.now()-started>90_000){status.textContent='Не удалось связаться с перезапущенным сервером. Проверьте окно Miyuneya.bat.';return;}
+          try{
+            const next=await request();
+            if(next.current===expected&&!next.pending){window.location.reload();return;}
+            if(next.pending===null&&next.current!==expected){
+              status.textContent='Обновление откатилось. Запущена предыдущая версия.';
+              draw(next);return;
+            }
+          }catch{}
+          setTimeout(poll,1400);
+        };
+        setTimeout(poll,1500);
+        return;
+      }
+      draw(result);
+    }catch(e){status.textContent=e.message||'Не удалось завершить обновление.';}
+    finally{active=false;for(const button of [checkButton,downloadButton,restartButton])button.disabled=false;downloadAuto.disabled=!checkAuto.checked;}
+  }
+  checkButton.addEventListener('click',()=>void task('check','Проверяем GitHub…'));
+  downloadButton.addEventListener('click',()=>void task('download','Скачиваем пакет и сверяем SHA-256…'));
+  restartButton.addEventListener('click',()=>{
+    if(window.confirm('Установить проверенное обновление? Miyuneya перезапустится, несохранённые изменения в открытых формах могут быть потеряны.'))void task('restart','Готовим перезапуск…');
+  });
+  async function saveSettings(){
+    if(active)return;
+    const autoCheck=checkAuto.checked,autoDownload=autoCheck&&downloadAuto.checked;
+    if(!autoCheck)downloadAuto.checked=false;
+    downloadAuto.disabled=!autoCheck;
+    try{draw(await request('PUT',{autoCheck,autoDownload}));}
+    catch{status.textContent='Не удалось сохранить параметры обновлений.';}
+  }
+  checkAuto.addEventListener('change',()=>void saveSettings());
+  downloadAuto.addEventListener('change',()=>void saveSettings());
+  void request().then(draw).catch(()=>{status.textContent='Не удалось прочитать версию локального проекта.';});
+})();

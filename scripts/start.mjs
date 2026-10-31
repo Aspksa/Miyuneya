@@ -16,7 +16,7 @@ const pointerFile=join(root,'.runtime','server.json');
 const preview=process.argv.includes('--preview');
 const option=name=>{const index=process.argv.indexOf(name);return index<0?undefined:process.argv[index+1];};
 const open=process.argv.includes('--open') && process.env.MIYUNEYA_NO_OPEN!=='1';
-let stage='lock';let logger;let release;let child;let stopping=false;
+let stage='lock';let logger;let release;let child;let stopping=false;let restartRequested=false;
 let transaction;
 function show(url,reused=false) {console.log(`\n✦ Miyuneya · ${reused?'уже запущена':'готова'}\n${url}\n\nДанные: папка data рядом с проектом.\nОстановить сервер можно клавишами Ctrl+C.\n`);}
 function openBrowser(url) {
@@ -33,17 +33,18 @@ async function stopChild(processState) {
   if(processState.forced) throw Object.assign(new Error('Shutdown deadline exceeded'),{code:'SHUTDOWN_TIMEOUT'});
 }
 function requestStop() {stopping=true;if(child) stopChild(child).catch(()=>{process.exitCode=44;});}
+function requestRestart() {if(stopping||restartRequested)return;restartRequested=true;if(child)stopChild(child).catch(()=>{process.exitCode=44;});}
 process.on('SIGINT',requestStop);process.on('SIGTERM',requestStop);
-async function runServer() {
+async function runServer(portHint=0) {
   const launchId=randomUUID();
-  const port=preview?Number(option('--port') || process.env.PORT || 5173):0;
+  const port=preview?Number(option('--port') || process.env.PORT || 5173):portHint;
   const host=preview?(option('--host') || '127.0.0.1'):'127.0.0.1';
   if(!Number.isInteger(port)||port<0||port>65535)throw Object.assign(new Error('Invalid preview port'),{code:'INVALID_PORT'});
   const proc=spawn(process.execPath,[join(root,'scripts','serve.mjs')],{cwd:root,stdio:['ignore','pipe','pipe','ipc'],windowsHide:true});
   const state={process:proc,ended:false,forced:false,closed:null};
   state.closed=new Promise(resolve=>{proc.once('close',(code,signal)=>{state.ended=true;resolve({code,signal});});});
   proc.stdout.resume();proc.stderr.resume(); // Never write arbitrary child output or user data into diagnostics.
-  proc.on('message',message=>{if(message?.type==='stop-requested') requestStop();});
+  proc.on('message',message=>{if(message?.type==='stop-requested') requestStop();if(message?.type==='update-restart-requested')requestRestart();});
   child=state;
   try {
     const ready=await new Promise((resolve,reject)=>{
@@ -91,12 +92,14 @@ async function main() {
     throw Object.assign(new Error('Another startup did not become healthy'),{code:'INSTANCE_NOT_READY'});
   }
   logger=await makeLogger(root);await logger.log('runtime','node-ready');
+  let portHint=0;
+  while(!stopping){
   stage='update';transaction=await updateManager(root,logger);
   let ready;
   try {
     stage='build';const rebuilt=await ensureBuild(root);await logger.log('build',rebuilt?'repaired':'intact');
     if(stopping)return;
-    stage='server';ready=await runServer();
+    stage='server';ready=await runServer(portHint);
     // The quick HTTP health check is insufficient after changing code:
     // validate the actual SQLite schema, FK links, FTS and integrity BEFORE
     // marking an update installed. On failure, stop this candidate first.
@@ -116,7 +119,7 @@ async function main() {
     if(ready?.state){await stopChild(ready.state);child=null;ready=undefined;}
     if(!transaction.applied)throw e;
     await logger.log(stage,'candidate-failed',40);await transaction.rollback();transaction.applied=false;
-    stage='build';await ensureBuild(root);stage='server';ready=await runServer();
+    stage='build';await ensureBuild(root);stage='server';ready=await runServer(portHint);
   }
   if(stopping){await stopChild(ready.state);return;}
   await atomicWrite(pointerFile,JSON.stringify(ready.pointer));
@@ -124,8 +127,17 @@ async function main() {
   await logger.log('health','ready');
   const url=`http://127.0.0.1:${ready.pointer.port}`;show(url);openBrowser(url);
   const result=await ready.state.closed;child=null;
+  if(restartRequested && !stopping){
+    restartRequested=false;
+    portHint=ready.pointer.port; // Reuse the same loopback URL so the browser reconnects.
+    await logger.log('update','restarting');
+    await retryFile(()=>rm(pointerFile,{force:true}));
+    continue;
+  }
   if(!stopping && result.code!==0)throw Object.assign(new Error('Unexpected server exit'),{code:'SERVER_EXIT_'+result.code});
   await logger.log('shutdown','writes-drained');
+  break;
+  }
 }
 try {await main();}
 catch(e) {
