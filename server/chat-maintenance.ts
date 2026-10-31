@@ -344,7 +344,9 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   }
   async function check(){
     if(store.isImporting())return {ok:false,busy:true,details:'Импорт переписки ещё выполняется.'};
+    const started=performance.now();
     const result=await background('check');
+    event('check',result.ok?'ok':'failed',result.ok?'none':'integrity-error',performance.now()-started);
     if(!result.ok){
       store.lockWrites('SQLite не прошёл проверку целостности. Записи остановлены.');
       return result;
@@ -410,6 +412,8 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     })).sort((a,b)=>b.maxMs-a.maxMs).slice(0,12);
     if(slow.some(x=>x.name==='save'&&x.maxMs>500))
       alerts.push('Запись сообщений выполнялась дольше 500 мс. Проверьте состояние диска.');
+    if(walBytes>=256*1024*1024)
+      alerts.push('SQLite WAL занимает более 256 МБ. Проверьте длительные читающие операции.');
     return {...info,freeBytes,backupAt,dbFileBytes,walBytes,shmBytes,
       externalBackupPath:externalPath,lastExternalBackup:store.getSetting('lastExternalBackup')||null,
       backupCount:Number(store.getSetting('backupCount')||0),
@@ -417,39 +421,78 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       readOnly:store.readOnly(),wal:true,
       warnings:alerts,operations:slow,backupRunning:!!active};
   }
+  // Long-running readers may prevent complete WAL checkpointing. Only use
+  // PASSIVE (never TRUNCATE) while a conversation can be streamed.
+  async function inspectWal(){
+    if(store.isImporting()||stopped)return {ok:false,busy:true};
+    const bytes=(await stat(store.path+'-wal').catch(()=>null))?.size||0;
+    if(bytes<32*1024*1024)return {ok:true,skipped:true,walBytes:bytes};
+    const started=performance.now();
+    const result=await background('checkpoint').catch(()=>({ok:false}));
+    event('checkpoint',result.ok?'ok':'warning',result.ok?'passive':'checkpoint-failed',performance.now()-started);
+    const after=(await stat(store.path+'-wal').catch(()=>null))?.size||0;
+    if(result.busy||after>=256*1024*1024)
+      warnings.push('WAL ещё занят активным читателем или превышает 256 МБ: это не повод удалять файлы SQLite.');
+    return {...result,walBytes:after};
+  }
   async function maintain(){
-    if(stopped||active||store.isImporting())return;
-    const lastCheck=store.getSetting('lastCheck');
-    try{
-      if(!lastCheck||Date.now()-Date.parse(lastCheck)>24*3600_000){
-        const checked=await check();
-        if(!checked.ok)return; // Do not optimize or copy a damaged archive.
-        const current=await statistics();
-        store.setSetting('growthBaseline',JSON.stringify({
-          bytes:current.dbFileBytes,messages:current.messages,at:now()
-        }));
-        const optimized=await background('optimize');
-        if(!optimized.ok)warnings.push('Не удалось обновить статистику индексов SQLite.');
+    if(stopped||active||scheduledJob||store.isImporting())return;
+    // Self-test, optimization, backup and WAL check have separate cadences,
+    // but share one non-overlapping scheduler.
+    const task=(async()=>{
+      try{
+        const lastCheck=store.getSetting('lastCheck');
+        if(!lastCheck||Date.now()-Date.parse(lastCheck)>24*3600_000){
+          const checked=await check();
+          if(!checked.ok){event('schedule','warning','integrity-not-ready');return;}
+          const current=await statistics();
+          store.setSetting('growthBaseline',JSON.stringify({
+            bytes:current.dbFileBytes,messages:current.messages,at:now()
+          }));
+          const started=performance.now();
+          const optimized=await background('optimize');
+          event('optimize',optimized.ok?'ok':'warning',optimized.ok?'none':'optimizer-failed',performance.now()-started);
+          if(!optimized.ok)warnings.push('Не удалось обновить статистику индексов SQLite.');
+        }
+        await inspectWal();
+        const last=store.getSetting('lastBackup');
+        if(!last||Date.now()-Date.parse(last)>24*3600_000)await backupNow();
+        const external=store.getSetting('externalBackupPath');
+        const recent=store.getSetting('lastExternalBackup');
+        if(external&&(!recent||Date.parse(recent)<Date.parse(store.getSetting('lastBackup')||now()))){
+          const copy=await retryExternalBackup();
+          event('external-backup',copy.ok?'ok':'warning',copy.ok?'none':'external-unavailable');
+        }
+        event('schedule','ok');
+      }catch{
+        warnings.push('Очередная операция обслуживания не завершилась. Проверьте журнал.');
+        event('schedule','failed','maintenance-error');
       }
-      const last=store.getSetting('lastBackup');
-      if(!last||Date.now()-Date.parse(last)>24*3600_000)await backupNow();
-      const external=store.getSetting('externalBackupPath');
-      const recent=store.getSetting('lastExternalBackup');
-      if(external&&(!recent||Date.parse(recent)<Date.parse(store.getSetting('lastBackup')||now())))
-        await retryExternalBackup();
-    }catch(e){warnings.push('Проверка архивов не завершилась: '+(e as Error).message);}
+    })();
+    scheduledJob=task;
+    try{await task;}finally{scheduledJob=null;}
   }
   function schedule(delay:number){
     if(stopped)return;
-    timer=setTimeout(async()=>{await maintain();if(!stopped)schedule(30*60_000);},delay);
+    nextRunAt=new Date(Date.now()+delay).toISOString();
+    timer=setTimeout(async()=>{
+      nextRunAt=null;
+      await maintain();
+      if(!stopped)schedule(interval()*60_000);
+    },delay);
     timer.unref?.();
   }
   if(automatic)schedule(12000);
   return {
     saveAttachment,listAttachments,attachment,backupNow,verifyBackup,latestBackup,check,statistics,
     reindex,configureExternal,externalConfiguration,inspectAttachments,retryExternalBackup,
-    shutdown:async()=>{stopped=true;if(timer)clearTimeout(timer);
+    postUpdatePreflight,maintenanceLog,maintenanceConfiguration,configureMaintenance,inspectWal,
+    runMaintenance:maintain,
+    shutdown:async()=>{stopped=true;nextRunAt=null;if(timer)clearTimeout(timer);
       await Promise.allSettled([...workers].map(worker=>worker.terminate()));
-      if(active)await active;}
+      if(scheduledJob)await scheduledJob;
+      if(active)await active;
+      await journal.shutdown();
+    }
   };
 }
