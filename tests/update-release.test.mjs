@@ -154,7 +154,9 @@ test('Managed restart applies staged release, confirms local readiness and keeps
     }catch{}
     await new Promise(r=>setTimeout(r,120));
   }
-  assert.ok(next,'must restart on original port with the new verified version');
+  assert.ok(next,'must restart on original port with the new verified version; '+
+    'childEnded='+child.ended+' output='+child.output.slice(-1500)+' errors='+child.errors.slice(-2000)+
+    ' pending='+String((await (async()=>{try{return (await readFile(join(root,'.runtime','updates','pending','update.json'),'utf8')).slice(0,80)}catch(e){return e.code}})())));
   assert.equal(await readFile(join(root,'web','style.css'),'utf8'),updated);
   assert.equal(await readFile(dataFile,'utf8'),before);
   assert.equal(child.ended,false,'supervising BAT process persists across upgrade');
