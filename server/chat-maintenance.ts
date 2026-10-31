@@ -3,6 +3,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { join, basename } from 'node:path';
 import { mkdir, readFile, rm, readdir, rename, stat, statfs, copyFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
+import { Worker } from 'node:worker_threads';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import type { openSqliteChatArchive } from './chat-sqlite.ts';
 type Store=Awaited<ReturnType<typeof openSqliteChatArchive>>;
@@ -18,6 +19,29 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   let stopped=false,active:Promise<unknown>|null=null;
   let timer:ReturnType<typeof setTimeout>|undefined;
   const warnings=store.warnings;
+  const workers=new Set<Worker>();
+  function background(action:'check'|'rebuild'):Promise<Row>{
+    if(stopped)throw fail('Архив закрывается.',503);
+    return new Promise((resolve,reject)=>{
+      const worker=new Worker(new URL('../scripts/chat-archive-worker.mjs',import.meta.url),{
+        workerData:{path:store.path,action}
+      });
+      workers.add(worker);let ended=false;
+      const finish=(err?:Error,data?:Row)=>{
+        if(ended)return;ended=true;workers.delete(worker);
+        if(err)reject(err);else resolve(data||{});
+      };
+      worker.once('message',data=>finish(undefined,data));
+      worker.once('error',e=>finish(e));
+      worker.once('exit',code=>{if(!ended)finish(Error('Фоновая операция завершилась с кодом '+code));});
+    });
+  }
+  async function reindex(){
+    const result=await background('rebuild');
+    if(!result.ok)throw fail(result.error||'Не удалось восстановить FTS5.',503);
+    store.setSetting('ftsRebuilt',now());
+    return {ok:true};
+  }
   async function saveAttachment(conversationId:string,bytes:Buffer,type:string,fileName:string,messageId?:string){
     store.getConversation(conversationId);
     if(!bytes.length||bytes.length>15_000_000)throw fail('Размер вложения должен быть от 1 байта до 15 МБ.',413);
@@ -131,10 +155,14 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     return job;
   }
   async function check(){
-    const result=store.quickCheck();
-    if(!result.ok)return result;
+    const result=await background('check');
+    if(!result.ok){
+      store.lockWrites('SQLite не прошёл проверку целостности. Записи остановлены.');
+      return result;
+    }
     if(!result.ftsHealthy){
-      store.rebuildSearch();
+      await reindex();
+      store.setSetting('lastCheck',now());
       return {...result,ftsHealthy:true,repaired:true};
     }
     store.setSetting('lastCheck',now());
@@ -185,7 +213,9 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   if(automatic)schedule(12000);
   return {
     saveAttachment,listAttachments,attachment,backupNow,verifyBackup,latestBackup,check,statistics,
-    reindex:()=>store.rebuildSearch(),
-    shutdown:async()=>{stopped=true;if(timer)clearTimeout(timer);if(active)await active;}
+    reindex,
+    shutdown:async()=>{stopped=true;if(timer)clearTimeout(timer);
+      await Promise.allSettled([...workers].map(worker=>worker.terminate()));
+      if(active)await active;}
   };
 }
