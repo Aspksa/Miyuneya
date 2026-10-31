@@ -13,7 +13,7 @@ const day = (date: string) => new Date(date).toLocaleDateString('ru-RU', { day: 
 const STOP = new Set('это что как так для его она они оно мне меня мой моя мои тебя тебе твой ваш вас вам уже ещё еще или если когда где там тут вот был была было были быть есть нет нам наш все всё the and you про при над под без более очень просто тоже чтобы потом сейчас надо можно нужно хочу'.split(' '));
 // Crude Russian stemming: the first five letters are enough to match «задачи» with «задач».
 export function tokens(text: string) {
-  const words = text.toLocaleLowerCase('ru').replaceAll('ё', 'е').match(/[\p{L}\p{N}]+/gu) || [];
+  const words: string[] = text.toLocaleLowerCase('ru').replaceAll('ё', 'е').match(/[\p{L}\p{N}]+/gu) || [];
   return new Set(words.filter(w => w.length >= 3 && !STOP.has(w)).map(w => w.slice(0, 5)));
 }
 export const overlap = (a: Set<string>, b: Set<string>) => { let n = 0; for (const t of a) if (b.has(t)) n++; return n; };
@@ -81,7 +81,7 @@ export function timeRange(text: string, now = Date.now()) {
 }
 export const reminderLine = (x: Pick<Reminder, 'about' | 'text'>) => `Ты обещала напомнить, когда речь зайдёт о «${x.about}». Напомни сейчас, естественно, в начале или в конце ответа: «${x.text}».`;
 // Loose stems for a reminder topic, so «о Кате» meets «Катя» and «поездке» meets «поездка».
-const stems = (text: string) => new Set((text.toLocaleLowerCase('ru').replaceAll('ё', 'е').match(/[\p{L}\p{N}]+/gu) || []).filter(w => w.length >= 3 && !STOP.has(w)).map(w => w.slice(0, Math.max(3, Math.min(5, w.length - 1)))));
+const stems = (text: string) => new Set<string>((text.toLocaleLowerCase('ru').replaceAll('ё', 'е').match(/[\p{L}\p{N}]+/gu) || []).filter((w:string) => w.length >= 3 && !STOP.has(w)).map((w:string) => w.slice(0, Math.max(3, Math.min(5, w.length - 1)))));
 export function reminderDue(reminder: Pick<Reminder, 'about' | 'said'>, query: string, semantic: number | null) {
   const flat = query.replace(/\s+/g, ' ');
   const setNow = !!reminder.said && flat.includes(reminder.said);

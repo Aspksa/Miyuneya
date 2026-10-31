@@ -1,0 +1,10 @@
+{
+  "name": "miyuneya-typecheck",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Developer-only TypeScript diagnostics; not used by the portable launcher.",
+  "dependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "24.10.0"
+  }
+}
