@@ -4,8 +4,9 @@ import { readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWrite } from '../scripts/runtime.mjs';
-import type { Memory } from './memory.ts';
+import type { Memory, MemoryItem } from './memory.ts';
 import { openCognitiveJobs } from './cognitive-jobs.ts';
+import { openCognitiveNotebook } from './cognitive-notebook.ts';
 
 type Insight = {
   version: number; generatedAt: string; strategy: 'lexical' | 'graph';
@@ -50,7 +51,8 @@ function validResult(x:any):x is Insight {
 export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
   getArchivePage?: (offset:number,limit:number)=>{total:number;offset:number;items:Memory['items']},
   isIdle:()=>boolean=()=>true,
-  sweepMs=60_000) {
+  sweepMs=60_000,
+  lookupSource?:(id:string)=>MemoryItem|undefined) {
   const file=join(dataDir,'cognitive-daemon.json');
   let state:State=blank();
   try {
@@ -65,6 +67,7 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     }
   }
   const jobs=openCognitiveJobs(dataDir);
+  const notebook=openCognitiveNotebook(dataDir,lookupSource||((id)=>getMemory().items.find(x=>x.id===id)));
   let child:ChildProcess|null=null;
   let pendingSnapshot:ReturnType<typeof snapshot>|null=null;
   let timer:ReturnType<typeof setTimeout>|null=null;
@@ -153,6 +156,13 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     try{
       const result=await send(task.fingerprint,data);
       if(token!==generation||!enabled())return;
+      // Never write a conclusion based on an obsolete revision of source facts.
+      if(checksum(base)!==checksum(snapshot(getMemory()))){
+        jobs.finish(task);enqueue();return;
+      }
+      if(task.kind!=='evaluation'&&result.growth)
+        notebook.learn(result.growth,task.kind+':'+task.fingerprint);
+      notebook.reconcile();
       jobs.finish(task);
       jobs.record(task,result.metrics,'shadow');
       const recent=jobs.history('changes').filter(x=>x.examples>=8);
@@ -224,6 +234,7 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     terminate();
     await exited();
     jobs.clear();
+    notebook.clear();
     pendingSnapshot=null;
     state=blank();
     await save();
@@ -237,6 +248,7 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     state:!enabled()?'paused':running?'working':jobs.overview().queued?'queued':'idle',
     pending:jobs.overview().queued>0,runs:state.runs,failures:state.failures,
     lastError:state.lastError,result:enabled()?state.result:null,
+    notebook:enabled()?notebook.overview():null,
   });
   const strategy=()=>enabled() && !jobs.overview().queued ? state.result?.strategy||'lexical' : 'lexical';
   // On startup a pending fingerprint is replayed by re-snapshotting live data.
@@ -251,7 +263,9 @@ export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
     await exited();
     // A not-yet-completed request remains in SQLite for recovery on next startup.
     await writes;
+    notebook.close();
     jobs.close();
   }
-  return {enqueue,clear,modeChanged,overview,strategy,shutdown};
+  const context=(query:string)=>enabled()?notebook.context(query):'';
+  return {enqueue,clear,modeChanged,overview,strategy,context,shutdown};
 }
