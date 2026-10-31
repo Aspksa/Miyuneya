@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 const root = new URL('../', import.meta.url);
 const html = await readFile(new URL('web/blank.html', root), 'utf8');
 const css = await readFile(new URL('web/avatar.css', root), 'utf8');
+const layoutCss = await readFile(new URL('web/avatar-layout.css', root), 'utf8');
 const js = await readFile(new URL('web/avatar.js', root), 'utf8');
 const app = await readFile(new URL('server/app.ts', root), 'utf8');
 const build = await readFile(new URL('scripts/build.mjs', root), 'utf8');
@@ -36,9 +37,9 @@ test('New avatar/chat UX offers size, mobile, dock, full, quiet, preset and one 
   assert.match(js,/\.\/\?settings=cloud|\/?settings=cloud/);
   assert.match(studio,/previewLibraryImage/);
   assert.match(studio,/miyuneya-avatar-effect-preset/);
-  assert.match(css,/mode-dock/);
-  assert.match(css,/mode-full/);
-  assert.match(css,/max-width:72px/);
+  assert.match(layoutCss,/mode-dock/);
+  assert.match(layoutCss,/mode-full/);
+  assert.match(layoutCss,/max-width:72px/);
 });
 test('All avatar and chat controls exist, script parses, and modal is centered', () => {
   assert.doesNotThrow(() => new Function(js));
