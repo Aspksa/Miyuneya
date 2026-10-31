@@ -507,7 +507,16 @@
     previewImage.style.opacity=String(config.opacity/100);
     previewImage.classList.toggle('preview-glow',config.glow);
     previewImage.classList.toggle('preview-quiet',config.quietMode);
-    sizes.value=[100,180,260].includes(config.size)?String(config.size):'180';
+    const custom=sizes.querySelector('option[data-custom]');
+    if(custom)custom.remove();
+    if(![100,180,260].includes(config.size)){
+      const option=document.createElement('option');
+      option.value=String(config.size);
+      option.dataset.custom='true';
+      option.textContent='Своя настройка · '+config.size+' px';
+      sizes.append(option);
+    }
+    sizes.value=String(config.size);
     snap.checked=config.snap;quiet.checked=config.quietMode;
     headerModeSelect.value=config.chatMode;chatModeSelect.value=config.chatMode;
   }
