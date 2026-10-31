@@ -65,7 +65,8 @@ export function workspaceContext(data: Workspace, now = new Date(), budget = 30_
 
 export async function createApp(root: string, instance: string, preview = false, options: { launchId?: string; onShutdown?: () => void; cloudUrl?: string; memoryIdleMs?: number; memoryTickMs?: number; memoryThinkIdleMs?: number } = {}) {
   const dataDir = join(root, 'data');
-  const chats = await openChats(dataDir);
+  let chats: Awaited<ReturnType<typeof openChats>> | null = null;
+  try { chats=await openChats(dataDir); } catch { console.error('Архив чатов повреждён: остальные разделы продолжают работать.'); }
   const dataFile = join(dataDir, 'workspace.json');
   // The cloud.ru key lives apart from workspace.json so it never reaches the browser or a backup.
   const assistantFile = join(dataDir, 'assistant.json');
@@ -206,6 +207,7 @@ export async function createApp(root: string, instance: string, preview = false,
       }
       if (stopping) return send(503, { error: 'Сервер завершает работу' });
       if (path === '/api/chats') {
+        if (!chats) return send(503,{error:'Архив переписки повреждён. Сохраните data/chats/index.json и восстановите его из копии.'});
         if (req.method === 'GET') return send(200,chats.snapshot());
         if (req.method !== 'PUT') return send(405,{error:'Метод не поддерживается'});
         const input=await readJson(req,send,2_000_000);
@@ -645,7 +647,7 @@ export async function createApp(root: string, instance: string, preview = false,
         if (server.listening) await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve()));
         await Promise.all([...active]);
         await memory.shutdown();
-        await chats.shutdown();
+        await chats?.shutdown();
         await workflows?.shutdown();
         await disk?.shutdown();
         await queue;
