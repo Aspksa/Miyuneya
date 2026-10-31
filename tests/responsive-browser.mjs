@@ -217,6 +217,10 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.ok(smallSettings.footer.top>=smallSettings.panel.top-1 && smallSettings.footer.bottom<=smallSettings.panel.bottom+1,
     'Reset action must remain reachable on mobile');
   assert.ok(smallSettings.pageScroll<=321,'No horizontal overflow on mobile');
+  const designArtifacts=join(root,'artifacts','ui-screenshots');
+  await mkdir(designArtifacts,{recursive:true});
+  const mobileCapture=await cd.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false,fromSurface:true});
+  await writeFile(join(designArtifacts,'Avatar-settings-320-DPR2.png'),Buffer.from(mobileCapture.data,'base64'));
   await cd.send('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
 
 
@@ -230,6 +234,8 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   })()`);
   assert.equal(hi.dpr,1.75,'Windows 175% DPI must be testable');
   assert.ok(hi.top>=0&&hi.bottom<=768&&hi.left>=0&&hi.right<=1366,'Settings must fit on 1366x768');
+  const desktopCapture=await cd.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false,fromSurface:true});
+  await writeFile(join(designArtifacts,'Avatar-settings-1366-DPR175.png'),Buffer.from(desktopCapture.data,'base64'));
   await cd.send('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
 
   await evalJS(`(()=>{
@@ -257,6 +263,8 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.ok(narrowChat.visibleWidth<=300,'Chat must fit in narrow viewport');
   assert.ok(narrowChat.avatarBottom<=narrowChat.viewportHeight+1,'Avatar must stay on screen');
   assert.ok(narrowChat.scroll<=321,'Chat must not cause page overflow');
+  const chatCapture=await cd.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false,fromSurface:true});
+  await writeFile(join(designArtifacts,'Avatar-chat-320-DPR2.png'),Buffer.from(chatCapture.data,'base64'));
   await cd.send('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
   await evalJS('document.getElementById("kitsune-chat-close").click()');
 
