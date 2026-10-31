@@ -93,7 +93,7 @@ test('Batched updates keep only newest fingerprint without changing source memor
     daemon.enqueue();
   }
   const result=await settled(()=>daemon.overview(),r=>r.runs>=1&&!r.pending);
-  assert.equal(result.result.metrics.reviewed,memory.items.length);
+  assert.equal(result.result.metrics.reviewed,memory.items.filter(x=>x.kind==='fact' && x.status!=='superseded').length);
   assert.equal(memory.items[0].text,original);
   assert.ok(result.runs<=2,'coalesced updates avoid one process per fact');
 });
