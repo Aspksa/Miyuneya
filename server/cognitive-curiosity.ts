@@ -53,5 +53,5 @@ export function suggestCognitiveInquiries(
  * inferred verdict on the two records; do not silently rewrite either. */
 export const isUsefulClarification=(text:string)=>{
   const answer=text.replace(/\s+/g,' ').trim();
-  return answer.length>=3 && !/^(?:не знаю|не помню|потом|пропустить|не уверен(?:а)?|не могу сказать|без ответа|да|нет)[.!?\s]*$/iu.test(answer);
+  return answer.length>=3 && !/^(?:не знаю|не помню|потом|пропустить|не уверен(?:а)?|не могу сказать|без ответа)[.!?\s]*$/iu.test(answer);
 };
