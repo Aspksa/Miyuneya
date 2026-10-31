@@ -264,6 +264,8 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.ok(narrowChat.avatarBottom<=narrowChat.viewportHeight+1,'Avatar must stay on screen');
   assert.ok(await evalJS('document.getElementById("kitsune-avatar").getBoundingClientRect().width<=72'),'Mobile avatar must shrink and not cover notes');
   assert.ok(narrowChat.scroll<=321,'Chat must not cause page overflow');
+  // Capture the actual mobile chat, not the settings modal obscuring it.
+  await evalJS('document.getElementById("kitsune-settings-close").click()');
   const chatCapture=await cd.send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false,fromSurface:true});
   await writeFile(join(designArtifacts,'Avatar-chat-320-DPR2.png'),Buffer.from(chatCapture.data,'base64'));
   await cd.send('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
@@ -292,6 +294,7 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.ok(afterDrag.left>=beforeDrag.left+20,'Dragging moves avatar horizontally');
   assert.ok(afterDrag.top<=beforeDrag.top-20,'Dragging moves avatar vertically');
   assert.equal(afterDrag.chatHidden,true,'Dragging must not open chat');
+  await evalJS('new Promise(resolve=>setTimeout(resolve,180))');
   await evalJS('document.getElementById("kitsune-avatar").click()');
   assert.equal(await evalJS('document.getElementById("kitsune-chat").hidden'),false);
   const headerBefore=await evalJS(`(()=>{
