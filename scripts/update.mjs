@@ -20,7 +20,7 @@ async function verify(folder) {
     if(!entry || typeof entry.path!=='string' || !allowed.test(entry.path) || seen.has(entry.path) || !/^[a-f0-9]{64}$/.test(entry.sha256)) throw new Error('Недопустимый файл обновления.');
     seen.add(entry.path);await plainPath(folder,entry.path);
     const bytes=await readFile(join(folder,entry.path));total+=bytes.length;
-    if(total>10_000_000 || hash(bytes)!==entry.sha256) throw new Error('Проверка SHA-256 обновления не пройдена.');
+    if(total>16_000_000 || hash(bytes)!==entry.sha256) throw new Error('Проверка SHA-256 обновления не пройдена.');
   }
   return manifest;
 }
