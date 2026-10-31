@@ -773,7 +773,7 @@
       const date=info.backupAt?new Date(info.backupAt).toLocaleString('ru-RU'):'ещё нет';
       overview.textContent='Диалогов: '+info.conversations+' · Сообщений: '+info.messages+
         ' · База: '+mb(info.databaseBytes)+' · Вложения: '+info.attachments+
-        ' ('+mb(info.attachmentBytes)+') · Последняя копия: '+date+
+        ' ('+mb(info.attachmentBytes)+') · Копий: '+info.backupCount+' ('+mb(info.backupBytes)+') · Последняя: '+date+
         (info.warnings.length?' · Внимание: '+info.warnings.join(' / '):' · Всё в порядке');
     }
     refresh.onclick=()=>void refreshArchiveStatus().catch(e=>setStatus(e.message));
