@@ -310,22 +310,62 @@ export async function openSqliteChatArchive(dataDir:string){
     }
     yield JSON.stringify({kind:'end',conversations,messages,sha256:h.digest('hex')})+'\n';
   }
+  // Legacy JSON restore is a single transaction: corrupted late messages
+  // cannot leave a partial new conversation. Original timestamps and archive
+  // flags are preserved for fresh imports, existing records are not overwritten.
   function importLegacy(data:unknown){
+    if(importInProgress)throw error('Импорт переписки уже выполняется.',423);
     const archive=data as Row;
-    if(!archive||!Array.isArray(archive.conversations))throw error('Повреждённая старая копия.');
-    let count=0;
+    if(!archive||!Array.isArray(archive.conversations)||archive.conversations.length>100000)
+      throw error('Повреждённая или слишком большая старая копия.');
+    let declared=0;const seen=new Set<string>();
     for(const c of archive.conversations){
-      if(!idOK(c.id)||!dateOK(c.createdAt)||!Array.isArray(c.messages))throw error('Неверная запись копии.');
-      create({id:c.id,title:String(c.title||'').slice(0,140)});
-      for(let i=0;i<c.messages.length;i++){
-        const m=c.messages[i];
-        if(!m||!['user','assistant'].includes(m.role)||typeof m.content!=='string')throw error('Некорректное сообщение.');
-        saveMessage(c.id,{id:'legacy-'+String(i+1).padStart(12,'0'),role:m.role,
-          content:m.content,createdAt:c.createdAt,version:1,complete:true},undefined,true);
-        count++;
+      if(!c||!idOK(c.id)||!dateOK(c.createdAt)||!Array.isArray(c.messages)
+        ||c.title!==undefined&&(typeof c.title!=='string'||c.title.length>140)
+        ||c.updatedAt!==undefined&&!dateOK(c.updatedAt)
+        ||c.archived!==undefined&&typeof c.archived!=='boolean'
+        ||seen.has(c.id))throw error('Неверная запись старого архива.');
+      seen.add(c.id);
+      declared+=c.messages.length;
+      if(declared>2_000_000)throw error('Слишком много сообщений в старом архиве.',413);
+      for(const m of c.messages){
+        if(!m||(m.role!=='user'&&m.role!=='assistant')
+          ||typeof m.content!=='string'||m.content.length>10_000_000
+          ||m.createdAt!==undefined&&!dateOK(m.createdAt))
+          throw error('Некорректное сообщение старого архива.');
       }
     }
-    return {imported:count,conversations:archive.conversations.length};
+    return write('import-legacy',()=>{
+      let imported=0;
+      for(const c of archive.conversations){
+        const existing=conversationStmt.get(c.id) as Row|undefined;
+        if(!existing){
+          db.prepare('INSERT INTO conversations(id,title,created_at,updated_at,archived,message_count) VALUES(?,?,?,?,?,0)')
+            .run(c.id,c.title?.trim()||'Новый разговор',c.createdAt,
+              c.updatedAt||c.createdAt,c.archived?1:0);
+        }
+        let lastId:string|null=null;
+        for(let i=0;i<c.messages.length;i++){
+          const m=c.messages[i];
+          const id=normalizedId(c.id,'legacy-'+String(i+1).padStart(12,'0'));
+          const old=messageStmt.get(id) as Row|undefined;
+          if(old){
+            if(old.conversation_id!==c.id||old.role!==m.role||old.content!==m.content)
+              throw error('Конфликт сообщения в импортируемом архиве.',409);
+            lastId=id;continue;
+          }
+          const row=getConversation(c.id);
+          const count=Number(row.message_count);
+          if(!lastId && count>0)lastId=scan(c.id,count-1,count)[0]?.id||null;
+          insertStmt.run(id,c.id,count+1,m.role,m.content,
+            m.createdAt||c.createdAt,1,1,lastId);
+          db.prepare('UPDATE conversations SET message_count=message_count+1 WHERE id=?').run(c.id);
+          lastId=id;imported++;
+        }
+      }
+      setSetting('revision',String(Number(getSetting('revision')||0)+1));
+      return {imported,conversations:archive.conversations.length};
+    });
   }
   // Import JSONL atomically only after SHA-256 verification; do not change
   // an existing message, even if the backup repeats an old identifier.
