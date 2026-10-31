@@ -3,7 +3,7 @@ import { acquireDatabaseWriter, ensureSpace } from './chat-db-safety.ts';
 import { searchInWorker } from './chat-search.ts';
 import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, rm } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { createReadStream } from 'node:fs';
 import { openChatArchive as openLegacyArchive } from './chat-archive.ts';
@@ -298,23 +298,35 @@ export async function openSqliteChatArchive(dataDir:string){
       return result;
     });
   }
+  // The JSONL export reads one CONSISTENT SQLite snapshot even if the user
+  // continues chatting during a multi-gigabyte download. The temporary
+  // snapshot is cleaned up on success, failure and cancelled downloads.
   async function* exportLines(){
-    const h=createHash('sha256');let conversations=0,messages=0;
-    const header=JSON.stringify({format:'miyuneya-chats',schema:2,exportedAt:now()})+'\n';
-    h.update(header);yield header;
-    // Parents precede child branches. Each branch exports only its own
-    // messages; the shared inherited prefix stays in the parent's records.
-    const order="WITH RECURSIVE tree(id,depth) AS (SELECT id,0 FROM conversations WHERE parent_id IS NULL UNION ALL SELECT c.id,t.depth+1 FROM conversations c JOIN tree t ON t.id=c.parent_id) SELECT c.* FROM tree t JOIN conversations c ON c.id=t.id ORDER BY t.depth,c.created_at,c.id";
-    for(const c of db.prepare(order).iterate() as Iterable<Row>){
-      const line=JSON.stringify({kind:'conversation',conversation:formatConversation(c)})+'\n';
-      h.update(line);yield line;conversations++;
-      const messagesStmt=db.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY sequence');
-      for(const m of messagesStmt.iterate(c.id) as Iterable<Row>){
-        const msg=JSON.stringify({kind:'message',conversationId:c.id,message:formatMessage(m)})+'\n';
-        h.update(msg);yield msg;messages++;
+    if(importInProgress)throw error('Архив занят импортом. Повторите экспорт позже.',423);
+    const snapshot=join(home,'export-'+randomUUID()+'.sqlite');
+    let reader:DatabaseSync|undefined;
+    try{
+      await backup(db,snapshot,{rate:64});
+      reader=new DatabaseSync(snapshot,{readOnly:true});
+      const h=createHash('sha256');let conversations=0,messages=0;
+      const header=JSON.stringify({format:'miyuneya-chats',schema:2,exportedAt:now()})+'\n';
+      h.update(header);yield header;
+      // A branch exports its own suffix only; all ancestors precede it.
+      const order="WITH RECURSIVE tree(id,depth) AS (SELECT id,0 FROM conversations WHERE parent_id IS NULL UNION ALL SELECT c.id,t.depth+1 FROM conversations c JOIN tree t ON t.id=c.parent_id) SELECT c.* FROM tree t JOIN conversations c ON c.id=t.id ORDER BY t.depth,c.created_at,c.id";
+      const statement=reader.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY sequence');
+      for(const c of reader.prepare(order).iterate() as Iterable<Row>){
+        const line=JSON.stringify({kind:'conversation',conversation:formatConversation(c)})+'\n';
+        h.update(line);yield line;conversations++;
+        for(const m of statement.iterate(c.id) as Iterable<Row>){
+          const msg=JSON.stringify({kind:'message',conversationId:c.id,message:formatMessage(m)})+'\n';
+          h.update(msg);yield msg;messages++;
+        }
       }
+      yield JSON.stringify({kind:'end',conversations,messages,sha256:h.digest('hex')})+'\n';
+    }finally{
+      reader?.close();
+      await rm(snapshot,{force:true}).catch(()=>{});
     }
-    yield JSON.stringify({kind:'end',conversations,messages,sha256:h.digest('hex')})+'\n';
   }
   // Legacy JSON restore is a single transaction: corrupted late messages
   // cannot leave a partial new conversation. Original timestamps and archive
