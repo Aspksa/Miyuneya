@@ -28,7 +28,7 @@ test('SQLite WAL, глобальные ID, версионные записи и 
   assert.equal(db.page('chat-1').messages[0].content,'Первая запись обновлена');
   db.create({id:'chat-2'});
   assert.throws(()=>db.saveMessage('chat-2',msg('global-id','Переиспользовать ID'),0),/constraint|UNIQUE|занят/i);
-  assert.throws(()=>db.saveMessage('chat-1',msg('global-id','Старая версия',1),1),/ничего/); // never silently rewrite newer content
+  assert.equal(db.saveMessage('chat-1',msg('global-id','Старая версия',1),1).message.content,'Первая запись обновлена'); // stale updates cannot rewrite newer content
   assert.equal(db.page('chat-1').messages[0].content,'Первая запись обновлена');
   await db.shutdown();
   const again=await openSqliteChatArchive(root);
