@@ -75,13 +75,14 @@
     (m.role==='user'||m.role==='assistant') && typeof m.content==='string'):[];
   const recoveryKey='miyuneya.kitsune.recovery.v3';
   let chatState={conversations:[],selectedId:null,total:0};
-  let remoteChats=false, loadingOlder=false, nextBefore=null, showArchived=false;
+  let remoteChats=false, loadingOlder=false, nextBefore=null, showArchived=false, activeMeta=null;
   let userChangedSettings=false, userTouchedChats=false;
   let saveQueue=Promise.resolve(), preferenceQueue=Promise.resolve();
   const base='/api/assistant/conversations';
   const conversationId=()=>crypto.randomUUID?.()||'chat-'+Date.now()+'-'+Math.floor(Math.random()*1e8);
   const firstTitle=messages=>(messages.find(m=>m.role==='user')?.content||'Новый разговор').slice(0,90);
-  const currentRow=()=>chatState.conversations.find(c=>c.id===chatState.selectedId);
+  const currentRow=()=>activeMeta?.id===chatState.selectedId?activeMeta:
+    chatState.conversations.find(c=>c.id===chatState.selectedId);
   const nowISO=()=>new Date().toISOString();
   function saveHistory(){
     // Only keep a small extra browser recovery window; disk archive is authoritative.
@@ -140,6 +141,7 @@
     const page=await requestArchive(base+'/'+encodeURIComponent(id)+'/messages?limit=100');
     await requestArchive(base+'/selection',jsonOptions('PATCH',{id}));
     chatState.selectedId=id;
+    activeMeta=page.conversation;
     history=page.messages;
     nextBefore=page.nextBefore;
     updateOlderButton();saveHistory();renderChat();renderConversationList();
@@ -187,7 +189,7 @@
         try{
           await saveQueue;
           await requestArchive(base+'/'+encodeURIComponent(row.id),jsonOptions('PATCH',{archived:!showArchived}));
-          if(row.id===chatState.selectedId){chatState.selectedId=null;history=[];nextBefore=null;renderChat();updateOlderButton();}
+          if(row.id===chatState.selectedId){chatState.selectedId=null;activeMeta=null;history=[];nextBefore=null;renderChat();updateOlderButton();}
           await fetchConversationList();
           setStatus(showArchived?'Разговор восстановлен.':'Разговор сохранён в архиве.');
         }catch(e){setStatus(e.message);}
@@ -215,14 +217,15 @@
   function startNewConversation(){
     if(stream){setStatus('Сначала остановите текущий ответ.');return;}
     userTouchedChats=true;
-    chatState.selectedId=null;history=[];nextBefore=null;updateOlderButton();
+    chatState.selectedId=null;activeMeta=null;history=[];nextBefore=null;updateOlderButton();
     renderChat();closeHistory();input.focus();
-    if(remoteChats)void requestArchive(base+'/selection',jsonOptions('PATCH',{id:null}))
+    if(remoteChats)void queued(()=>requestArchive(base+'/selection',jsonOptions('PATCH',{id:null})))
       .catch(e=>setStatus(e.message));
   }
   newButton.onclick=startNewConversation;
   moreMessages.onclick=async()=>{
     if(loadingOlder||nextBefore===null||!chatState.selectedId)return;
+    if(stream){setStatus('Сначала остановите ответ, чтобы загрузить предыдущие сообщения.');return;}
     loadingOlder=true;moreMessages.disabled=true;
     try {
       const page=await requestArchive(base+'/'+encodeURIComponent(chatState.selectedId)+
@@ -238,23 +241,31 @@
     if(row)return row;
     const created=await requestArchive(base,jsonOptions('POST',{title:title.slice(0,140)}));
     row=created.conversation;
-    chatState.selectedId=row.id;
+    chatState.selectedId=row.id;activeMeta=row;
     chatState.conversations.unshift(row);chatState.total++;
     renderConversationList();
     return row;
   }
   function persistMessage(conversationId,message){
     return queued(async()=>{
-      const row=chatState.conversations.find(c=>c.id===conversationId);
+      const row=activeMeta?.id===conversationId?activeMeta:chatState.conversations.find(c=>c.id===conversationId);
       const result=await requestArchive(base+'/'+encodeURIComponent(conversationId)+'/messages',
         jsonOptions('POST',{message,expectedCount:row?.messageCount}));
       if(row)Object.assign(row,result.conversation);
+      const listed=chatState.conversations.find(c=>c.id===conversationId);
+      if(listed&&listed!==row)Object.assign(listed,result.conversation);
       return result;
     });
   }
   async function loadPersistentChats(){
     try {
       const listing=await requestArchive(base+'?limit=60');
+      remoteChats=true;
+      if(userTouchedChats){
+        chatState.conversations=listing.conversations;
+        chatState.total=listing.total;
+        return;
+      }
       // A legacy localStorage history could be from a different port or from
       // unsynced messages. Import once; never delete the browser original.
       const migrationKey='miyuneya.kitsune.migrated.v3';
@@ -275,8 +286,8 @@
       if(chatState.selectedId){
         const page=await requestArchive(base+'/'+encodeURIComponent(chatState.selectedId)+'/messages?limit=100');
         if(userTouchedChats)return;
-        history=page.messages;nextBefore=page.nextBefore;updateOlderButton();
-      }else{history=[];nextBefore=null;}
+        history=page.messages;activeMeta=page.conversation;nextBefore=page.nextBefore;updateOlderButton();
+      }else{history=[];activeMeta=null;nextBefore=null;}
       renderChat();saveHistory();renderConversationList();
     }catch(e){
       remoteChats=false;
