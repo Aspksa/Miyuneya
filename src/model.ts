@@ -64,7 +64,7 @@ export function validateWorkspace(value: unknown): value is Workspace {
   if (!record(value) || value.version !== 1 || !Array.isArray(value.notes) || !Array.isArray(value.tasks) || !record(value.settings)) return false;
   if (value.notes.length > 5000 || value.tasks.length > 5000 || !['light', 'dark', 'auto'].includes(String(value.settings.theme)) || !text(value.settings.name, 80)) return false;
   if (value.settings.assistant !== undefined && !validLook(value.settings.assistant)) return false;
-  if (value.settings.appearance !== undefined && !validAppearance({ theme: value.settings.theme, ...value.settings.appearance })) return false;
+  if (value.settings.appearance !== undefined && (!record(value.settings.appearance) || !validAppearance({ theme: value.settings.theme, ...value.settings.appearance }))) return false;
 
   const ids = new Set<string>();
   for (const item of [...value.notes, ...value.tasks]) {
