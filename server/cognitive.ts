@@ -35,7 +35,6 @@ export type CognitiveSnapshot = {
   generatedAt: string;
 };
 
-const DAY = 86_400_000;
 const idOk = (value: unknown) => typeof value === 'string' && /^[\w-]{1,100}$/.test(value);
 const short = (text: string, max = 125) => text.length > max ? text.slice(0, max - 1) + '…' : text;
 const active = (item: MemoryItem, now: number) => item.status !== 'superseded' && !expired(item, now);
