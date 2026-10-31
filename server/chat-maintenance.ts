@@ -316,7 +316,11 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     const attachmentIssues=await inspectAttachments(200);
     if(attachmentIssues.length){
       warnings.push('Проблемы вложений: '+attachmentIssues.join('; '));
-      return {...result,ok:false,attachmentIssues};
+      // Orphaned temp/blob files are a warning, not a reason to stop
+      // backing up unrelated valid messages.
+      const missing=attachmentIssues.filter(x=>!x.startsWith('Незарегистрированное вложение:')
+        &&!x.startsWith('Незавершённый временный файл'));
+      if(missing.length)return {...result,ok:false,attachmentIssues};
     }
     store.setSetting('lastCheck',now());
     const last=await latestBackup();
