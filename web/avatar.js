@@ -753,14 +753,14 @@
   const chatPanel=settings.querySelector('[data-kitsune-panel="chat"]');
   if(chatPanel){
     const actions=document.createElement('div');actions.className='kitsune-history-actions';
-    const backup=document.createElement('button');backup.type='button';backup.textContent='Сохранить весь архив';
+    const backup=document.createElement('button');backup.type='button';backup.textContent='Экспорт сообщений (JSONL)';
     backup.onclick=async()=>{
       await saveQueue;
       if(!remoteChats){setStatus('Архив недоступен. Экспорт невозможен.');return;}
       const link=document.createElement('a');
       link.href=base+'/export';link.download='miyuneya-chat-archive.jsonl';
       document.body.append(link);link.click();link.remove();
-      setStatus('Экспорт начат. Сохраните скачанный архив вне папки проекта.');
+      setStatus('Экспорт переписки начат. Вложения в JSONL не входят — для них используйте проверенную копию архива.');
     };
     const restore=document.createElement('label');restore.textContent='Импорт архива';
     const restoreFile=document.createElement('input');restoreFile.type='file';

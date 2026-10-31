@@ -3,7 +3,7 @@ import { acquireDatabaseWriter, ensureSpace } from './chat-db-safety.ts';
 import { searchInWorker } from './chat-search.ts';
 import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { mkdir, stat } from 'node:fs/promises';
+import { mkdir, stat, rm } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { createReadStream } from 'node:fs';
 import { openChatArchive as openLegacyArchive } from './chat-archive.ts';
@@ -46,7 +46,7 @@ export async function openSqliteChatArchive(dataDir:string){
   try{
   const timings=new Map<string,{count:number;sum:number;max:number}>();
   const warnings:string[]=[];
-  let readOnly=false,closed=false;
+  let readOnly=false,closed=false,importInProgress=false;
   let busyMs=5000;
   const pageCache=new Map<string,{size:number;result:ReturnType<typeof makePage>}>();
   let cachedBytes=0;
@@ -64,12 +64,13 @@ export async function openSqliteChatArchive(dataDir:string){
   };
   const write=<T>(key:string,run:()=>T):T=>{
     if(readOnly)throw error('Хранилище повреждено. Режим только чтения: запись запрещена.',503);
+    if(importInProgress)throw error('Сначала завершите импорт архива переписки.',423);
     return timed(key,()=>{
       let started=false;
       try{
         db.exec('BEGIN IMMEDIATE');started=true;
         const value=run();db.exec('COMMIT');started=false;
-        if(['save','create','modify'].includes(key))clearPageCache();
+        if(['save','create','modify','import-legacy'].includes(key))clearPageCache();
         return value;
       }catch(e){
         if(started)try{db.exec('ROLLBACK');}catch{}
@@ -139,7 +140,10 @@ export async function openSqliteChatArchive(dataDir:string){
     }catch(e){try{db.exec('ROLLBACK');}catch{}throw e;}
   }catch(e){throw e;}
   const getSetting=(key:string)=>(db.prepare('SELECT value FROM settings WHERE key=?').get(key) as Row|undefined)?.value||'';
-  const setSetting=(key:string,val:string)=>db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,val);
+  const setSetting=(key:string,val:string)=>{
+    if(importInProgress)throw error('Архив занят импортом. Повторите позже.',423);
+    return db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,val);
+  };
   const conversationStmt=db.prepare('SELECT * FROM conversations WHERE id=?');
   const messageStmt=db.prepare('SELECT * FROM messages WHERE id=?');
   const sequenceStmt=db.prepare('SELECT * FROM messages WHERE conversation_id=? AND sequence>? AND sequence<=? ORDER BY sequence');
@@ -179,6 +183,7 @@ export async function openSqliteChatArchive(dataDir:string){
     return undefined;
   };
   const list=(input:ChatQuery={})=>timed('list',()=>{
+    if(importInProgress)throw error('Архив занят импортом. Повторите позже.',423);
     const q=(input.query||'').trim().slice(0,180),archive=input.archived?1:0;
     const offset=integer(input.offset,0),limit=Math.min(100,Math.max(1,integer(input.limit,60)));
     const filter=q?" AND (c.title LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM message_fts JOIN messages m ON m.rowid=message_fts.rowid WHERE m.conversation_id=c.id AND message_fts MATCH ?))":'';
@@ -269,6 +274,7 @@ export async function openSqliteChatArchive(dataDir:string){
   }
   function page(id:string,before?:number,limit=100){
     return timed('page',()=>{
+      if(importInProgress)throw error('Архив занят импортом. Повторите позже.',423);
       const c=getConversation(id),count=Number(c.message_count);
       const end=before===undefined?count:Math.min(count,integer(before,0));
       const take=Math.max(1,Math.min(150,integer(limit,100)));
@@ -292,40 +298,95 @@ export async function openSqliteChatArchive(dataDir:string){
       return result;
     });
   }
+  // The JSONL export reads one CONSISTENT SQLite snapshot even if the user
+  // continues chatting during a multi-gigabyte download. The temporary
+  // snapshot is cleaned up on success, failure and cancelled downloads.
   async function* exportLines(){
-    const h=createHash('sha256');let conversations=0,messages=0;
-    const header=JSON.stringify({format:'miyuneya-chats',schema:2,exportedAt:now()})+'\n';
-    h.update(header);yield header;
-    // Parents precede child branches. Each branch exports only its own
-    // messages; the shared inherited prefix stays in the parent's records.
-    const order="WITH RECURSIVE tree(id,depth) AS (SELECT id,0 FROM conversations WHERE parent_id IS NULL UNION ALL SELECT c.id,t.depth+1 FROM conversations c JOIN tree t ON t.id=c.parent_id) SELECT c.* FROM tree t JOIN conversations c ON c.id=t.id ORDER BY t.depth,c.created_at,c.id";
-    for(const c of db.prepare(order).iterate() as Iterable<Row>){
-      const line=JSON.stringify({kind:'conversation',conversation:formatConversation(c)})+'\n';
-      h.update(line);yield line;conversations++;
-      const messagesStmt=db.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY sequence');
-      for(const m of messagesStmt.iterate(c.id) as Iterable<Row>){
-        const msg=JSON.stringify({kind:'message',conversationId:c.id,message:formatMessage(m)})+'\n';
-        h.update(msg);yield msg;messages++;
+    if(importInProgress)throw error('Архив занят импортом. Повторите экспорт позже.',423);
+    const snapshot=join(home,'export-'+randomUUID()+'.sqlite');
+    let reader:DatabaseSync|undefined;
+    try{
+      await backup(db,snapshot,{rate:64});
+      reader=new DatabaseSync(snapshot,{readOnly:true});
+      const h=createHash('sha256');let conversations=0,messages=0;
+      const header=JSON.stringify({format:'miyuneya-chats',schema:2,exportedAt:now()})+'\n';
+      h.update(header);yield header;
+      // A branch exports its own suffix only; all ancestors precede it.
+      const order="WITH RECURSIVE tree(id,depth) AS (SELECT id,0 FROM conversations WHERE parent_id IS NULL UNION ALL SELECT c.id,t.depth+1 FROM conversations c JOIN tree t ON t.id=c.parent_id) SELECT c.* FROM tree t JOIN conversations c ON c.id=t.id ORDER BY t.depth,c.created_at,c.id";
+      const statement=reader.prepare('SELECT * FROM messages WHERE conversation_id=? ORDER BY sequence');
+      for(const c of reader.prepare(order).iterate() as Iterable<Row>){
+        const line=JSON.stringify({kind:'conversation',conversation:formatConversation(c)})+'\n';
+        h.update(line);yield line;conversations++;
+        for(const m of statement.iterate(c.id) as Iterable<Row>){
+          const msg=JSON.stringify({kind:'message',conversationId:c.id,message:formatMessage(m)})+'\n';
+          h.update(msg);yield msg;messages++;
+        }
       }
+      yield JSON.stringify({kind:'end',conversations,messages,sha256:h.digest('hex')})+'\n';
+    }finally{
+      reader?.close();
+      // WAL-mode snapshots can leave sidecars even after read-only close.
+      // They contain private chat data: remove the COMPLETE temp triplet.
+      for(const suffix of ['', '-wal', '-shm'])
+        await rm(snapshot+suffix,{force:true}).catch(()=>{});
     }
-    yield JSON.stringify({kind:'end',conversations,messages,sha256:h.digest('hex')})+'\n';
   }
+  // Legacy JSON restore is a single transaction: corrupted late messages
+  // cannot leave a partial new conversation. Original timestamps and archive
+  // flags are preserved for fresh imports, existing records are not overwritten.
   function importLegacy(data:unknown){
+    if(importInProgress)throw error('Импорт переписки уже выполняется.',423);
     const archive=data as Row;
-    if(!archive||!Array.isArray(archive.conversations))throw error('Повреждённая старая копия.');
-    let count=0;
+    if(!archive||!Array.isArray(archive.conversations)||archive.conversations.length>100000)
+      throw error('Повреждённая или слишком большая старая копия.');
+    let declared=0;const seen=new Set<string>();
     for(const c of archive.conversations){
-      if(!idOK(c.id)||!dateOK(c.createdAt)||!Array.isArray(c.messages))throw error('Неверная запись копии.');
-      create({id:c.id,title:String(c.title||'').slice(0,140)});
-      for(let i=0;i<c.messages.length;i++){
-        const m=c.messages[i];
-        if(!m||!['user','assistant'].includes(m.role)||typeof m.content!=='string')throw error('Некорректное сообщение.');
-        saveMessage(c.id,{id:'legacy-'+String(i+1).padStart(12,'0'),role:m.role,
-          content:m.content,createdAt:c.createdAt,version:1,complete:true},undefined,true);
-        count++;
+      if(!c||!idOK(c.id)||!dateOK(c.createdAt)||!Array.isArray(c.messages)
+        ||c.title!==undefined&&(typeof c.title!=='string'||c.title.length>140)
+        ||c.updatedAt!==undefined&&!dateOK(c.updatedAt)
+        ||c.archived!==undefined&&typeof c.archived!=='boolean'
+        ||seen.has(c.id))throw error('Неверная запись старого архива.');
+      seen.add(c.id);
+      declared+=c.messages.length;
+      if(declared>2_000_000)throw error('Слишком много сообщений в старом архиве.',413);
+      for(const m of c.messages){
+        if(!m||(m.role!=='user'&&m.role!=='assistant')
+          ||typeof m.content!=='string'||m.content.length>10_000_000
+          ||m.createdAt!==undefined&&!dateOK(m.createdAt))
+          throw error('Некорректное сообщение старого архива.');
       }
     }
-    return {imported:count,conversations:archive.conversations.length};
+    return write('import-legacy',()=>{
+      let imported=0;
+      for(const c of archive.conversations){
+        const existing=conversationStmt.get(c.id) as Row|undefined;
+        if(!existing){
+          db.prepare('INSERT INTO conversations(id,title,created_at,updated_at,archived,message_count) VALUES(?,?,?,?,?,0)')
+            .run(c.id,c.title?.trim()||'Новый разговор',c.createdAt,
+              c.updatedAt||c.createdAt,c.archived?1:0);
+        }
+        let lastId:string|null=null;
+        for(let i=0;i<c.messages.length;i++){
+          const m=c.messages[i];
+          const id=normalizedId(c.id,'legacy-'+String(i+1).padStart(12,'0'));
+          const old=messageStmt.get(id) as Row|undefined;
+          if(old){
+            if(old.conversation_id!==c.id||old.role!==m.role||old.content!==m.content)
+              throw error('Конфликт сообщения в импортируемом архиве.',409);
+            lastId=id;continue;
+          }
+          const row=getConversation(c.id);
+          const count=Number(row.message_count);
+          if(!lastId && count>0)lastId=scan(c.id,count-1,count)[0]?.id||null;
+          insertStmt.run(id,c.id,count+1,m.role,m.content,
+            m.createdAt||c.createdAt,1,1,lastId);
+          db.prepare('UPDATE conversations SET message_count=message_count+1 WHERE id=?').run(c.id);
+          lastId=id;imported++;
+        }
+      }
+      setSetting('revision',String(Number(getSetting('revision')||0)+1));
+      return {imported,conversations:archive.conversations.length};
+    });
   }
   // Import JSONL atomically only after SHA-256 verification; do not change
   // an existing message, even if the backup repeats an old identifier.
@@ -374,7 +435,9 @@ export async function openSqliteChatArchive(dataDir:string){
         hash.update(line+'\n');
       }
       if(!ended)throw error('Резервная копия оборвана.');
+      if(importInProgress)throw error('Другой импорт ещё выполняется.',423);
       db.exec('BEGIN IMMEDIATE');
+      importInProgress=true;
       try{
         for await(const line of createInterface({input:createReadStream(temp),crlfDelay:Infinity})){
           if(!line.trim())continue;
@@ -399,7 +462,8 @@ export async function openSqliteChatArchive(dataDir:string){
             if(!messageOK(msg))throw error('Некорректное сообщение резервной копии.');
             const id=normalizedId(row.conversationId,msg.id),old=messageStmt.get(id) as Row|undefined;
             if(old){
-              if(old.conversation_id!==row.conversationId||old.content!==msg.content||old.version!==msg.version)
+              if(old.conversation_id!==row.conversationId||old.content!==msg.content||old.version!==msg.version
+                ||old.role!==msg.role||old.created_at!==msg.createdAt||!!old.complete!==msg.complete)
                 throw error('В архиве уже есть другое сообщение с этим ID.',409);
               continue;
             }
@@ -414,11 +478,14 @@ export async function openSqliteChatArchive(dataDir:string){
           }
         }
         db.exec('COMMIT');
-      }catch(e){db.exec('ROLLBACK');throw e;}
+        clearPageCache();
+      }catch(e){try{db.exec('ROLLBACK');}catch{}throw e;}
+      finally{importInProgress=false;}
       return {imported:records,conversations};
     }finally{await rm(temp,{force:true}).catch(()=>{});}
   }
   async function searchAdvanced(input:ChatQuery={}){
+    if(importInProgress)throw error('Архив занят импортом. Повторите позже.',423);
     if(!(input.query||'').trim())return list(input);
     const result=await searchInWorker(path,input);
     const latency=result.elapsedMs;
@@ -476,7 +543,7 @@ export async function openSqliteChatArchive(dataDir:string){
   return {
     path,db,home,readOnly:()=>readOnly,lockWrites:(reason:string)=>{readOnly=true;warnings.push(reason);},
     warnings,timings,timed,getSetting,setSetting,write,
-    getConversation,formatConversation,visible,list,search:list,searchAdvanced,create,modify,select,
+    getConversation,formatConversation,visible,list,search:list,searchAdvanced,isImporting:()=>importInProgress,create,modify,select,
     saveMessage,page,exportLines,importLegacy,importStream,rebuildSearch,quickCheck,
     shutdown:async()=>{if(!closed){closed=true;db.close();await releaseLock();}}
   };

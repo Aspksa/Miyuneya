@@ -1,7 +1,7 @@
 import { backup, DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
 import { join, basename, isAbsolute, parse } from 'node:path';
-import { mkdir, readFile, rm, readdir, rename, stat, statfs, copyFile, realpath, cp } from 'node:fs/promises';
+import { mkdir, readFile, rm, readdir, rename, stat, statfs, copyFile, realpath, cp, opendir } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import { atomicWrite } from '../scripts/runtime.mjs';
@@ -38,6 +38,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     });
   }
   async function reindex(){
+    if(store.isImporting())throw fail('Импорт чата ещё выполняется.',423);
     const result=await background('rebuild');
     if(!result.ok)throw fail(result.error||'Не удалось восстановить FTS5.',503);
     store.setSetting('ftsRebuilt',now());
@@ -108,11 +109,13 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     return {configured:!!path,destination:path||null};
   }
   async function inspectAttachments(max=200){
+    if(store.isImporting())throw fail('Импорт чата ещё выполняется.',423);
     const after=store.getSetting('attachmentScanCursor');
     const query='SELECT id,conversation_id,message_id,byte_size FROM attachments WHERE id>? ORDER BY id LIMIT ?';
     let rows=db.prepare(query).all(after,max) as Row[];
     if(!rows.length)rows=db.prepare(query).all('',max) as Row[];
     const issues:string[]=[];
+    let inspected=0;
     for(const row of rows){
       const file=join(blobRoot,row.id+'.blob');
       const size=await stat(file).catch(()=>null);
@@ -121,10 +124,34 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
         issues.push('Вложение связано с отсутствующим сообщением '+row.id);
       if(issues.length>=15)break;
       // Yield to HTTP events on low-end SSDs.
-      if(issues.length%20===0)await new Promise(resolve=>setImmediate(resolve));
+      if(++inspected%25===0)await new Promise(resolve=>setImmediate(resolve));
     }
     if(!issues.length&&rows.length)
       store.setSetting('attachmentScanCursor',rows[rows.length-1].id);
+    // Also find ORPHANED blobs, e.g. when a crash occurs after atomic
+    // file rename but before the INSERT into attachments commits.
+    // The bounded scan resumes over successive checks; no auto-deletion.
+    const skip=Math.min(1_000_000,Number(store.getSetting('orphanScanOffset')||0));
+    let position=0,found=0,reachedEnd=true;
+    const folder=await opendir(blobRoot).catch(e=>{
+      if((e as NodeJS.ErrnoException).code==='ENOENT')return null;
+      throw e;
+    });
+    if(folder){
+      const known=db.prepare('SELECT 1 AS yes FROM attachments WHERE id=?');
+      for await(const file of folder){
+        if(file.isDirectory())continue;
+        if(position++<skip)continue;
+        if(file.name.endsWith('.blob')&&!known.get(file.name.slice(0,-5)))
+          issues.push('Незарегистрированное вложение: '+file.name);
+        else if(file.name.endsWith('.tmp'))
+          issues.push('Незавершённый временный файл вложения: '+file.name);
+        if(++found%25===0)await new Promise(resolve=>setImmediate(resolve));
+        if(found>=max||issues.length>=15){reachedEnd=false;break;}
+      }
+    }
+    if(!issues.length)
+      store.setSetting('orphanScanOffset',reachedEnd?'0':String(position));
     return issues;
   }
   async function verifyBackup(dir:string){
@@ -148,6 +175,21 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
         try{
           if((sample.prepare('PRAGMA quick_check(1)').get() as Row).quick_check!=='ok')
             issues.push('SQLite quick_check резервной копии не пройден');
+          if(sample.prepare('PRAGMA foreign_key_check').all().length)
+            issues.push('Обнаружены нарушения внешних ключей в резервной копии');
+          const actual=sample.prepare('SELECT id,sha256,byte_size FROM attachments').all() as Row[];
+          const declared=new Map<string,Row>();
+          for(const x of doc.attachments){
+            if(declared.has(x.id))issues.push('Дублированная запись вложения в манифесте: '+x.id);
+            declared.set(x.id,x);
+          }
+          if(actual.length!==doc.attachments.length)
+            issues.push('Манифест резервной копии не соответствует количеству вложений базы');
+          for(const row of actual){
+            const expected=declared.get(row.id);
+            if(!expected||expected.sha256!==row.sha256||Number(expected.size)!==Number(row.byte_size))
+              issues.push('Манифест не содержит корректную запись вложения: '+row.id);
+          }
         }finally{sample.close();}
       }catch{issues.push('SQLite файл копии не открывается');}
     }
@@ -252,6 +294,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     }
   }
   function backupNow(){
+    if(store.isImporting())return Promise.resolve({ok:false,error:'Дождитесь завершения импорта переписки.'});
     if(active)return Promise.resolve({ok:false,error:'Проверка или резервирование уже выполняется.'});
     const job=performBackup();
     active=job;
@@ -259,6 +302,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     return job;
   }
   async function check(){
+    if(store.isImporting())return {ok:false,busy:true,details:'Импорт переписки ещё выполняется.'};
     const result=await background('check');
     if(!result.ok){
       store.lockWrites('SQLite не прошёл проверку целостности. Записи остановлены.');
@@ -272,7 +316,11 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     const attachmentIssues=await inspectAttachments(200);
     if(attachmentIssues.length){
       warnings.push('Проблемы вложений: '+attachmentIssues.join('; '));
-      return {...result,ok:false,attachmentIssues};
+      // Orphaned temp/blob files are a warning, not a reason to stop
+      // backing up unrelated valid messages.
+      const missing=attachmentIssues.filter(x=>!x.startsWith('Незарегистрированное вложение:')
+        &&!x.startsWith('Незавершённый временный файл'));
+      if(missing.length)return {...result,ok:false,attachmentIssues};
     }
     store.setSetting('lastCheck',now());
     const last=await latestBackup();
@@ -329,7 +377,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       warnings:alerts,operations:slow,backupRunning:!!active};
   }
   async function maintain(){
-    if(stopped||active)return;
+    if(stopped||active||store.isImporting())return;
     const lastCheck=store.getSetting('lastCheck');
     try{
       if(!lastCheck||Date.now()-Date.parse(lastCheck)>24*3600_000){
