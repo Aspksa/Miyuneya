@@ -179,7 +179,7 @@
     historyList.replaceChildren();
     for(const row of chatState.conversations){
       const wrapper=document.createElement('div');wrapper.className='kitsune-history-entry';
-      const select=document.createElement('button');select.type='button';select.textContent=row.title||'Без названия';
+      const select=document.createElement('button');select.type='button';select.textContent=(row.parentId?'↳ ':'')+(row.title||'Без названия');
       select.title=row.title;select.setAttribute('aria-current',String(row.id===chatState.selectedId));
       select.onclick=()=>void loadConversation(row.id).then(closeHistory)
         .catch(e=>setStatus('Не удалось открыть разговор: '+e.message));
@@ -409,6 +409,28 @@
       const name=bubble.querySelector('strong');
       name.textContent=item.role==='assistant'?(item.complete===false?'Миюнэя · ответ прерван':'Миюнэя'):'Вы';
       const body=bubble.querySelector('p');
+      if(item.id && remoteChats && chatState.selectedId){
+        let fork=bubble.querySelector('.kitsune-fork-message');
+        if(!fork){
+          fork=document.createElement('button');
+          fork.type='button';fork.className='kitsune-fork-message';
+          fork.textContent='Ответвить';
+          fork.title='Начать новую ветку с этого сообщения, сохранив исходный разговор';
+          bubble.append(fork);
+        }
+        fork.onclick=()=>{
+          if(stream){setStatus('Остановите ответ перед ветвлением.');return;}
+          const source=chatState.selectedId;
+          const title=prompt('Название новой ветки',firstTitle(history)+' — ветка');
+          if(title===null)return;
+          void (async()=>{
+            const created=await requestArchive(base,jsonOptions('POST',{
+              parentId:source,forkMessageId:item.id,title:title.slice(0,140)}));
+            await loadConversation(created.conversation.id);
+            setStatus('Создана ветка. Исходный разговор сохранён.');
+          })().catch(e=>setStatus('Ошибка ветвления: '+e.message));
+        };
+      }
       if(body.dataset.raw!==item.content){
         formatMessage(body,item.content);
         body.dataset.raw=item.content;
@@ -735,6 +757,83 @@
       finally{restoreFile.disabled=false;}
     };
     actions.append(backup,restore);chatPanel.append(actions);
+
+    // All controls live inside existing chat settings; no separate web section.
+    const tools=document.createElement('div');tools.className='kitsune-archive-tools';
+    const heading=document.createElement('strong');heading.textContent='Надёжность архива';
+    const overview=document.createElement('p');overview.textContent='Загрузка статистики…';
+    const refresh=document.createElement('button');refresh.textContent='Обновить сведения';
+    const check=document.createElement('button');check.textContent='Проверить целостность';
+    const backupNow=document.createElement('button');backupNow.textContent='Создать копию сейчас';
+    const reindex=document.createElement('button');reindex.textContent='Восстановить поиск';
+    async function refreshArchiveStatus(){
+      if(!remoteChats)return;
+      const info=await requestArchive('/api/assistant/archive/status');
+      const mb=v=>(Number(v)/1048576).toFixed(1)+' МБ';
+      const date=info.backupAt?new Date(info.backupAt).toLocaleString('ru-RU'):'ещё нет';
+      overview.textContent='Диалогов: '+info.conversations+' · Сообщений: '+info.messages+
+        ' · База: '+mb(info.databaseBytes)+' · Вложения: '+info.attachments+
+        ' ('+mb(info.attachmentBytes)+') · Копий: '+info.backupCount+' ('+mb(info.backupBytes)+') · Последняя: '+date+
+        (info.warnings.length?' · Внимание: '+info.warnings.join(' / '):' · Всё в порядке');
+    }
+    refresh.onclick=()=>void refreshArchiveStatus().catch(e=>setStatus(e.message));
+    async function runMaintenance(action){
+      check.disabled=true;backupNow.disabled=true;reindex.disabled=true;
+      try{
+        const data=await requestArchive('/api/assistant/archive/'+action,{method:'POST'});
+        setStatus(action==='backup'?'Резервная копия создана и проверена.':
+          action==='rebuild'?'Поиск восстановлен.':
+          data.ok?'Целостность базы подтверждена.':'Обнаружены проблемы с целостностью.');
+        await refreshArchiveStatus();
+      }catch(e){setStatus('Архив: '+e.message);}
+      finally{check.disabled=false;backupNow.disabled=false;reindex.disabled=false;}
+    }
+    check.onclick=()=>void runMaintenance('check');
+    backupNow.onclick=()=>void runMaintenance('backup');
+    reindex.onclick=()=>void runMaintenance('rebuild');
+    tools.append(heading,overview,refresh,check,backupNow,reindex);
+    const attachmentsBox=document.createElement('div');attachmentsBox.className='kitsune-archive-tools';
+    const filesTitle=document.createElement('strong');filesTitle.textContent='Вложения текущего разговора';
+    const fileLabel=document.createElement('label');fileLabel.textContent='Добавить файл (до 15 МБ)';
+    const fileInput=document.createElement('input');fileInput.type='file';fileLabel.append(fileInput);
+    const fileList=document.createElement('div');fileList.className='kitsune-attachments-list';
+    async function refreshFiles(){
+      fileList.replaceChildren();
+      if(!chatState.selectedId){fileList.textContent='Сначала откройте разговор.';return;}
+      const result=await requestArchive(base+'/'+encodeURIComponent(chatState.selectedId)+'/attachments');
+      for(const file of result.attachments){
+        const link=document.createElement('a');
+        link.href=base+'/'+encodeURIComponent(chatState.selectedId)+'/attachments/'+encodeURIComponent(file.id);
+        link.textContent=file.name+' · '+(file.size/1048576).toFixed(1)+' МБ';
+        link.download=file.name;fileList.append(link);
+      }
+      if(!result.attachments.length)fileList.textContent='Вложений пока нет.';
+    }
+    fileInput.onchange=async()=>{
+      const file=fileInput.files?.[0];fileInput.value='';
+      if(!file)return;
+      if(!chatState.selectedId){setStatus('Сначала откройте разговор.');return;}
+      fileInput.disabled=true;
+      try{
+        const response=await fetch(base+'/'+encodeURIComponent(chatState.selectedId)+'/attachments',{
+          method:'POST',headers:{'Content-Type':file.type||'application/octet-stream',
+            'X-File-Name':encodeURIComponent(file.name)},body:file});
+        if(!response.ok){
+          const data=await response.json().catch(()=>({}));
+          throw Error(data.error||'Файл не сохранён.');
+        }
+        await refreshFiles();setStatus('Вложение сохранено отдельно от текста переписки.');
+      }catch(e){setStatus('Ошибка вложения: '+e.message);}
+      finally{fileInput.disabled=false;}
+    };
+    attachmentsBox.append(filesTitle,fileLabel,fileList);
+    chatPanel.append(tools,attachmentsBox);
+    void archiveReady.then(refreshArchiveStatus).catch(()=>{});
+    openSettings.addEventListener('click',()=>{
+      void refreshArchiveStatus().catch(()=>{});
+      void refreshFiles().catch(()=>{});
+    });
+
   }
   renderChat();
 })();
