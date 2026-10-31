@@ -39,3 +39,17 @@ test('damaged archive is not silently replaced',async()=>temp(async dir=>{
   await assert.rejects(()=>openChats(dir),/Архив чатов повреждён/);
   assert.equal(await readFile(join(dir,'chats','index.json'),'utf8'),'{broken');
 }));
+
+test('completed exchanges are appended without duplicating earlier context',async()=>temp(async dir=>{
+  const store=await openChats(dir);
+  const first=[{role:'user',content:'Привет'}];
+  assert.equal(await store.record(first,'Здравствуйте!'),true);
+  assert.equal(await store.record([...first,{role:'assistant',content:'Здравствуйте!'},{role:'user',content:'Как дела?'}],'Хорошо!'),true);
+  const snapshot=store.snapshot();
+  assert.equal(snapshot.dialogs.length,1);
+  assert.deepEqual(snapshot.dialogs[0].messages,[
+    {role:'user',content:'Привет'},{role:'assistant',content:'Здравствуйте!'},
+    {role:'user',content:'Как дела?'},{role:'assistant',content:'Хорошо!'}
+  ]);
+  assert.equal((await openChats(dir)).snapshot().dialogs[0].messages.length,4);
+}));
