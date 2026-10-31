@@ -79,11 +79,11 @@
     if(!response.ok)throw Error(result.error||'Не удалось сохранить образ на диске.');
     return result.avatar.id;
   }
-  async function erase(id){
+  const erase=async id=>{
     if(!serverLibrary)return transaction('readwrite',store=>store.delete(id));
     const response=await fetch(remoteURL(id),{method:'DELETE'});
     if(!response.ok)throw Error('Не удалось удалить образ из библиотеки.');
-  }
+  };
   async function decode(file){
     const url=URL.createObjectURL(file);
     try {
