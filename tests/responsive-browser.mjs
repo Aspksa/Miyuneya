@@ -194,6 +194,31 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.equal(crop.overflow,'hidden','Framing must clip image to visible window');
   assert.ok(crop.imageWidth>crop.width,'Framing 140% must enlarge content inside clipped viewport');
   assert.notEqual(crop.shift,'none','Vertical framing needs a real transform');
+  // At phone width and high DPR, the centered settings must remain inside
+  // the viewport and its action controls must stay reachable.
+  await cd.send('Emulation.setDeviceMetricsOverride',{width:320,height:480,deviceScaleFactor:2,mobile:false});
+  const smallSettings=await evalJS(`(()=>{
+    const dlg=document.getElementById('kitsune-settings'),r=dlg.getBoundingClientRect();
+    const tabs=[...dlg.querySelectorAll('.kitsune-tab')].map(el=>{
+      const b=el.getBoundingClientRect();
+      return {left:b.left,right:b.right,top:b.top,bottom:b.bottom};
+    });
+    const footer=document.getElementById('kitsune-settings-reset');
+    dlg.scrollTop=dlg.scrollHeight;
+    const f=footer.getBoundingClientRect();
+    return {viewport:[innerWidth,innerHeight],panel:{left:r.left,right:r.right,top:r.top,bottom:r.bottom},
+      tabs,footer:{top:f.top,bottom:f.bottom},pageScroll:document.documentElement.scrollWidth};
+  })()`);
+  assert.deepEqual(smallSettings.viewport,[320,480]);
+  assert.ok(smallSettings.panel.left>=-1 && smallSettings.panel.right<=321 && smallSettings.panel.top>=-1 && smallSettings.panel.bottom<=481,
+    'Avatar settings must fit 320px mobile DPR2: '+JSON.stringify(smallSettings));
+  assert.ok(smallSettings.tabs.every(t=>t.left>=smallSettings.panel.left-1&&t.right<=smallSettings.panel.right+1),
+    'All avatar tabs must stay inside mobile settings');
+  assert.ok(smallSettings.footer.top>=smallSettings.panel.top-1 && smallSettings.footer.bottom<=smallSettings.panel.bottom+1,
+    'Reset action must remain reachable on mobile');
+  assert.ok(smallSettings.pageScroll<=321,'No horizontal overflow on mobile');
+  await cd.send('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
+
 
 
   assert.ok(Math.abs(modal.centerX-modal.width/2)<2,'Settings horizontally centered');
@@ -216,6 +241,25 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   })()`);
   assert.equal(await evalJS('document.getElementById("kitsune-avatar").getBoundingClientRect().width'),230);
   assert.match(await evalJS('document.getElementById("kitsune-chat").style.width'),/500px/);
+  // Browser window shrink must not silently overwrite a 500px saved chat size.
+  await evalJS('document.getElementById("kitsune-avatar").click()');
+  await cd.send('Emulation.setDeviceMetricsOverride',{width:320,height:540,deviceScaleFactor:2,mobile:false});
+  await evalJS('new Promise(resolve=>setTimeout(resolve,120))');
+  const narrowChat=await evalJS(`(()=>{
+    const chat=document.getElementById('kitsune-chat');
+    const b=chat.getBoundingClientRect();
+    const settings=JSON.parse(localStorage.getItem('miyuneya.kitsune.settings.v1')||'{}');
+    const avatar=document.getElementById('kitsune-avatar').getBoundingClientRect();
+    return {savedWidth:settings.width,visibleWidth:b.width,avatarBottom:avatar.bottom,
+      viewportHeight:innerHeight,scroll:document.documentElement.scrollWidth};
+  })()`);
+  assert.equal(narrowChat.savedWidth,500,'Viewport shrink must not be persisted as a manual resize');
+  assert.ok(narrowChat.visibleWidth<=300,'Chat must fit in narrow viewport');
+  assert.ok(narrowChat.avatarBottom<=narrowChat.viewportHeight+1,'Avatar must stay on screen');
+  assert.ok(narrowChat.scroll<=321,'Chat must not cause page overflow');
+  await cd.send('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
+  await evalJS('document.getElementById("kitsune-chat-close").click()');
+
   await evalJS('document.getElementById("kitsune-settings-close").click()');
   assert.equal(await evalJS('document.getElementById("kitsune-settings").hidden'),true);
   // Mouse dragging must move the avatar and NOT activate chat.
@@ -252,6 +296,15 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   assert.ok(chatAfter.left>=headerBefore.left+15,'Chat moves by dragging the header');
   await evalJS('document.getElementById("kitsune-chat-close").click()');
   await evalJS('document.getElementById("kitsune-settings-reset").click()');
+  const studioReset=await evalJS(`(()=>({
+    framing:document.getElementById('kitsune-framing').value,
+    vertical:document.getElementById('kitsune-vertical').value,
+    gold:document.getElementById('kitsune-gold-glow').checked
+  }))()`);
+  assert.equal(studioReset.framing,'100','Reset must restore studio framing');
+  assert.equal(studioReset.vertical,'50','Reset must restore vertical framing');
+  assert.equal(studioReset.gold,true,'Reset must restore golden effect');
+
   assert.equal(await evalJS('document.getElementById("cloud-key").type'),'password');
   assert.equal(await evalJS('document.getElementById("cloud-key").value'),'');
   assert.equal(await evalJS('document.getElementById("cloud-panel") !== null'),true);
