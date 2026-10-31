@@ -329,8 +329,8 @@
       // CSS min() contracts the chat to fit a small viewport; this is NOT
       // a user resize. Preserve the chosen desktop dimensions across zoom
       // and window-size changes. Native drag resize writes pixel values.
-      const changedWidth=/^\\d+(?:\\.\\d+)?px$/.test(chat.style.width);
-      const changedHeight=/^\\d+(?:\\.\\d+)?px$/.test(chat.style.height);
+      const changedWidth=/^[0-9]+(?:[.][0-9]+)?px$/.test(chat.style.width);
+      const changedHeight=/^[0-9]+(?:[.][0-9]+)?px$/.test(chat.style.height);
       if(!changedWidth && !changedHeight)return;
       const width=Math.round(rect.width),height=Math.round(rect.height);
       if((changedWidth && Math.abs(config.width-width)>12) ||
