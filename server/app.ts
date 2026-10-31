@@ -94,6 +94,7 @@ export async function createApp(root: string, instance: string, preview = false,
   let queue = Promise.resolve();
   const files: Record<string, [string, string]> = {
     '/': ['blank.html', 'text/html'], '/blank.css': ['blank.css', 'text/css'], '/blank.js': ['blank.js', 'text/javascript'],
+    '/unified-ui.css':['unified-ui.css','text/css'], '/avatar-experience.css':['avatar-experience.css','text/css'], '/chat-attachments.js':['chat-attachments.js','text/javascript'], '/avatar-state.js':['avatar-state.js','text/javascript'],
     '/avatar.css': ['avatar.css', 'text/css'], '/avatar.js': ['avatar.js', 'text/javascript'], '/avatar-studio.js': ['avatar-studio.js', 'text/javascript'], '/avatars/hayumeri-kitsune.avif': ['avatars/hayumeri-kitsune.avif', 'image/avif'],
     '/workspace': ['index.html', 'text/html'], '/index.html': ['index.html', 'text/html'],
     '/workbench.js':['workbench.js','text/javascript'], '/productivity.js':['productivity.js','text/javascript'], '/disk.js': ['disk.js', 'text/javascript'], '/calendar.js': ['calendar.js', 'text/javascript'], '/main.js': ['main.js', 'text/javascript'], '/model.js': ['model.js', 'text/javascript'],
