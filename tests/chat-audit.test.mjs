@@ -71,9 +71,13 @@ test('Длительный JSONL импорт временно отклоняе�
   const target=await openSqliteChatArchive(targetRoot);
   target.create({id:'existing'});target.saveMessage('existing',msg('existing-message','Не потерять'));
   const task=target.importStream(stream(lines),'application/x-ndjson');
+  let finished=false;
+  void task.then(()=>{finished=true;},()=>{finished=true;});
   let blocked=false;
-  for(let i=0;i<3000&&!blocked;i++){
-    await tick();
+  for(let i=0;i<500&&!blocked&&!finished;i++){
+    // Poll across actual I/O turns; a tight setImmediate loop may finish
+    // before the source stream has even completed its first pass.
+    await new Promise(resolve=>setTimeout(resolve,2));
     if(target.isImporting()){
       blocked=true;
       assert.throws(()=>target.create({id:'racing'}),/импорт/);
