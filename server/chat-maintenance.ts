@@ -1,11 +1,12 @@
 import { backup, DatabaseSync } from 'node:sqlite';
 import { randomUUID, createHash } from 'node:crypto';
-import { join, basename } from 'node:path';
-import { mkdir, readFile, rm, readdir, rename, stat, statfs, copyFile } from 'node:fs/promises';
+import { join, basename, isAbsolute, parse } from 'node:path';
+import { mkdir, readFile, rm, readdir, rename, stat, statfs, copyFile, realpath, cp } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import type { openSqliteChatArchive } from './chat-sqlite.ts';
+import { ensureSpace } from './chat-db-safety.ts';
 type Store=Awaited<ReturnType<typeof openSqliteChatArchive>>;
 type Row=Record<string,any>;
 const now=()=>new Date().toISOString();
@@ -20,7 +21,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   let timer:ReturnType<typeof setTimeout>|undefined;
   const warnings=store.warnings;
   const workers=new Set<Worker>();
-  function background(action:'check'|'rebuild'):Promise<Row>{
+  function background(action:'check'|'rebuild'|'optimize'):Promise<Row>{
     if(stopped)throw fail('Архив закрывается.',503);
     return new Promise((resolve,reject)=>{
       const worker=new Worker(new URL('../scripts/chat-archive-worker.mjs',import.meta.url),{
@@ -48,6 +49,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     if(!/^[a-z0-9+.-]+\/[a-z0-9+.-]+$/i.test(type)||type.length>100)throw fail('Неверный тип вложения.');
     const name=basename(String(fileName||'файл')).replace(/[\x00-\x1f]/g,'').slice(0,180)||'файл';
     if(messageId&&!store.visible(conversationId,messageId))throw fail('Сообщение для вложения не найдено.',404);
+    await ensureSpace(store.home,bytes.length*2,'сохранение вложения');
     const id=randomUUID(),sha256=digest(bytes),date=now();
     const file=join(blobRoot,id+'.blob');
     await mkdir(blobRoot,{recursive:true});
@@ -77,6 +79,53 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       throw fail('Контрольная сумма вложения не совпадает.',503);
     }
     return {meta,bytes};
+  }
+  async function configureExternal(destination:string|null){
+    if(destination===null||destination===''){
+      store.write('backup-config',()=>store.setSetting('externalBackupPath',''));
+      return {configured:false,destination:null};
+    }
+    if(typeof destination!=='string'||destination.length>512||!isAbsolute(destination))
+      throw fail('Укажите абсолютный путь к папке на другом физическом диске.');
+    const target=await realpath(destination).catch(()=>{throw fail('Диск резервного хранения не подключён или папка отсутствует.',404);});
+    const targetStat=await stat(target);
+    if(!targetStat.isDirectory())throw fail('Указан путь к файлу вместо папки.');
+    const main=await realpath(store.home);
+    if(process.platform==='win32'){
+      if(parse(target).root.toLowerCase()===parse(main).root.toLowerCase())
+        throw fail('Для независимых копий выберите другой диск Windows.');
+      if(target.startsWith('\\'))throw fail('Укажите локальный внешний SSD, а не сетевой путь.');
+    }else if(targetStat.dev===(await stat(main)).dev)
+      throw fail('Резервный путь должен находиться на другой файловой системе.');
+    await ensureSpace(target,128*1024*1024,'копирование на внешний SSD');
+    const path=join(target,'Miyuneya-chat-backups');
+    await mkdir(path,{recursive:true});
+    store.write('backup-config',()=>store.setSetting('externalBackupPath',path));
+    return {configured:true,destination:path};
+  }
+  function externalConfiguration(){
+    const path=store.getSetting('externalBackupPath');
+    return {configured:!!path,destination:path||null};
+  }
+  async function inspectAttachments(max=200){
+    const after=store.getSetting('attachmentScanCursor');
+    const query='SELECT id,conversation_id,message_id,byte_size FROM attachments WHERE id>? ORDER BY id LIMIT ?';
+    let rows=db.prepare(query).all(after,max) as Row[];
+    if(!rows.length)rows=db.prepare(query).all('',max) as Row[];
+    const issues:string[]=[];
+    for(const row of rows){
+      const file=join(blobRoot,row.id+'.blob');
+      const size=await stat(file).catch(()=>null);
+      if(!size||size.size!==Number(row.byte_size))issues.push('Отсутствует или повреждён файл '+row.id);
+      if(row.message_id && !store.visible(row.conversation_id,row.message_id))
+        issues.push('Вложение связано с отсутствующим сообщением '+row.id);
+      if(issues.length>=15)break;
+      // Yield to HTTP events on low-end SSDs.
+      if(issues.length%20===0)await new Promise(resolve=>setImmediate(resolve));
+    }
+    if(!issues.length&&rows.length)
+      store.setSetting('attachmentScanCursor',rows[rows.length-1].id);
+    return issues;
   }
   async function verifyBackup(dir:string){
     const issues:string[]=[];
@@ -110,12 +159,45 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return null;throw e;}
     return folders[0]?join(root,folders[0]):null;
   }
+  async function retryExternalBackup(){
+    const destination=store.getSetting('externalBackupPath');
+    if(!destination)return {skipped:true};
+    const source=await latestBackup();
+    if(!source)return {skipped:true};
+    const suffix=basename(source),target=join(destination,suffix);
+    const existing=await stat(target).catch(()=>null);
+    if(existing){
+      const verified=await verifyBackup(target);
+      if(verified.ok){
+        store.setSetting('lastExternalBackup',store.getSetting('lastBackup')||now());
+        return {ok:true,directory:target,existing:true};
+      }
+      warnings.push('Предыдущая внешняя копия повреждена: '+suffix+'. Не перезаписана.');
+      return {ok:false,error:'Обнаружена повреждённая внешняя копия, которая не будет перезаписана.'};
+    }
+    const pending=join(destination,'pending-retry-'+randomUUID());
+    try{
+      const localSize=await stat(join(source,'archive.sqlite'));
+      await ensureSpace(destination,localSize.size*2,'восстановление внешней копии');
+      await cp(source,pending,{recursive:true,force:false,errorOnExist:true});
+      const check=await verifyBackup(pending);
+      if(!check.ok)throw Error(check.issues.join('; '));
+      await rename(pending,target);
+      store.setSetting('lastExternalBackup',store.getSetting('lastBackup')||now());
+      return {ok:true,directory:target};
+    }catch(e){
+      await rm(pending,{recursive:true,force:true}).catch(()=>{});
+      warnings.push('Внешняя копия пока не готова: '+(e as Error).message);
+      return {ok:false,error:(e as Error).message};
+    }
+  }
   async function performBackup(){
     const started=performance.now();
     const suffix=now().replace(/[:.]/g,'-')+'-'+randomUUID().slice(0,8);
     const pendingDir=join(root,'pending-'+suffix),finalDir=join(root,suffix);
     await mkdir(pendingDir,{recursive:true});
     try{
+      await ensureSpace(root,(await stat(store.path)).size*1.5+Number((db.prepare('SELECT COALESCE(SUM(byte_size),0) AS bytes FROM attachments').get() as Row).bytes),'резервное копирование архива');
       const copy=join(pendingDir,'archive.sqlite');
       await backup(db,copy,{rate:64});
       const saved=new DatabaseSync(copy,{readOnly:true});
@@ -142,7 +224,26 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       store.setSetting('backupCount',String(Number(store.getSetting('backupCount')||0)+1));
       store.setSetting('backupBytes',String(Number(store.getSetting('backupBytes')||0)+bytes));
       store.setSetting('lastBackup',info.createdAt);
-      return {ok:true,directory:finalDir,attachments:rows.length,
+      const destination=store.getSetting('externalBackupPath');
+      let external:{ok:boolean;directory?:string;error?:string}|null=null;
+      if(destination){
+        const externalPending=join(destination,'pending-'+suffix);
+        try{
+          await ensureSpace(destination,bytes*1.2,'независимая копия на внешнем SSD');
+          await cp(finalDir,externalPending,{recursive:true,force:false,errorOnExist:true});
+          const other=await verifyBackup(externalPending);
+          if(!other.ok)throw Error('Внешняя копия не прошла проверку SHA-256: '+other.issues.join('; '));
+          const finalExternal=join(destination,suffix);
+          await rename(externalPending,finalExternal);
+          store.setSetting('lastExternalBackup',now());
+          external={ok:true,directory:finalExternal};
+        }catch(e){
+          await rm(externalPending,{recursive:true,force:true}).catch(()=>{});
+          external={ok:false,error:(e as Error).message};
+          warnings.push('Внешний SSD: '+external.error+'. Локальная копия сохранена.');
+        }
+      }
+      return {ok:true,directory:finalDir,external,attachments:rows.length,
         durationMs:Math.round(performance.now()-started)};
     }catch(e){
       await rm(pendingDir,{recursive:true,force:true}).catch(()=>{});
@@ -168,6 +269,11 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       store.setSetting('lastCheck',now());
       return {...result,ftsHealthy:true,repaired:true};
     }
+    const attachmentIssues=await inspectAttachments(200);
+    if(attachmentIssues.length){
+      warnings.push('Проблемы вложений: '+attachmentIssues.join('; '));
+      return {...result,ok:false,attachmentIssues};
+    }
     store.setSetting('lastCheck',now());
     const last=await latestBackup();
     const backupResult=last?await verifyBackup(last):null;
@@ -181,22 +287,42 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       const files=db.prepare('SELECT COUNT(*) n,COALESCE(SUM(byte_size),0) bytes FROM attachments').get() as Row;
       const pages=Number((db.prepare('PRAGMA page_count').get() as Row).page_count);
       const pageSize=Number((db.prepare('PRAGMA page_size').get() as Row).page_size);
+      const freePages=Number((db.prepare('PRAGMA freelist_count').get() as Row).freelist_count);
       return {conversations:chatCount,messages,attachments:Number(files.n),
-        attachmentBytes:Number(files.bytes),databaseBytes:pages*pageSize};
+        attachmentBytes:Number(files.bytes),databaseBytes:pages*pageSize,
+        unusedPages:freePages};
     });
+    const [dbFile,walFile,shmFile]=await Promise.all([
+      stat(store.path).catch(()=>null),
+      stat(store.path+'-wal').catch(()=>null),
+      stat(store.path+'-shm').catch(()=>null),
+    ]);
+    const dbFileBytes=dbFile?.size||0,walBytes=walFile?.size||0,shmBytes=shmFile?.size||0;
     const disk=await statfs(store.home).catch(()=>null);
     const freeBytes=disk?Number(disk.bavail)*Number(disk.bsize):null;
     const backupAt=store.getSetting('lastBackup')||null;
-    const alerts=[...new Set(warnings)];
+    if(warnings.length>100)warnings.splice(0,warnings.length-100);
+    const alerts=[...new Set(warnings)].slice(-20);
     if(freeBytes!==null&&freeBytes<512*1024*1024)alerts.push('На диске осталось менее 512 МБ.');
     if(info.messages&&(!backupAt||Date.now()-Date.parse(backupAt)>48*3600_000))
       alerts.push('Нет свежей проверенной резервной копии за последние 48 часов.');
+    const old=store.getSetting('growthBaseline');
+    try{
+      const previous=JSON.parse(old||'null');
+      if(previous&&previous.bytes>0&&dbFileBytes>previous.bytes*1.75
+        &&info.messages<=previous.messages*1.1+15)
+        alerts.push('SQLite резко вырос без сопоставимого увеличения количества сообщений.');
+    }catch{alerts.push('Не удалось прочитать контрольную статистику роста SQLite.');}
+    const externalPath=store.getSetting('externalBackupPath')||null;
+    if(externalPath&&!store.getSetting('lastExternalBackup'))
+      alerts.push('Внешний SSD подключён к резервированию, но проверенной внешней копии ещё нет.');
     const slow=[...store.timings].map(([name,v])=>({
       name,calls:v.count,averageMs:Math.round(v.sum/v.count*100)/100,maxMs:Math.round(v.max*100)/100
     })).sort((a,b)=>b.maxMs-a.maxMs).slice(0,12);
     if(slow.some(x=>x.name==='save'&&x.maxMs>500))
       alerts.push('Запись сообщений выполнялась дольше 500 мс. Проверьте состояние диска.');
-    return {...info,freeBytes,backupAt,
+    return {...info,freeBytes,backupAt,dbFileBytes,walBytes,shmBytes,
+      externalBackupPath:externalPath,lastExternalBackup:store.getSetting('lastExternalBackup')||null,
       backupCount:Number(store.getSetting('backupCount')||0),
       backupBytes:Number(store.getSetting('backupBytes')||0),
       readOnly:store.readOnly(),wal:true,
@@ -206,9 +332,22 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     if(stopped||active)return;
     const lastCheck=store.getSetting('lastCheck');
     try{
-      if(!lastCheck||Date.now()-Date.parse(lastCheck)>24*3600_000)await check();
+      if(!lastCheck||Date.now()-Date.parse(lastCheck)>24*3600_000){
+        const checked=await check();
+        if(!checked.ok)return; // Do not optimize or copy a damaged archive.
+        const current=await statistics();
+        store.setSetting('growthBaseline',JSON.stringify({
+          bytes:current.dbFileBytes,messages:current.messages,at:now()
+        }));
+        const optimized=await background('optimize');
+        if(!optimized.ok)warnings.push('Не удалось обновить статистику индексов SQLite.');
+      }
       const last=store.getSetting('lastBackup');
       if(!last||Date.now()-Date.parse(last)>24*3600_000)await backupNow();
+      const external=store.getSetting('externalBackupPath');
+      const recent=store.getSetting('lastExternalBackup');
+      if(external&&(!recent||Date.parse(recent)<Date.parse(store.getSetting('lastBackup')||now())))
+        await retryExternalBackup();
     }catch(e){warnings.push('Проверка архивов не завершилась: '+(e as Error).message);}
   }
   function schedule(delay:number){
@@ -219,7 +358,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   if(automatic)schedule(12000);
   return {
     saveAttachment,listAttachments,attachment,backupNow,verifyBackup,latestBackup,check,statistics,
-    reindex,
+    reindex,configureExternal,externalConfiguration,inspectAttachments,retryExternalBackup,
     shutdown:async()=>{stopped=true;if(timer)clearTimeout(timer);
       await Promise.allSettled([...workers].map(worker=>worker.terminate()));
       if(active)await active;}

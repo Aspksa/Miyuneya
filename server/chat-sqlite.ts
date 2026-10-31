@@ -1,4 +1,6 @@
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, backup } from 'node:sqlite';
+import { acquireDatabaseWriter, ensureSpace } from './chat-db-safety.ts';
+import { searchInWorker } from './chat-search.ts';
 import { randomUUID, createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { mkdir, stat } from 'node:fs/promises';
@@ -7,7 +9,7 @@ import { createReadStream } from 'node:fs';
 import { openChatArchive as openLegacyArchive } from './chat-archive.ts';
 
 export type ChatMessage={id:string;role:'user'|'assistant';content:string;createdAt:string;version:number;complete:boolean;parentMessageId?:string|null};
-export type ChatQuery={query?:string;offset?:number;limit?:number;archived?:boolean};
+export type ChatQuery={query?:string;offset?:number;limit?:number;archived?:boolean;mode?:'morphology'|'exact'|'phrase';typos?:boolean;sort?:'relevance'|'date'};
 export type ChatMeta={id:string;title:string;createdAt:string;updatedAt:string;messageCount:number;archived:boolean;parentId?:string;forkMessageId?:string};
 type Row=Record<string,any>;
 const idOK=(x:unknown):x is string=>typeof x==='string'&&/^[a-zA-Z0-9_-]{1,80}$/.test(x);
@@ -37,10 +39,23 @@ export async function openSqliteChatArchive(dataDir:string){
     if((e as NodeJS.ErrnoException).code==='ENOENT')return 0;
     throw e;
   });
-  const db=new DatabaseSync(path,{timeout:5000});
+  const releaseLock=await acquireDatabaseWriter(path);
+  let db:DatabaseSync;
+  try{db=new DatabaseSync(path,{timeout:5000});}
+  catch(e){await releaseLock();throw e;}
+  try{
   const timings=new Map<string,{count:number;sum:number;max:number}>();
   const warnings:string[]=[];
   let readOnly=false,closed=false;
+  let busyMs=5000;
+  const pageCache=new Map<string,{size:number;result:ReturnType<typeof makePage>}>();
+  let cachedBytes=0;
+  function makePage(c:Row,records:Row[],start:number,count:number){
+    return {conversation:formatConversation(c),messages:records.map(formatMessage),
+      total:count,nextBefore:start?start:null};
+  }
+  const clearPageCache=()=>{pageCache.clear();cachedBytes=0;};
+
   const timed=<T>(key:string,run:()=>T):T=>{
     const start=performance.now();
     try{return run();}
@@ -49,17 +64,37 @@ export async function openSqliteChatArchive(dataDir:string){
   };
   const write=<T>(key:string,run:()=>T):T=>{
     if(readOnly)throw error('Хранилище повреждено. Режим только чтения: запись запрещена.',503);
-    return timed(key,()=>{db.exec('BEGIN IMMEDIATE');try{const value=run();db.exec('COMMIT');return value;}
-      catch(e){db.exec('ROLLBACK');throw e;}});
+    return timed(key,()=>{
+      let started=false;
+      try{
+        db.exec('BEGIN IMMEDIATE');started=true;
+        const value=run();db.exec('COMMIT');started=false;
+        if(['save','create','modify'].includes(key))clearPageCache();
+        return value;
+      }catch(e){
+        if(started)try{db.exec('ROLLBACK');}catch{}
+        const message=(e as Error).message||'';
+        if(/SQLITE_BUSY|database is locked/i.test(message)){
+          busyMs=Math.min(12000,busyMs+1000);
+          db.exec('PRAGMA busy_timeout='+busyMs);
+          warnings.push('Блокировка SQLite: тайм-аут увеличен до '+busyMs+' мс.');
+        }
+        if(/SQLITE_FULL|disk I\/O|database disk image is malformed/i.test(message))
+          warnings.push('Ошибка диска: запись не подтверждена.');
+        throw e;
+      }
+    });
   };
   const schema=[
     'CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);',
     'CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,title TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0,message_count INTEGER NOT NULL DEFAULT 0,parent_id TEXT REFERENCES conversations(id),fork_message_id TEXT,inherited_count INTEGER NOT NULL DEFAULT 0);',
     'CREATE INDEX IF NOT EXISTS conversations_updated ON conversations(archived,updated_at DESC);',
+    'CREATE INDEX IF NOT EXISTS conversations_parent ON conversations(parent_id,inherited_count);',
     'CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id),sequence INTEGER NOT NULL,role TEXT NOT NULL,content TEXT NOT NULL,created_at TEXT NOT NULL,version INTEGER NOT NULL,complete INTEGER NOT NULL,parent_message_id TEXT,UNIQUE(conversation_id,sequence));',
     'CREATE INDEX IF NOT EXISTS messages_paging ON messages(conversation_id,sequence DESC);',
     'CREATE INDEX IF NOT EXISTS messages_created ON messages(created_at);',
     'CREATE INDEX IF NOT EXISTS messages_parent ON messages(parent_message_id);',
+    'CREATE INDEX IF NOT EXISTS messages_conversation_created ON messages(conversation_id,created_at DESC,id);',
     "CREATE VIRTUAL TABLE IF NOT EXISTS message_fts USING fts5(content,content='messages',content_rowid='rowid',tokenize='unicode61');",
     "CREATE TRIGGER IF NOT EXISTS fts_ins AFTER INSERT ON messages BEGIN INSERT INTO message_fts(rowid,content) VALUES(new.rowid,new.content); END;",
     "CREATE TRIGGER IF NOT EXISTS fts_del AFTER DELETE ON messages BEGIN INSERT INTO message_fts(message_fts,rowid,content) VALUES('delete',old.rowid,old.content); END;",
@@ -76,19 +111,40 @@ export async function openSqliteChatArchive(dataDir:string){
       && ['settings','conversations','messages','attachments'].some(name=>!present.has(name)))
       throw Error('Не найдена таблица пользовательской базы. Автоматическая перезапись запрещена.');
     const missingSearch=previousSize>0 && formerVersion>=3 && !present.has('message_fts');
-    db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;');
+    if(formerVersion>4)throw Error('База создана более новой версией. Обновите Miyuneya.');
+    const configured=Number(process.env.MIYUNEYA_SQLITE_BUSY_MS||5000);
+    busyMs=Number.isSafeInteger(configured)?Math.max(1000,Math.min(12000,configured)):5000;
+    db.exec('PRAGMA busy_timeout='+busyMs+'; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;');
     const mode=(db.prepare('PRAGMA journal_mode=WAL').get() as Row).journal_mode;
     if(mode!=='wal')throw Error('Режим SQLite WAL недоступен: нужен локальный диск.');
-    db.exec(schema.join('\n'));
-    if(missingSearch)db.prepare("INSERT INTO message_fts(message_fts) VALUES('rebuild')").run();
-    const version=Number((db.prepare('PRAGMA user_version').get() as Row).user_version);
-    if(version>3)throw Error('База создана более новой версией. Обновите Miyuneya.');
-    db.exec('PRAGMA user_version=3');
-  }catch(e){db.close();throw e;}
+    if(previousSize>0&&formerVersion===3){
+      await ensureSpace(home,previousSize*1.25,'резервирование перед миграцией SQLite');
+      const snapshots=join(home,'migrations');
+      await mkdir(snapshots,{recursive:true});
+      const file=join(snapshots,'before-v4-'+new Date().toISOString().replace(/[:.]/g,'-')+'.sqlite');
+      await backup(db,file,{rate:64});
+      const safe=new DatabaseSync(file,{readOnly:true});
+      try{
+        if((safe.prepare('PRAGMA quick_check(1)').get() as Row).quick_check!=='ok'
+          ||safe.prepare('PRAGMA foreign_key_check').all().length)
+          throw Error('Проверка копии перед миграцией SQLite не пройдена. Миграция остановлена.');
+      }finally{safe.close();}
+    }
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      db.exec(schema.join('\n'));
+      if(missingSearch)db.prepare("INSERT INTO message_fts(message_fts) VALUES('rebuild')").run();
+      db.exec('PRAGMA user_version=4');
+      db.exec('COMMIT');
+    }catch(e){try{db.exec('ROLLBACK');}catch{}throw e;}
+  }catch(e){throw e;}
   const getSetting=(key:string)=>(db.prepare('SELECT value FROM settings WHERE key=?').get(key) as Row|undefined)?.value||'';
   const setSetting=(key:string,val:string)=>db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,val);
   const conversationStmt=db.prepare('SELECT * FROM conversations WHERE id=?');
   const messageStmt=db.prepare('SELECT * FROM messages WHERE id=?');
+  const sequenceStmt=db.prepare('SELECT * FROM messages WHERE conversation_id=? AND sequence>? AND sequence<=? ORDER BY sequence');
+  const insertStmt=db.prepare('INSERT INTO messages(id,conversation_id,sequence,role,content,created_at,version,complete,parent_message_id) VALUES(?,?,?,?,?,?,?,?,?)');
+  const updateMessageStmt=db.prepare('UPDATE messages SET content=?,version=?,complete=? WHERE id=?');
   const getConversation=(id:string):Row=>{
     const c=conversationStmt.get(safeId(id)) as Row|undefined;
     if(!c)throw error('Разговор не найден.',404);return c;
@@ -108,8 +164,7 @@ export async function openSqliteChatArchive(dataDir:string){
     const c=getConversation(id),split=Number(c.inherited_count);
     const inherited=start<split?scan(c.parent_id,start,Math.min(end,split),depth+1):[];
     const lower=Math.max(start,split);
-    const own=lower<end?db.prepare('SELECT * FROM messages WHERE conversation_id=? AND sequence>? AND sequence<=? ORDER BY sequence')
-      .all(id,lower,end) as Row[]:[];
+    const own=lower<end?sequenceStmt.all(id,lower,end) as Row[]:[];
     return inherited.concat(own);
   };
   const visible=(conversationId:string,id:string,depth=0):Row|undefined=>{
@@ -194,8 +249,7 @@ export async function openSqliteChatArchive(dataDir:string){
         if(msg.version<previous.version||(msg.version===previous.version&&previous.content===msg.content&&!!previous.complete===msg.complete))
           return {message:formatMessage(previous),conversation:formatConversation(c)};
         if(msg.version===previous.version||(previous.complete&&!msg.complete))throw error('Конфликт версии сообщения.',409);
-        db.prepare('UPDATE messages SET content=?,version=?,complete=? WHERE id=?')
-          .run(msg.content,msg.version,msg.complete?1:0,id);
+        updateMessageStmt.run(msg.content,msg.version,msg.complete?1:0,id);
       }else{
         const count=Number(c.message_count);
         if(expectedCount!==undefined&&expectedCount!==count)throw error('Другая вкладка изменила разговор.',409);
@@ -205,8 +259,7 @@ export async function openSqliteChatArchive(dataDir:string){
           if(!found)throw error('Связанное сообщение не найдено.',409);
           parent=found.id;
         }else if(count)parent=scan(conversationId,count-1,count)[0]?.id||null;
-        db.prepare('INSERT INTO messages(id,conversation_id,sequence,role,content,created_at,version,complete,parent_message_id) VALUES(?,?,?,?,?,?,?,?,?)')
-          .run(id,conversationId,count+1,msg.role,msg.content,msg.createdAt,msg.version,msg.complete?1:0,parent);
+        insertStmt.run(id,conversationId,count+1,msg.role,msg.content,msg.createdAt,msg.version,msg.complete?1:0,parent);
         db.prepare('UPDATE conversations SET message_count=message_count+1 WHERE id=?').run(conversationId);
       }
       db.prepare('UPDATE conversations SET updated_at=? WHERE id=?').run(now(),conversationId);
@@ -220,8 +273,23 @@ export async function openSqliteChatArchive(dataDir:string){
       const end=before===undefined?count:Math.min(count,integer(before,0));
       const take=Math.max(1,Math.min(150,integer(limit,100)));
       const start=Math.max(0,end-take);
-      return {conversation:formatConversation(c),messages:scan(id,start,end).map(formatMessage),
-        total:count,nextBefore:start?start:null};
+      const key=id+':'+start+':'+end;
+      const hit=pageCache.get(key);
+      if(hit){
+        pageCache.delete(key);pageCache.set(key,hit);
+        return structuredClone(hit.result);
+      }
+      const result=makePage(c,scan(id,start,end),start,count);
+      const bytes=Buffer.byteLength(JSON.stringify(result));
+      if(bytes<=2*1024*1024){
+        pageCache.set(key,{size:bytes,result:structuredClone(result)});
+        cachedBytes+=bytes;
+        while((pageCache.size>12||cachedBytes>8*1024*1024)&&pageCache.size){
+          const oldest=pageCache.keys().next().value!;
+          cachedBytes-=pageCache.get(oldest)!.size;pageCache.delete(oldest);
+        }
+      }
+      return result;
     });
   }
   async function* exportLines(){
@@ -350,6 +418,16 @@ export async function openSqliteChatArchive(dataDir:string){
       return {imported:records,conversations};
     }finally{await rm(temp,{force:true}).catch(()=>{});}
   }
+  async function searchAdvanced(input:ChatQuery={}){
+    if(!(input.query||'').trim())return list(input);
+    const result=await searchInWorker(path,input);
+    const latency=result.elapsedMs;
+    const metric=timings.get('indexed-search')||{count:0,sum:0,max:0};
+    metric.count++;metric.sum+=latency;metric.max=Math.max(metric.max,latency);
+    timings.set('indexed-search',metric);
+    return {...result,revision:Number(getSetting('revision')||0),
+      selectedId:getSetting('selectedId')||null};
+  }
   const rebuildSearch=()=>write('fts-rebuild',()=>{
     db.prepare("INSERT INTO message_fts(message_fts) VALUES('rebuild')").run();
     setSetting('ftsRebuilt',now());return {ok:true};
@@ -391,15 +469,20 @@ export async function openSqliteChatArchive(dataDir:string){
         }
         setSetting('selectedId',legacy.list().selectedId||'');
         setSetting('jsonMigrated','yes');db.exec('COMMIT');
-      }catch(e){db.exec('ROLLBACK');db.close();throw e;}
+      }catch(e){db.exec('ROLLBACK');throw e;}
       await legacy.shutdown();
     }else setSetting('jsonMigrated','yes');
   }
   return {
     path,db,home,readOnly:()=>readOnly,lockWrites:(reason:string)=>{readOnly=true;warnings.push(reason);},
     warnings,timings,timed,getSetting,setSetting,write,
-    getConversation,formatConversation,visible,list,search:list,create,modify,select,
+    getConversation,formatConversation,visible,list,search:list,searchAdvanced,create,modify,select,
     saveMessage,page,exportLines,importLegacy,importStream,rebuildSearch,quickCheck,
-    shutdown:async()=>{if(!closed){closed=true;db.close();}}
+    shutdown:async()=>{if(!closed){closed=true;db.close();await releaseLock();}}
   };
+  }catch(e){
+    try{db.close();}catch{}
+    await releaseLock();
+    throw e;
+  }
 }

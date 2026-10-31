@@ -267,8 +267,11 @@ export async function createApp(root: string, instance: string, preview = false,
       if (path === chatRoot) {
         if (req.method === 'GET') {
           const query = new URL(req.url || '/', origin).searchParams;
-          try { return send(200, await chatArchive.search({ query: query.get('q') || '',
+          try { return send(200, await chatArchive.searchAdvanced({ query: query.get('q') || '',
             archived: query.get('archived') === '1',
+            mode: query.get('mode') === 'phrase' ? 'phrase' : query.get('mode') === 'exact' ? 'exact' : 'morphology',
+            typos: query.get('typos') === '1',
+            sort: query.get('sort') === 'date' ? 'date' : 'relevance',
             offset: Number(query.get('offset') || 0), limit: Number(query.get('limit') || 60) })); }
           catch (e) { return chatFailure(e); }
         }
@@ -317,6 +320,14 @@ export async function createApp(root: string, instance: string, preview = false,
         catch (e) { return chatFailure(e); }
       }
       // Archive maintenance stays in existing chat settings; no new site section.
+      if (path === '/api/assistant/archive/external') {
+        if (req.method === 'GET') return send(200, chatMaintenance.externalConfiguration());
+        if (req.method !== 'PUT') return send(405,{error:'Метод не поддерживается'});
+        const data = await readJson(req, send, 2000);
+        if (data === undefined) return;
+        try { return send(200, await chatMaintenance.configureExternal(data?.destination ?? null)); }
+        catch(e){return chatFailure(e);}
+      }
       if (path === '/api/assistant/archive/status') {
         if (req.method !== 'GET') return send(405,{error:'Метод не поддерживается'});
         try { return send(200, await chatMaintenance.statistics()); } catch(e) { return chatFailure(e); }

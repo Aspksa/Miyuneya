@@ -137,7 +137,22 @@
   const archiveToggle=document.createElement('button');archiveToggle.type='button';archiveToggle.textContent='Архив';
   const historyList=document.createElement('div');historyList.className='kitsune-history-list';
   const moreChats=document.createElement('button');moreChats.type='button';moreChats.textContent='Показать ещё';
-  historyPanel.append(searchHistory,newButton,archiveToggle,historyList,moreChats);
+  const searchMode=document.createElement('select');searchMode.className='kitsune-search-mode';
+  for(const [value,label] of [['morphology','Словоформы'],['exact','Точные слова'],['phrase','Точная фраза']]){
+    const option=document.createElement('option');option.value=value;option.textContent=label;
+    searchMode.append(option);
+  }
+  const searchSort=document.createElement('select');searchSort.className='kitsune-search-sort';
+  for(const [value,label] of [['relevance','По совпадению'],['date','По дате']]){
+    const option=document.createElement('option');option.value=value;option.textContent=label;
+    searchSort.append(option);
+  }
+  const searchTypos=document.createElement('label');searchTypos.className='kitsune-search-typos';
+  const searchTyposInput=document.createElement('input');searchTyposInput.type='checkbox';
+  searchTyposInput.checked=true;searchTypos.append(searchTyposInput,' Учитывать опечатки');
+  const searchOptions=document.createElement('div');searchOptions.className='kitsune-search-options';
+  searchOptions.append(searchMode,searchSort,searchTypos);
+  historyPanel.append(searchHistory,searchOptions,newButton,archiveToggle,historyList,moreChats);
   chatTools.insertBefore(historyButton,clearChat);
   chat.querySelector('.kitsune-chat-header').after(historyPanel);
   const moreMessages=document.createElement('button');moreMessages.type='button';
@@ -159,7 +174,8 @@
   async function fetchConversationList(){
     const ticket=++listRequest;
     const query=new URLSearchParams({offset:'0',limit:'60',q:searchHistory.value,
-      archived:showArchived?'1':'0'});
+      archived:showArchived?'1':'0',mode:searchMode.value,sort:searchSort.value,
+      typos:searchTyposInput.checked?'1':'0'});
     const data=await requestArchive(base+'?'+query);
     if(ticket!==listRequest)return;
     chatState.conversations=data.conversations;
@@ -169,7 +185,8 @@
   async function loadMoreConversations(){
     if(chatState.conversations.length>=chatState.total)return;
     const query=new URLSearchParams({offset:String(chatState.conversations.length),limit:'60',
-      q:searchHistory.value,archived:showArchived?'1':'0'});
+      q:searchHistory.value,archived:showArchived?'1':'0',
+      mode:searchMode.value,sort:searchSort.value,typos:searchTyposInput.checked?'1':'0'});
     const data=await requestArchive(base+'?'+query);
     chatState.conversations.push(...data.conversations);
     chatState.total=data.total;renderConversationList();
@@ -207,7 +224,12 @@
           setStatus(showArchived?'Разговор восстановлен.':'Разговор сохранён в архиве.');
         }catch(e){setStatus(e.message);}
       };
-      wrapper.append(select,rename,archive);historyList.append(wrapper);
+      wrapper.append(select,rename,archive);
+      if(row.matchSnippet && searchHistory.value.trim()){
+        const snippet=document.createElement('div');snippet.className='kitsune-history-snippet';
+        snippet.textContent=row.matchSnippet;wrapper.append(snippet);
+      }
+      historyList.append(wrapper);
     }
     moreChats.hidden=chatState.conversations.length>=chatState.total;
   }
@@ -222,6 +244,9 @@
     searchTimer=setTimeout(()=>void fetchConversationList().catch(e=>setStatus(e.message)),250);
   };
   moreChats.onclick=()=>void loadMoreConversations().catch(e=>setStatus(e.message));
+  for(const control of [searchMode,searchSort,searchTyposInput]){
+    control.addEventListener('change',()=>void fetchConversationList().catch(e=>setStatus(e.message)));
+  }
   archiveToggle.onclick=()=>{
     showArchived=!showArchived;
     archiveToggle.textContent=showArchived?'Обычные разговоры':'Архив';
@@ -772,8 +797,10 @@
       const mb=v=>(Number(v)/1048576).toFixed(1)+' МБ';
       const date=info.backupAt?new Date(info.backupAt).toLocaleString('ru-RU'):'ещё нет';
       overview.textContent='Диалогов: '+info.conversations+' · Сообщений: '+info.messages+
-        ' · База: '+mb(info.databaseBytes)+' · Вложения: '+info.attachments+
+        ' · База: '+mb(info.databaseBytes)+' · WAL: '+mb(info.walBytes)+
+        ' · Свободных страниц: '+info.unusedPages+' · Вложения: '+info.attachments+
         ' ('+mb(info.attachmentBytes)+') · Копий: '+info.backupCount+' ('+mb(info.backupBytes)+') · Последняя: '+date+
+        (info.lastExternalBackup?' · Внешняя копия: '+new Date(info.lastExternalBackup).toLocaleString('ru-RU'):'')+
         (info.warnings.length?' · Внимание: '+info.warnings.join(' / '):' · Всё в порядке');
     }
     refresh.onclick=()=>void refreshArchiveStatus().catch(e=>setStatus(e.message));
@@ -781,7 +808,8 @@
       check.disabled=true;backupNow.disabled=true;reindex.disabled=true;
       try{
         const data=await requestArchive('/api/assistant/archive/'+action,{method:'POST'});
-        setStatus(action==='backup'?'Резервная копия создана и проверена.':
+        setStatus(action==='backup'?(data.external?.ok===false?'Локальная копия сохранена. Внешний SSD: '+data.external.error:
+          'Резервная копия создана и проверена'+(data.external?.ok?' на двух дисках.':'.')):
           action==='rebuild'?'Поиск восстановлен.':
           data.ok?'Целостность базы подтверждена.':'Обнаружены проблемы с целостностью.');
         await refreshArchiveStatus();
@@ -791,7 +819,32 @@
     check.onclick=()=>void runMaintenance('check');
     backupNow.onclick=()=>void runMaintenance('backup');
     reindex.onclick=()=>void runMaintenance('rebuild');
-    tools.append(heading,overview,refresh,check,backupNow,reindex);
+    const externalHint=document.createElement('p');
+    externalHint.textContent='Независимая копия: укажите существующую папку другого диска (например E:\\Backup). При отключении SSD локальная копия сохраняется.';
+    const externalInput=document.createElement('input');externalInput.type='text';
+    externalInput.placeholder='E:\\Резервные копии';
+    externalInput.setAttribute('aria-label','Папка резервных копий на внешнем SSD');
+    externalInput.className='kitsune-external-path';
+    const externalSave=document.createElement('button');externalSave.type='button';
+    externalSave.textContent='Сохранить внешний диск';
+    externalSave.onclick=async()=>{
+      externalSave.disabled=true;
+      try{
+        const value=externalInput.value.trim();
+        const cfg=await requestArchive('/api/assistant/archive/external',
+          jsonOptions('PUT',{destination:value||null}));
+        externalInput.value=cfg.destination||'';
+        setStatus(cfg.configured?'Независимое резервирование включено.':'Независимый диск отключён в настройках.');
+        await refreshArchiveStatus();
+      }catch(e){setStatus('Внешний SSD: '+e.message);}
+      finally{externalSave.disabled=false;}
+    };
+    async function refreshExternal(){
+      if(!remoteChats)return;
+      const cfg=await requestArchive('/api/assistant/archive/external');
+      externalInput.value=cfg.destination||'';
+    }
+    tools.append(heading,overview,refresh,check,backupNow,reindex,externalHint,externalInput,externalSave);
     const attachmentsBox=document.createElement('div');attachmentsBox.className='kitsune-archive-tools';
     const filesTitle=document.createElement('strong');filesTitle.textContent='Вложения текущего разговора';
     const fileLabel=document.createElement('label');fileLabel.textContent='Добавить файл (до 15 МБ)';
@@ -828,7 +881,7 @@
     };
     attachmentsBox.append(filesTitle,fileLabel,fileList);
     chatPanel.append(tools,attachmentsBox);
-    void archiveReady.then(refreshArchiveStatus).catch(()=>{});
+    void archiveReady.then(()=>Promise.all([refreshArchiveStatus(),refreshExternal()])).catch(()=>{});
     openSettings.addEventListener('click',()=>{
       void refreshArchiveStatus().catch(()=>{});
       void refreshFiles().catch(()=>{});
