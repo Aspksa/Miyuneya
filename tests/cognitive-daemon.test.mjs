@@ -97,3 +97,15 @@ test('Batched updates keep only newest fingerprint without changing source memor
   assert.equal(memory.items[0].text,original);
   assert.ok(result.runs<=2,'coalesced updates avoid one process per fact');
 });
+
+test('Idle autonomous cycle traverses cold archive without promoting archival facts',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'Miyuneya archive background '));
+  const {memory}=sample();
+  const cold=[{...memory.items[0],id:'cold-fact',status:'inferred',source:'thought',text:'Проверить историческую поездку в Японию'}];
+  const pages=(offset,limit)=>({total:1,offset:offset%1,items:cold.slice(0,limit)});
+  const daemon=await openCognitiveDaemon(dir,()=>memory,pages,()=>true,60);
+  t.after(async()=>{await daemon.shutdown();await removeTemp(dir);});
+  const view=await settled(()=>daemon.overview(),s=>s.result?.growth?.archiveReviewed===1,12000);
+  assert.ok(view.result.growth.reviewed>view.result.growth.grounded);
+  assert.ok(!memory.items.some(x=>x.id==='cold-fact'),'analysis never adds archive items to live memory');
+});
