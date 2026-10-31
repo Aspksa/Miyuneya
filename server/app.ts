@@ -376,6 +376,15 @@ export async function createApp(root: string, instance: string, preview = false,
         try{return send(201,await chatMaintenance.saveAttachment(id,Buffer.concat(chunks),contentType,fileName,messageId));}
         catch(e){return chatFailure(e);}
       }
+      const jump = /^\/api\/assistant\/conversations\/([a-zA-Z0-9_-]{1,80})\/locate$/.exec(path);
+      if (jump) {
+        if (req.method !== 'GET') return send(405,{error:'Метод не поддерживается'});
+        const q=new URL(req.url||'/',origin).searchParams;
+        try { return send(200,chatArchive.locate(jump[1],{
+          messageId:q.get('messageId')||undefined,date:q.get('date')||undefined,limit:100
+        })); }
+        catch(e){return chatFailure(e);}
+      }
       const chatMatch = /^\/api\/assistant\/conversations\/([a-zA-Z0-9_-]{1,80})(\/messages)?$/.exec(path);
       if (chatMatch) {
         const id = chatMatch[1];
