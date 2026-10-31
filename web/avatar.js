@@ -179,7 +179,7 @@
     historyList.replaceChildren();
     for(const row of chatState.conversations){
       const wrapper=document.createElement('div');wrapper.className='kitsune-history-entry';
-      const select=document.createElement('button');select.type='button';select.textContent=row.title||'Без названия';
+      const select=document.createElement('button');select.type='button';select.textContent=(row.parentId?'↳ ':'')+(row.title||'Без названия');
       select.title=row.title;select.setAttribute('aria-current',String(row.id===chatState.selectedId));
       select.onclick=()=>void loadConversation(row.id).then(closeHistory)
         .catch(e=>setStatus('Не удалось открыть разговор: '+e.message));
@@ -409,6 +409,28 @@
       const name=bubble.querySelector('strong');
       name.textContent=item.role==='assistant'?(item.complete===false?'Миюнэя · ответ прерван':'Миюнэя'):'Вы';
       const body=bubble.querySelector('p');
+      if(item.id && remoteChats && chatState.selectedId){
+        let fork=bubble.querySelector('.kitsune-fork-message');
+        if(!fork){
+          fork=document.createElement('button');
+          fork.type='button';fork.className='kitsune-fork-message';
+          fork.textContent='Ответвить';
+          fork.title='Начать новую ветку с этого сообщения, сохранив исходный разговор';
+          bubble.append(fork);
+        }
+        fork.onclick=()=>{
+          if(stream){setStatus('Остановите ответ перед ветвлением.');return;}
+          const source=chatState.selectedId;
+          const title=prompt('Название новой ветки',firstTitle(history)+' — ветка');
+          if(title===null)return;
+          void (async()=>{
+            const created=await requestArchive(base,jsonOptions('POST',{
+              parentId:source,forkMessageId:item.id,title:title.slice(0,140)}));
+            await loadConversation(created.conversation.id);
+            setStatus('Создана ветка. Исходный разговор сохранён.');
+          })().catch(e=>setStatus('Ошибка ветвления: '+e.message));
+        };
+      }
       if(body.dataset.raw!==item.content){
         formatMessage(body,item.content);
         body.dataset.raw=item.content;
