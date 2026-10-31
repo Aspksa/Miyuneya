@@ -52,6 +52,7 @@ export async function openMemoryArchive(dataDir: string) {
     const allRows = db.prepare('SELECT kind,id,searchable,payload,tier FROM entries ORDER BY kind,id');
     const pageRows = db.prepare("SELECT kind,id,payload FROM entries WHERE tier=0 AND kind IN ('fact','rule') ORDER BY kind,id LIMIT ? OFFSET ?");
     const coldCount = db.prepare("SELECT count(*) AS total FROM entries WHERE tier=0 AND kind IN ('fact','rule')");
+    const getFact=db.prepare("SELECT payload FROM entries WHERE kind IN ('fact','rule') AND id=? LIMIT 1");
 
     let closed = false;
 
@@ -93,6 +94,11 @@ export async function openMemoryArchive(dataDir: string) {
       const take=Math.max(1,Math.min(80,Math.trunc(Number.isFinite(limit)?limit:48)));
       return {total,offset:start,items:(pageRows.all(take,start) as {kind:Kind;id:string;payload:string}[])
         .map(row=>JSON.parse(row.payload) as MemoryItem)};
+    }
+    function get(id:string):MemoryItem|undefined{
+      if(!/^[\\w-]{1,100}$/.test(id))return undefined;
+      const row=getFact.get(id) as {payload:string}|undefined;
+      return row?JSON.parse(row.payload) as MemoryItem:undefined;
     }
     function stats() {
       const count = { active: {facts:0,episodes:0,edges:0}, archived:{facts:0,episodes:0,edges:0} };
@@ -163,6 +169,6 @@ export async function openMemoryArchive(dataDir: string) {
     function unlink(from:string,to:string) {transaction(()=>{deleteEdgePair.run(from,to,to,from);});}
     function clear() {transaction(()=>{db.exec('DELETE FROM entries');});}
     function close(){if(!closed){closed=true;db.close();}}
-    return {compact,stats,page,search,recall,forget,erase,unlink,clear,close};
+    return {compact,stats,page,get,search,recall,forget,erase,unlink,clear,close};
   } catch (error) { db.close(); throw error; }
 }
