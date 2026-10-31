@@ -192,7 +192,26 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       store.setSetting('backupCount',String(Number(store.getSetting('backupCount')||0)+1));
       store.setSetting('backupBytes',String(Number(store.getSetting('backupBytes')||0)+bytes));
       store.setSetting('lastBackup',info.createdAt);
-      return {ok:true,directory:finalDir,attachments:rows.length,
+      const destination=store.getSetting('externalBackupPath');
+      let external:{ok:boolean;directory?:string;error?:string}|null=null;
+      if(destination){
+        const externalPending=join(destination,'pending-'+suffix);
+        try{
+          await ensureSpace(destination,bytes*1.2,'независимая копия на внешнем SSD');
+          await cp(finalDir,externalPending,{recursive:true,force:false,errorOnExist:true});
+          const other=await verifyBackup(externalPending);
+          if(!other.ok)throw Error('Внешняя копия не прошла проверку SHA-256: '+other.issues.join('; '));
+          const finalExternal=join(destination,suffix);
+          await rename(externalPending,finalExternal);
+          store.setSetting('lastExternalBackup',now());
+          external={ok:true,directory:finalExternal};
+        }catch(e){
+          await rm(externalPending,{recursive:true,force:true}).catch(()=>{});
+          external={ok:false,error:(e as Error).message};
+          warnings.push('Внешний SSD: '+external.error+'. Локальная копия сохранена.');
+        }
+      }
+      return {ok:true,directory:finalDir,external,attachments:rows.length,
         durationMs:Math.round(performance.now()-started)};
     }catch(e){
       await rm(pendingDir,{recursive:true,force:true}).catch(()=>{});
@@ -236,22 +255,42 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
       const files=db.prepare('SELECT COUNT(*) n,COALESCE(SUM(byte_size),0) bytes FROM attachments').get() as Row;
       const pages=Number((db.prepare('PRAGMA page_count').get() as Row).page_count);
       const pageSize=Number((db.prepare('PRAGMA page_size').get() as Row).page_size);
+      const freePages=Number((db.prepare('PRAGMA freelist_count').get() as Row).freelist_count);
       return {conversations:chatCount,messages,attachments:Number(files.n),
-        attachmentBytes:Number(files.bytes),databaseBytes:pages*pageSize};
+        attachmentBytes:Number(files.bytes),databaseBytes:pages*pageSize,
+        unusedPages:freePages};
     });
+    const [dbFile,walFile,shmFile]=await Promise.all([
+      stat(store.path).catch(()=>null),
+      stat(store.path+'-wal').catch(()=>null),
+      stat(store.path+'-shm').catch(()=>null),
+    ]);
+    const dbFileBytes=dbFile?.size||0,walBytes=walFile?.size||0,shmBytes=shmFile?.size||0;
     const disk=await statfs(store.home).catch(()=>null);
     const freeBytes=disk?Number(disk.bavail)*Number(disk.bsize):null;
     const backupAt=store.getSetting('lastBackup')||null;
-    const alerts=[...new Set(warnings)];
+    if(warnings.length>100)warnings.splice(0,warnings.length-100);
+    const alerts=[...new Set(warnings)].slice(-20);
     if(freeBytes!==null&&freeBytes<512*1024*1024)alerts.push('На диске осталось менее 512 МБ.');
     if(info.messages&&(!backupAt||Date.now()-Date.parse(backupAt)>48*3600_000))
       alerts.push('Нет свежей проверенной резервной копии за последние 48 часов.');
+    const old=store.getSetting('growthBaseline');
+    try{
+      const previous=JSON.parse(old||'null');
+      if(previous&&previous.bytes>0&&dbFileBytes>previous.bytes*1.75
+        &&info.messages<=previous.messages*1.1+15)
+        alerts.push('SQLite резко вырос без сопоставимого увеличения количества сообщений.');
+    }catch{alerts.push('Не удалось прочитать контрольную статистику роста SQLite.');}
+    const externalPath=store.getSetting('externalBackupPath')||null;
+    if(externalPath&&!store.getSetting('lastExternalBackup'))
+      alerts.push('Внешний SSD подключён к резервированию, но проверенной внешней копии ещё нет.');
     const slow=[...store.timings].map(([name,v])=>({
       name,calls:v.count,averageMs:Math.round(v.sum/v.count*100)/100,maxMs:Math.round(v.max*100)/100
     })).sort((a,b)=>b.maxMs-a.maxMs).slice(0,12);
     if(slow.some(x=>x.name==='save'&&x.maxMs>500))
       alerts.push('Запись сообщений выполнялась дольше 500 мс. Проверьте состояние диска.');
-    return {...info,freeBytes,backupAt,
+    return {...info,freeBytes,backupAt,dbFileBytes,walBytes,shmBytes,
+      externalBackupPath:externalPath,lastExternalBackup:store.getSetting('lastExternalBackup')||null,
       backupCount:Number(store.getSetting('backupCount')||0),
       backupBytes:Number(store.getSetting('backupBytes')||0),
       readOnly:store.readOnly(),wal:true,
@@ -261,7 +300,15 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
     if(stopped||active)return;
     const lastCheck=store.getSetting('lastCheck');
     try{
-      if(!lastCheck||Date.now()-Date.parse(lastCheck)>24*3600_000)await check();
+      if(!lastCheck||Date.now()-Date.parse(lastCheck)>24*3600_000){
+        await check();
+        const current=await statistics();
+        store.setSetting('growthBaseline',JSON.stringify({
+          bytes:current.dbFileBytes,messages:current.messages,at:now()
+        }));
+        const optimized=await background('optimize');
+        if(!optimized.ok)warnings.push('Не удалось обновить статистику индексов SQLite.');
+      }
       const last=store.getSetting('lastBackup');
       if(!last||Date.now()-Date.parse(last)>24*3600_000)await backupNow();
     }catch(e){warnings.push('Проверка архивов не завершилась: '+(e as Error).message);}
@@ -274,7 +321,7 @@ export function openChatMaintenance(store:Store,dataDir:string,{automatic=true}=
   if(automatic)schedule(12000);
   return {
     saveAttachment,listAttachments,attachment,backupNow,verifyBackup,latestBackup,check,statistics,
-    reindex,
+    reindex,configureExternal,externalConfiguration,inspectAttachments,
     shutdown:async()=>{stopped=true;if(timer)clearTimeout(timer);
       await Promise.allSettled([...workers].map(worker=>worker.terminate()));
       if(active)await active;}
