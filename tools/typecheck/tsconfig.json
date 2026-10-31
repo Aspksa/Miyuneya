@@ -3,11 +3,12 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "typeRoots": ["./node_modules/@types"],
     "strict": true,
     "noImplicitAny": false,
+    "useUnknownInCatchVariables": false,
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true
