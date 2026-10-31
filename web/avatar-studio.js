@@ -13,6 +13,11 @@
   for(const k of ['framing','vertical'])if(Number.isFinite(value[k]))config[k]=Math.max(k==='framing'?100:0,Math.min(k==='framing'?180:100,value[k]));
   for(const k of ['trim','gold','dragEase'])if(typeof value[k]==='boolean')config[k]=value[k];
   let db=null, urls=[],lastSelected=null;
+  const thumbnailURLs=new Set();
+  function releaseThumbnails(){
+    for(const url of thumbnailURLs)URL.revokeObjectURL(url);
+    thumbnailURLs.clear();
+  }
   const message=$('kitsune-library-message'),diagnostic=$('kitsune-image-diagnostic');
   const grid=$('kitsune-library-grid');
   function notify(text,kind=''){if(message){message.textContent=text;message.dataset.kind=kind}}
@@ -88,10 +93,17 @@
       throw Error('Поддерживаются PNG, JPG, WebP и GIF до 15 МБ.');
     const img=await decode(file),rect=bounds(img,trim);
     const variants=[];
+    const seenSizes=new Set();
     for(const size of [192,384,768,1536]){
-      const blob=await webp(img,rect,size,size<=384?.9:.94);
+      // Small originals must not produce four identical srcset descriptors.
       const scale=Math.min(1,size/Math.max(rect.w,rect.h));
-      variants.push({width:Math.max(1,Math.round(rect.w*scale)),blob});
+      const width=Math.max(1,Math.round(rect.w*scale));
+      const height=Math.max(1,Math.round(rect.h*scale));
+      const dimensions=width+'x'+height;
+      if(seenSizes.has(dimensions))continue;
+      seenSizes.add(dimensions);
+      const blob=await webp(img,rect,size,size<=384?.9:.94);
+      variants.push({width,blob});
     }
     return {original:file,preview:variants[0].blob,variants,
       width:img.naturalWidth,height:img.naturalHeight,crop:rect};
@@ -159,8 +171,18 @@
 
   async function choose(id){
     const row=await get(id);if(!row)throw Error('Образ не найден');
+    if(!(row.original instanceof Blob) || !Array.isArray(row.variants)) throw Error('Повреждённая запись образа.');
+    // Older library entries may have duplicate width descriptors. De-duplicate
+    // on reading as well as at creation so migrated images keep rendering.
+    const candidates=new Map();
+    for(const v of row.variants){
+      if(Number.isSafeInteger(v?.width) && v.width>0 && v.blob instanceof Blob)
+        candidates.set(v.width,v.blob);
+    }
+    if(!candidates.size)throw Error('Нет доступных вариантов изображения.');
     releaseURLs();
-    const srcset=row.variants.map(v=>useURL(v.blob)+' '+v.width+'w').join(', ');
+    const srcset=[...candidates.entries()].sort((a,b)=>a[0]-b[0])
+      .map(([width,blob])=>useURL(blob)+' '+width+'w').join(', ');
     const original=useURL(row.original);
     // Set sizes for actual on-screen avatar width, not the 4K monitor width.
     image.sizes='(max-width: 450px) 160px, 300px';
@@ -173,6 +195,7 @@
   async function renderLibrary(){
     if(!grid||!db)return;
     const rows=await all();
+    releaseThumbnails();
     grid.replaceChildren();
     const builtin=document.createElement('button');builtin.type='button';builtin.className='kitsune-library-card';
     const builtImg=document.createElement('img');builtImg.src='/avatars/hayumeri-kitsune.avif';builtImg.alt='';
@@ -183,8 +206,13 @@
     grid.append(builtin);
     for(const row of rows.slice(0,20)){
       const b=document.createElement('button');b.type='button';b.className='kitsune-library-card';
-      const thumbnail=document.createElement('img');thumbnail.alt='';thumbnail.src=URL.createObjectURL(row.preview);
-      thumbnail.onload=()=>URL.revokeObjectURL(thumbnail.src);
+      const thumbnail=document.createElement('img');thumbnail.alt='';
+      const thumbURL=URL.createObjectURL(row.preview);
+      thumbnailURLs.add(thumbURL);
+      const releaseThumb=()=>{URL.revokeObjectURL(thumbURL);thumbnailURLs.delete(thumbURL);};
+      thumbnail.onload=releaseThumb;
+      thumbnail.onerror=releaseThumb;
+      thumbnail.src=thumbURL;
       const title=document.createElement('span');title.textContent=row.name.slice(0,40);
       b.append(thumbnail,title);b.setAttribute('aria-pressed',String(lastSelected===row.id));
       b.onclick=()=>void choose(row.id).catch(e=>notify(e.message,'error'));
@@ -244,5 +272,16 @@
     }catch(e){notify('Библиотека недоступна: '+(e?.message||'Проверьте настройки браузера'),'error');}
   }
   void initialize();
-  window.addEventListener('beforeunload',releaseURLs,{once:true});
+  $('kitsune-settings-reset')?.addEventListener('click',()=>{
+    // The reset button promises to restore appearance, including options
+    // introduced by the studio (which are stored separately from the chat).
+    config={...defaults};
+    setFraming();
+    notify('Параметры кадрирования и эффектов восстановлены.');
+  });
+  window.addEventListener('beforeunload',()=>{
+    releaseURLs();
+    releaseThumbnails();
+    db?.close();
+  },{once:true});
 })();
