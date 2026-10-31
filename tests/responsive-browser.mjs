@@ -151,6 +151,9 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90�
   await evalJS('document.getElementById("brain-nav-link").click()');
   await evalJS('new Promise(resolve=>setTimeout(resolve,40))');
   assert.equal(await evalJS('document.getElementById("brain-workspace").hidden'),false);
+  assert.equal(await evalJS("document.querySelector('.brain-cognitive-open').getAttribute('href')"),'/workspace#cognitive');
+  assert.equal(await evalJS("document.getElementById('brain-heading').textContent"),'Мозги Hayumeri');
+  assert.equal(await evalJS("document.getElementById('brain-cognitive-stats') !== null"),true);
   assert.equal(await evalJS('document.getElementById("brain-nav-link").getAttribute("aria-current")'),'page');
   assert.equal(await evalJS('document.title'),'Мозги Hayumeri');
   await evalJS('document.querySelector(".brain-back-link").click()');

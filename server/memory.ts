@@ -6,6 +6,7 @@ import type { Workspace } from '../src/model.ts';
 import { tokens, overlap, similarity, strength, expired, memoryContext, searchTexts, FORGET_BELOW, entityNames, relationNames, categoryNames, reminderLine, today, nextStepsOf } from './recall.ts';
 import type { Titles } from './recall.ts';
 import { growth } from './growth.ts';
+import { buildCognitiveSnapshot, cognitiveContext } from './cognitive.ts';
 import { GOAL_PROMPT } from './logic.ts';
 import { canonical, compatible, digest, strictDate, evidence, savedEvidence, memoryResult, SOURCE_PROMPT } from './integrity.ts';
 import type { Evidence, Source } from './integrity.ts';
@@ -1072,6 +1073,7 @@ export async function openMemory(dataDir: string, options: Options) {
       episodes: [...memory.episodes].reverse(), entities: memory.entities.map(e => ({ ...e, degree: degree.get(e.id) || 0 })), edges: memory.edges,
       diary: [...memory.diary].reverse(), journal: [...memory.journal].reverse(),
       history:memory.history || [], noteProgress:memory.noteProgress || {}, topics: memory.topics, understanding: memory.understanding, questions: memory.questions, growth: growth(memory, now),
+      cognitive: buildCognitiveSnapshot(memory, now),
       reminders: [...memory.reminders].reverse(), promises: [...memory.promises].reverse(),
       causes: [...memory.causes].sort((a, b) => b.hits - a.hits || b.confidence - a.confidence), goals: [...memory.goals].reverse().map(g => ({ ...g, next: nextStepsOf(g).map(s => s.id) })),
       predictions: [...memory.predictions].reverse(), mistakes: [...memory.mistakes].reverse(),
@@ -1095,8 +1097,9 @@ export async function openMemory(dataDir: string, options: Options) {
         ? memory.questions.filter(q => q.asked < 3).sort((a, b) => a.asked - b.asked || a.created.localeCompare(b.created))[0] : undefined;
       const thoughts = memory.thoughts.filter(t => !t.seen).slice(-3).map(t => t.text);
       const context = memoryContext(memory, query, titles(), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text, latest, thoughts });
+      const cognitive = cognitiveContext(memory, query, now);
       if (question && context.includes(question.text)) { question.asked++; question.lastAsked = new Date(now).toISOString(); await save(); }
-      return context;
+      return [context, cognitive].filter(Boolean).join('\n\n');
     },
     // A reminder fires once, after the answer that carried it was delivered; it stays in the list as done.
     async delivered(context: string, answer: string = '') {

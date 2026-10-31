@@ -804,3 +804,18 @@ input[type="color"]:focus-visible, input[type="range"]:focus-visible,
   .brain-neuron { fill: Highlight; stroke: CanvasText; }
   .brain-workspace { forced-color-adjust: auto; }
 }
+
+/* Actual Cognitive Memory module in Hayumeri's brain hub. */
+.brain-cognitive-stats{display:flex;justify-content:center;align-items:center;margin:18px auto 6px;
+  min-height:43px;max-width:100%;padding:9px 14px;border:1px solid var(--line);
+  background:var(--icon-hover);border-radius:12px;color:var(--text);font-weight:630;
+  font-size:.87em;line-height:1.45;overflow-wrap:anywhere}
+.brain-cognitive-open{display:inline-flex;align-items:center;justify-content:center;min-height:45px;
+  margin:12px auto 9px;padding:10px 18px;border-radius:12px;
+  text-decoration:none;color:#fff;background:#6554b5;box-shadow:0 5px 15px rgba(91,77,170,.17);
+  font-size:.94em;font-weight:680;transition:filter .16s,transform .16s}
+.brain-cognitive-open:hover{filter:brightness(1.1)}
+.brain-cognitive-open:focus-visible{outline:3px solid var(--focus-ring);outline-offset:3px}
+.brain-empty-state .brain-cognitive-footnote{font-size:.8em;max-width:44ch}
+@media(max-width:420px){.brain-cognitive-stats{font-size:.76em;padding:8px 9px}.brain-cognitive-open{max-width:100%}}
+@media(prefers-reduced-motion:reduce){.brain-cognitive-open{transition:none}}
