@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
 import { atomicWrite, readJSON, removeTree, retryFile } from './runtime.mjs';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-const allowed = /^(?:src\/[a-zA-Z0-9_-]+\.ts|server\/(?:app|memory|memory-archive|cognitive|cognitive-daemon|cognitive-jobs|cognitive-notebook|cognitive-curiosity|cognitive-learning|recall|growth|logic|disk|integrity|workflows|chat-[a-z0-9-]+)\.ts|scripts\/(?:serve|cognitive-worker|cognitive-growth|chat-(?:archive|search)-worker)\.mjs|web\/(?:blank\.(?:html|css|js)|unified-ui\.css|workspace-layout\.css|avatar-layout\.css|avatar-experience\.css|avatar-state\.js|chat-format\.js|chat-attachments\.js|avatar(?:-studio)?\.(?:css|js)|index\.html|style\.css|fox\.svg|favicon\.svg|avatars\/avatar[1-4]\.png))$/;
+export const allowed = /^(?:src\/[a-zA-Z0-9_-]+\.ts|server\/[a-zA-Z0-9_-]+\.ts|scripts\/(?:serve|cognitive-worker|cognitive-growth|chat-(?:archive|search)-worker)\.mjs|web\/(?:[a-zA-Z0-9_-]+\.(?:html|css|js|svg)|avatars\/(?:avatar[1-4]\.png|hayumeri-kitsune\.avif)))$/;
 async function plainPath(root,relative,missing=false) {
   const pieces=relative.split('/');
   for(let i=1;i<=pieces.length;i++) {
@@ -85,6 +85,7 @@ export async function updateManager(root,logger) {
       const installed=join(area,'installed-'+randomUUID());
       await retryFile(()=>rename(pending,installed));
       await removeTree(transaction);
+      await atomicWrite(join(area,'current.json'),JSON.stringify({version:manifest.version,installedAt:new Date().toISOString()}));
       await logger.log('update','first-health-passed');
     }
   };
