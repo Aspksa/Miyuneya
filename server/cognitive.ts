@@ -141,7 +141,7 @@ export function buildCognitiveSnapshot(memory: Memory, now = Date.now()): Cognit
 }
 
 /** Relevance-gated, bounded contextual recall. Never presents a derived link as a new fact. */
-export function cognitiveContext(memory: Memory, query: string, now = Date.now()) {
+export function cognitiveContext(memory: Memory, query: string, now = Date.now(), strategy: 'lexical' | 'graph' = 'lexical') {
   if (!memory.settings.enabled || !query.trim()) return '';
   const q = tokens(query);
   if (!q.size) return '';
@@ -150,7 +150,7 @@ export function cognitiveContext(memory: Memory, query: string, now = Date.now()
     .map(a => {
       const left = tokens(a.left.text), right = tokens(a.right.text);
       const match = overlap(q, left) + overlap(q, right);
-      return { a, match };
+      return { a, match: match > 0 ? match + (strategy === 'graph' && a.kind === 'direct' ? 0.35 : 0) : 0 };
     }).filter(x => x.match > 0)
     .sort((a, b) => b.match - a.match || b.a.observedAt.localeCompare(a.a.observedAt))
     .slice(0, 3);
