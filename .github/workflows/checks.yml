@@ -30,6 +30,11 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm test
       - run: npm run check
+      - name: Строгая проверка TypeScript (только CI, не требуется при запуске)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          npm install --prefix tools/typecheck --no-audit --no-fund
+          npm run typecheck
       - name: Проверка HiDPI в Chromium — 320 px до 5K, скриншоты
         if: matrix.os == 'ubuntu-latest'
         run: node --test tests/responsive-browser.mjs
