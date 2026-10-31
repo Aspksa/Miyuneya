@@ -333,7 +333,7 @@ document.querySelector('#editor-form')!.addEventListener('submit', async event=>
 });
 for(const id of ['close-editor','cancel-editor']) document.querySelector('#'+id)!.addEventListener('click',()=>editor.close());
 window.addEventListener('resize',()=>{app.querySelector('.shell')?.classList.toggle('miyu-nav-compact',sidebarCollapsed());});
-window.addEventListener('hashchange',()=>{page=getPage();render(true);window.scrollTo(0,0);if(page==='disk'&&!disk.loaded())void disk.load();if(page==='settings'){void workbench.loadWorkflows();if(ai.configured&&!aiModels)void loadModels(false);}if(location.hash==='#diary') openDiary();});
+window.addEventListener('hashchange',()=>{page=getPage();render(true);window.scrollTo(0,0);if(page==='disk'&&!disk.loaded())void disk.load();if(page==='settings'){void workbench.loadWorkflows();if(ai.configured&&!aiModels)void loadModels(false);}if(location.hash==='#diary') openDiary();else if(location.hash==='#cognitive')openCognitive();});
 window.addEventListener('beforeunload', event=>{ if(saving || saveError || disk.busy()) {event.preventDefault();event.returnValue='';} });
 document.addEventListener('keydown',event=>{
   const target=event.target as HTMLElement;
@@ -357,6 +357,7 @@ async function toggleTask(id:string,done:boolean){if(saving||fatal)return;const 
 async function reloadWorkspace(){if(saving||saveError||fatal)return;try{const r=await fetch('/api/workspace');const next=await r.json();if(!r.ok||!validateWorkspace(next.data))return;data=next.data;revision=next.revision;committedData=JSON.stringify(data);render();}catch{toast('Файл сохранён, но список записей пока не обновился.');}}
 // The diary now lives in the memory menu; old #diary links open it there.
 function openDiary() { history.replaceState(null,'','#notes'); memoryPanel.open('diary'); }
+function openCognitive() { history.replaceState(null,'','#notes'); page='notes'; render(); memoryPanel.open('cognitive'); }
 try {
   const response=await fetch('/api/workspace'); if(!response.ok) throw new Error('Сервер вернул ошибку.');
   const saved=await response.json();
@@ -384,7 +385,7 @@ assistant={
 };
 void memoryPanel.load();
 if(page==='settings' && ai.configured) void loadModels(false);
-if(location.hash==='#diary') openDiary();
+if(location.hash==='#diary') openDiary();else if(location.hash==='#cognitive')openCognitive();
 
 app.addEventListener('dragover',event=>{if((event.target as HTMLElement).closest('[data-disk-drop]')){event.preventDefault();}});
 app.addEventListener('drop',event=>{if((event.target as HTMLElement).closest('[data-disk-drop]')){event.preventDefault();if(event.dataTransfer?.files)void disk.upload(event.dataTransfer.files);}});
