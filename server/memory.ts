@@ -914,7 +914,8 @@ export async function openMemory(dataDir: string, options: Options) {
   // database reads remain in the parent process, never inside the worker.
   let lastActivity=Date.now();
   const cognitiveDaemon = await openCognitiveDaemon(dataDir,()=>memory,
-    (offset,limit)=>archive.page(offset,limit),()=>Date.now()-lastActivity>=idleMs);
+    (offset,limit)=>archive.page(offset,limit),()=>Date.now()-lastActivity>=idleMs,
+    60_000,(id)=>memory.items.find(x=>x.id===id)||archive.get(id));
   // Once, re-scan legacy notes: a global timestamp could previously skip unprocessed batches.
   memory.noteVersions ||= {};
   const key = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
@@ -1111,7 +1112,8 @@ export async function openMemory(dataDir: string, options: Options) {
       const context = memoryContext(memory, query, titles(), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text, latest, thoughts });
       const cognitive = cognitiveContext(memory, query, now, cognitiveDaemon.strategy());
       if (question && context.includes(question.text)) { question.asked++; question.lastAsked = new Date(now).toISOString(); await save(); }
-      return [context, cognitive, memory.settings.enabled ? archive.recall(query,now) : ''].filter(Boolean).join('\n\n');
+      return [context, cognitive, memory.settings.enabled&&!memory.settings.private?cognitiveDaemon.context(query):'',
+        memory.settings.enabled ? archive.recall(query,now) : ''].filter(Boolean).join('\n\n');
     },
     // A reminder fires once, after the answer that carried it was delivered; it stays in the list as done.
     async delivered(context: string, answer: string = '') {

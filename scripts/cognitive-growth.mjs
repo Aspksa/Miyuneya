@@ -172,8 +172,9 @@ export function analyzeGrowth(snapshot,now=Date.now()){
     for(const x of subset)for(const w of tokens.get(x.id)||[])frequency.set(w,(frequency.get(w)||0)+1);
     const tops=[...frequency].filter(([,n])=>n>=3).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0])).slice(0,4);
     for(const [term,n] of tops)if(proposals.length<12)
-      proposals.push({title:term,category,records:n,status:'candidate',
-        reason:'Повторяющаяся тема в подтверждённых записях'});
+      proposals.push({title:term,category,records:n,
+        ids:subset.filter(x=>tokens.get(x.id)?.has(term)).map(x=>x.id).slice(0,30),
+        status:'candidate',reason:'Повторяющаяся тема в подтверждённых записях'});
   }
   const mistakes=(snapshot.mistakes||[]).slice(-50),history=(snapshot.history||[]).slice(-50);
   const feedback={corrected:history.filter(x=>x.reason?.includes('пользовател')).length,
