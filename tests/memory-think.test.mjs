@@ -94,14 +94,14 @@ test('Memory over HTTP thinks while the user is away, within the daily limit', a
 
 test('Thinking waits after a start, keeps the limit for queued requests and respects the settings', async t => {
   const root=await mkdtemp(join(tmpdir(),'Miyuneya очередь '));
-  t.after(()=>removeTemp(root));
+  let store;
+  t.after(async()=>{await store?.shutdown();await removeTemp(root);});
   const memory=emptyMemory();memory.settings.intensity='low';
   for(const text of ['Любит чай','Работает дизайнером','Живёт во Владивостоке']) upsert(memory,'fact',text);
   await writeFile(join(root,'memory.json'),JSON.stringify(memory));
   let calls=0;
-  const store=await openMemory(root,{available:()=>true,workspace:()=>null,tickMs:3_600_000,thinkIdleMs:60_000,
+  store=await openMemory(root,{available:()=>true,workspace:()=>null,tickMs:3_600_000,thinkIdleMs:60_000,
     ask:async()=>{calls++;await new Promise(r=>setTimeout(r,20));return JSON.stringify({thoughts:[{kind:'idea',text:`Мысль ${calls}: ${['план недели','отпуск','книги'][calls-1]}`}]});}});
-  t.after(()=>store.shutdown());
   // Opening the app means the user is here, so the first tick does not start thinking.
   await store.tick();assert.equal(calls,0);
   await store.tick(Date.now()+61_000);assert.equal(calls,1);
