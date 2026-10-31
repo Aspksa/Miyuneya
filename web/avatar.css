@@ -698,3 +698,20 @@
   .kitsune-chat-tools #kitsune-clear {display:none;}
 }
 .kitsune-avatar.no-glow {filter:none!important;}
+
+/* Fix inherited two-column form grid at 320px: labels must not collapse into letters. */
+.kitsune-settings .kitsune-new-control{
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  width:100%;
+}
+.kitsune-settings .kitsune-new-control > span,
+.kitsune-settings .kitsune-new-control > select {
+  grid-column:1 / -1;
+  width:100%;
+  min-width:0;
+}
+.kitsune-settings .kitsune-new-control > span {
+  overflow-wrap:normal;
+  word-break:normal;
+}
