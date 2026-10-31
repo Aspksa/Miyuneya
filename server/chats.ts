@@ -64,10 +64,10 @@ export async function openChats(dataDir: string) {
     }
     const now=new Date().toISOString();
     if(active&&overlap){
-      active.messages=[...active.messages,...messages.slice(overlap),{role:'assistant',content:answer}].slice(-400);
+      active.messages=[...active.messages,...messages.slice(overlap),{role:'assistant' as const,content:answer}].slice(-400);
       active.updatedAt=now;
     }else{
-      const d:Dialog={id:randomUUID(),title:messages.find(m=>m.role==='user')?.content.slice(0,80).trim()||'Новый разговор',createdAt:now,updatedAt:now,messages:[...messages,{role:'assistant',content:answer}].slice(-400)};
+      const d:Dialog={id:randomUUID(),title:messages.find(m=>m.role==='user')?.content.slice(0,80).trim()||'Новый разговор',createdAt:now,updatedAt:now,messages:[...messages,{role:'assistant' as const,content:answer}].slice(-400)};
       if(current.dialogs.length>=60)return false;
       current.dialogs.unshift(d);current.activeId=d.id;
     }
