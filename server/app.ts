@@ -293,7 +293,7 @@ export async function createApp(root: string, instance: string, preview = false,
         try { return send(201, { avatar: await vault.addAvatar(bytes, type, name, typeof id === 'string' ? id : undefined) }); }
         catch (e) { return send((e as { status?: number }).status || 500, { error: (e as Error).message }); }
       }
-      const libraryId = /^\\/api\\/assistant\\/avatars\\/([a-zA-Z0-9_-]{1,80})$/.exec(path)?.[1];
+      const libraryId = /^\/api\/assistant\/avatars\/([a-zA-Z0-9_-]{1,80})$/.exec(path)?.[1];
       if (libraryId) {
         if (req.method === 'DELETE') {
           try { return send(await vault.removeAvatar(libraryId) ? 200 : 404, { ok: true }); }
