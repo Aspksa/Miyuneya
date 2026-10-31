@@ -168,3 +168,16 @@ test('Статистика доступна без сканирования со
   assert.ok(status.warnings.some(x=>x.includes('резервной копии')));
   await m.shutdown();await db.shutdown();
 });
+
+test('Глубокая проверка в Worker исправляет FTS5 без блокировки основного чата',async t=>{
+  const root=await temporary(t),db=await openSqliteChatArchive(root);
+  const maintenance=openChatMaintenance(db,root,{automatic:false});
+  db.create({id:'worker'});db.saveMessage('worker',msg('worker-msg','Документы транспорта'));
+  db.db.exec("INSERT INTO message_fts(message_fts) VALUES('delete-all')");
+  assert.equal(db.quickCheck().ftsHealthy,false);
+  const status=await maintenance.check();
+  assert.equal(status.ok,true);
+  assert.equal(status.repaired,true);
+  assert.equal(db.search({query:'Документы транспорта'}).total,1);
+  await maintenance.shutdown();await db.shutdown();
+});
