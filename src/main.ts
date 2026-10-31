@@ -59,6 +59,19 @@ let aiBusy = false;
 let assistant: { draft(text: string): void; refresh(): void } | undefined;
 let memoryMode = { enabled: true, private: false };
 const pageNames: Record<Page,string> = { notes:'Заметки и задачи', disk:'Диск', settings:'Настройки' };
+const sidebarLayoutKey=()=> 'miyuneya.sidebar.'+(window.matchMedia('(max-width:620px)').matches?'phone':'desktop')+'.v1';
+const sidebarCollapsed=()=>{
+  try{return window.localStorage.getItem(sidebarLayoutKey())==='compact';}
+  catch{return false;}
+};
+function setSidebarCollapsed(value:boolean){
+  try{window.localStorage.setItem(sidebarLayoutKey(),value?'compact':'expanded');}catch{}
+  const shell=app.querySelector('.shell');
+  shell?.classList.toggle('miyu-nav-compact',value);
+  const button=app.querySelector<HTMLButtonElement>('[data-collapse-nav]');
+  if(button){button.setAttribute('aria-pressed',String(value));button.setAttribute('aria-label',value?'Развернуть боковое меню':'Свернуть боковое меню');}
+}
+
 // Old #home and #tasks links land on the shared list.
 function getPage(): Page { const hash = location.hash.slice(1); return hash === 'settings' || hash === 'disk' ? hash : 'notes'; }
 function toast(message: string) {
@@ -120,7 +133,7 @@ function settings() {
 function render(focus = false) {
   applyTheme();
   const count = data.notes.length + data.tasks.filter(t => !t.done).length;
-  app.innerHTML = `<div class="shell"><aside class="sidebar" id="sidebar"><nav class="nav" aria-label="Основная навигация"><a href="#notes" data-tip="${pageNames.notes}" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span>${count?`<span class="count" aria-label="записей: ${count}">${count}</span>`:''}</a><a href="#disk" data-tip="Диск документов" class="${page==='disk'?'active':''}" ${page==='disk'?'aria-current="page"':''}>${navIcon('disk')}<span class="nav-text">Диск документов</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" data-tip="${pageNames.settings}" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">${pageNames.settings}</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Общий поиск по пространству" placeholder="Заметки, задачи и документы" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button><button class="icon-button memory-toggle ${memoryMode.private?'private':''} ${memoryMode.enabled?'':'off'}" data-memory-toggle aria-label="Память помощницы" title="Память Миюнэи" aria-haspopup="dialog" aria-expanded="${memoryPanel.isOpen()}">${icon('brain')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${workbench.toolbar()}${page!=='settings'?workbench.recent():''}${page==='disk'?disk.html(query):({notes,settings})[page]()}</main></div></div>`;
+  app.innerHTML = `<div class="shell ${sidebarCollapsed()?'miyu-nav-compact':''}"><aside class="sidebar" id="sidebar"><button class="miyu-nav-collapse" type="button" data-collapse-nav aria-pressed="${sidebarCollapsed()}" aria-label="${sidebarCollapsed()?'Развернуть боковое меню':'Свернуть боковое меню'}"><span class="miyu-collapse-icon">☰</span><span>Свернуть меню</span></button><nav class="nav" aria-label="Основная навигация"><a href="/" title="Главная Miyuneya" data-tip="Главная">${navIcon('home')}<span class="nav-text">Главная</span></a><a href="/#brains" title="Мозги Hayumeri" data-tip="Мозги Hayumeri">${navIcon('brain')}<span class="nav-text">Мозги Hayumeri</span></a><a href="#notes" data-tip="${pageNames.notes}" class="${page==='notes'?'active':''}" ${page==='notes'?'aria-current="page"':''}>${navIcon('navNotes')}<span class="nav-text">${pageNames.notes}</span>${count?`<span class="count" aria-label="записей: ${count}">${count}</span>`:''}</a><a href="#disk" data-tip="Диск документов" class="${page==='disk'?'active':''}" ${page==='disk'?'aria-current="page"':''}>${navIcon('disk')}<span class="nav-text">Диск документов</span></a></nav><div class="sidebar-bottom"><nav class="nav" aria-label="Параметры"><a href="#settings" data-tip="${pageNames.settings}" class="${page==='settings'?'active':''}" ${page==='settings'?'aria-current="page"':''}>${navIcon('navSettings')}<span class="nav-text">${pageNames.settings}</span></a></nav></div></aside><div class="workspace"><header class="topbar"><button class="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded="false" aria-controls="sidebar" data-menu>${icon('menu')}</button><div class="breadcrumb"><span>Пространство</span><span>/</span>${pageNames[page]}</div><label class="search">${icon('search')}<input id="search" aria-label="Общий поиск по пространству" placeholder="Заметки, задачи и документы" value="${escape(query)}" maxlength="200"><kbd>/</kbd></label><span class="top-status"><i class="dot"></i>${saveError?'Есть несохранённые изменения':saving?'Сохранение…':'На вашем компьютере'}</span><button class="icon-button" data-cycle-theme aria-label="Переключить тему">${icon('sun')}</button><button class="icon-button memory-toggle ${memoryMode.private?'private':''} ${memoryMode.enabled?'':'off'}" data-memory-toggle aria-label="Память помощницы" title="Память Миюнэи" aria-haspopup="dialog" aria-expanded="${memoryPanel.isOpen()}">${icon('brain')}</button></header><main id="content" tabindex="-1">${saveError?`<div class="save-error" role="alert">${escape(saveError)} <button class="button" data-export>Скачать свою копию</button><button class="button" data-retry>Повторить сохранение</button></div>`:''}${workbench.toolbar()}${page!=='settings'?workbench.recent():''}${page==='disk'?disk.html(query):({notes,settings})[page]()}</main></div></div>`;
   for (const el of app.querySelectorAll<HTMLElement>('[data-swatch]')) el.style.setProperty('--swatch', el.dataset.swatch!);
   workbench.refresh();workbench.rememberView(page);
   if (focus) document.querySelector<HTMLElement>('#content')?.focus();
@@ -206,6 +219,7 @@ app.addEventListener('click', async event => {
   if (target.hasAttribute('data-cycle-theme')) { data.settings.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'; applyTheme(); await save(); }
   if (target.hasAttribute('data-ai-models')) return void await loadModels(true);
   if (target.hasAttribute('data-ai-forget') && await confirmDelete('Удалить ключ cloud.ru?')) { if(await saveAi({apiKey:null})) { aiModels=null; toast('Ключ удалён'); } }
+  if (target.hasAttribute('data-collapse-nav')) { setSidebarCollapsed(!sidebarCollapsed()); return; }
   if (target.hasAttribute('data-menu')) { const isOpen=document.querySelector('#sidebar')!.classList.toggle('open'); target.setAttribute('aria-expanded',String(isOpen)); }
 });
 app.addEventListener('input', event => {
@@ -327,6 +341,7 @@ document.querySelector('#editor-form')!.addEventListener('submit', async event=>
   editor.close(); if(await save()) toast(editing.kind==='note'?'Заметка сохранена':editing.id?'Задача сохранена':'Задача добавлена');
 });
 for(const id of ['close-editor','cancel-editor']) document.querySelector('#'+id)!.addEventListener('click',()=>editor.close());
+window.addEventListener('resize',()=>{app.querySelector('.shell')?.classList.toggle('miyu-nav-compact',sidebarCollapsed());});
 window.addEventListener('hashchange',()=>{page=getPage();render(true);window.scrollTo(0,0);if(page==='disk'&&!disk.loaded())void disk.load();if(page==='settings'){void workbench.loadWorkflows();if(ai.configured&&!aiModels)void loadModels(false);}if(location.hash==='#diary') openDiary();});
 window.addEventListener('beforeunload', event=>{ if(saving || saveError || disk.busy()) {event.preventDefault();event.returnValue='';} });
 document.addEventListener('keydown',event=>{
