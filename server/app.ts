@@ -170,7 +170,7 @@ export async function createApp(root: string, instance: string, preview = false,
       const next=structuredClone(state.data);if(next.notes.length+(note?1:0)>5000||next.tasks.length+tasks.length>5000)throw new Error('Достигнут предел записей пространства.');
       const key=createHash('sha256').update(id).digest('hex').slice(0,24),now=new Date().toISOString();
       if(note&&!next.notes.some(n=>n.id==='auto-note-'+key))next.notes.push({id:'auto-note-'+key,...note,updatedAt:now});
-      tasks.forEach((title,i)=>{if(!next.tasks.some(t=>t.id==='auto-task-'+key+'-'+i))next.tasks.push({id:'auto-task-'+key+'-'+i,title,details:'Создано правилом для документа на диске.',done:false,createdAt:now,group,attachments:[{kind:'file',id:file},...(note?[{kind:'note',id:'auto-note-'+key}]:[])]});});
+      tasks.forEach((title,i)=>{if(!next.tasks.some(t=>t.id==='auto-task-'+key+'-'+i))next.tasks.push({id:'auto-task-'+key+'-'+i,title,details:'Создано правилом для документа на диске.',done:false,createdAt:now,group,attachments:[{kind:'file' as const,id:file},...(note?[{kind:'note' as const,id:'auto-note-'+key}]:[])]});});
       next.automationApplied=[...(next.automationApplied || []),id].slice(-20000);
       if(!validateWorkspace(next))throw new Error('Результат сценария не прошёл проверку.');
       const saved={data:next,revision:state.revision+1};if(Buffer.byteLength(JSON.stringify(saved))>1900000)throw new Error('Пространство заполнено: экспортируйте записи и освободите место перед повтором.');await atomicWrite(dataFile,JSON.stringify(saved,null,2));state=saved;
