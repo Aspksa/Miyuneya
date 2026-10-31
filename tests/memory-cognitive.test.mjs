@@ -108,6 +108,11 @@ test('Open memory exposes cognitive view and adds relevant cognitive context to 
   await engine.settings({enabled:false});
   assert.equal((await engine.context('Япония')),'');
 });
+test('Safe update allowlist accepts the cognitive server module',async()=>{
+  const update=await readFile(new URL('../scripts/update.mjs',import.meta.url),'utf8');
+  assert.match(update,/memory\|cognitive\|recall/);
+});
+
 test('UI presents cognitive tab under Knowledge, sources, uncertainty and local search safely',async()=>{
   const ui=await readFile(new URL('../src/memory.ts',import.meta.url),'utf8');
   const styles=await readFile(new URL('../web/workspace-layout.css',import.meta.url),'utf8');
