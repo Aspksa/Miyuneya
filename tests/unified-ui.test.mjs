@@ -10,7 +10,7 @@ const [home,workspace,client,css,shared,experience,state,attachments,build,serve
     'web/chat-attachments.js','scripts/build.mjs','server/app.ts',
     'scripts/update.mjs','web/avatar.js'
   ].map(read));
-test('Unified pages expose navigation and identical token stylesheet',()=>{
+test('Unified pages expose navigation and identical token stylesheet',async()=>{
   assert.match(home,/class="miyu-portal-nav"/);
   assert.match(home,/href="\/workspace#notes"/);
   assert.match(home,/href="\/workspace#disk"/);
