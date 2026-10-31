@@ -262,7 +262,11 @@
     builtin.append(builtImg,builtLabel,builtinInfo);
     builtin.setAttribute('aria-pressed',String(!lastSelected));
     builtin.onclick=()=>{releaseURLs();lastSelected=null;store(selectedKey,null);image.removeAttribute('srcset');image.src='/avatars/avatar1.png';void renderLibrary();};
-    grid.append(builtin);
+    const originalWrap=document.createElement('div');originalWrap.className='kitsune-library-entry';
+    const originalView=document.createElement('button');originalView.type='button';
+    originalView.className='kitsune-library-view';originalView.textContent='Просмотреть';
+    originalView.onclick=()=>previewLibraryImage('/avatars/avatar1.png','Исходная кицунэ');
+    originalWrap.append(builtin,originalView);grid.append(originalWrap);
     for(const row of rows.slice(0,20)){
       const b=document.createElement('button');b.type='button';b.className='kitsune-library-card';
       const thumbnail=document.createElement('img');thumbnail.alt='';
