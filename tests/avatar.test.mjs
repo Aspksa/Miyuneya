@@ -138,3 +138,21 @@ test('The shared-chat bridge in dist/main.js matches TypeScript stripping exactl
   expected=expected.replace(/(from\s+['"]\.{1,2}\/[^'"]+)\.ts(['"])/g,'$1.js$2');
   assert.equal(built,expected,'Regenerate dist/main.js using npm run build; never ship stale JS');
 });
+
+
+test('Audit: distinct HiDPI variants, safe thumbnail cleanup and complete appearance reset',async()=>{
+  const studio=await readFile(new URL('web/avatar-studio.js',root),'utf8');
+  const script=await readFile(new URL('web/avatar.js',root),'utf8');
+  const styles=await readFile(new URL('web/avatar.css',root),'utf8');
+  assert.match(studio,/const seenSizes=new Set\(\)/);
+  assert.match(studio,/seenSizes\.has\(dimensions\)/);
+  assert.match(studio,/const candidates=new Map\(\)/);
+  assert.match(studio,/thumbnail\.onerror=releaseThumb/);
+  assert.match(studio,/releaseThumbnails\(\)/);
+  assert.match(studio,/config=\{\.\.\.defaults\}/);
+  assert.match(studio,/kitsune-settings-reset/);
+  assert.match(script,/const changedWidth=\/\^\[0-9\]/);
+  assert.match(script,/if\(!changedWidth && !changedHeight\)return/);
+  assert.match(styles,/max-height:\s*400px/);
+  assert.match(styles,/calc\(100dvh - 20px\)/);
+});
