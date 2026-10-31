@@ -13,6 +13,7 @@
     "build": "node scripts/build.mjs",
     "test": "node scripts/test.mjs",
     "check": "node scripts/build.mjs --check",
+    "typecheck": "node tools/typecheck/node_modules/typescript/bin/tsc -p tools/typecheck/tsconfig.json",
     "diagnose": "node scripts/diagnose.mjs",
     "diagnose:full": "node scripts/diagnose.mjs --full",
     "update:prepare": "node scripts/update.mjs prepare",
