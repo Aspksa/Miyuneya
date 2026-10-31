@@ -48,7 +48,7 @@ export async function openMemoryArchive(dataDir: string) {
       JOIN entries e ON e.rowid=f.rowid
       WHERE entries_fts MATCH ? AND e.tier=0 AND e.kind IN ('fact','rule','episode')
       ORDER BY bm25(entries_fts),e.rowid DESC LIMIT ?`);
-    const coldItemRows = db.prepare("SELECT kind,id,searchable,payload,tier FROM entries WHERE tier=0 AND kind IN ('fact','rule')");
+    const coldItemRows = db.prepare("SELECT kind,id,searchable,payload,tier FROM entries WHERE tier=0 AND kind IN ('fact','rule','episode')");
     const allRows = db.prepare('SELECT kind,id,searchable,payload,tier FROM entries ORDER BY kind,id');
     let closed = false;
 
@@ -118,13 +118,30 @@ export async function openMemoryArchive(dataDir: string) {
     function forget(query: string) {
       const words=tokens(query);
       if(!words.size)return [];
+      const matches=(text:string)=>overlap(words,tokens(text))/words.size>=0.6;
+      const rows=(coldItemRows.all() as Row[]).map(row=>({row,data:JSON.parse(row.payload) as MemoryItem | Episode}));
+      const removedIds=new Set<string>();
+      for(const {row,data} of rows) {
+        if(matches(row.searchable) || ('evidence' in data && data.evidence?.some(e=>matches(e.quote))))removedIds.add(row.id);
+      }
+      // A forgotten episode can be the sole provenance of related historical facts.
+      let grew=true;
+      while(grew){
+        grew=false;
+        for(const {row,data} of rows) {
+          if(removedIds.has(row.id)||row.kind==='episode')continue;
+          const fact=data as MemoryItem;
+          if((fact.origin && removedIds.has(fact.origin)) || fact.links.some(id=>removedIds.has(id))) {
+            removedIds.add(row.id);grew=true;
+          }
+        }
+      }
       const removed:string[]=[];
       transaction(()=>{
-        for (const row of coldItemRows.all() as Row[]) {
-          const body=JSON.parse(row.payload) as MemoryItem;
-          const overlapScore=overlap(words,tokens(body.text));
-          if(!overlapScore || (words.size>1 && overlapScore<0.6))continue;
-          removeOne.run(row.kind,row.id);removeEdges.run(row.id);removed.push(body.text);
+        for(const {row,data} of rows)if(removedIds.has(row.id)){
+          if(row.kind!=='episode')removed.push((data as MemoryItem).text);
+          removeOne.run(row.kind,row.id);
+          removeEdges.run(row.id);
         }
       });
       return removed;
