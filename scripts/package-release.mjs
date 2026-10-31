@@ -17,7 +17,7 @@ async function scan(folder){
     if(entry.isDirectory()){await scan(relative);continue;}
     if(!entry.isFile()||!allowed.test(relative))continue;
     const bytes=await readFile(join(root,relative));total+=bytes.length;
-    if(total>10_000_000)throw new Error('Пакет превышает 10 МБ исходных файлов');
+    if(total>16_000_000)throw new Error('Пакет превышает 16 МБ исходных файлов');
     files.push({path:relative,sha256:sha(bytes),data:bytes.toString('base64')});
   }
 }
