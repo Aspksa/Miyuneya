@@ -1,4 +1,5 @@
 import { openWorkflows } from './workflows.ts';
+import { openPersonalVault } from './personal-vault.ts';
 import { createHash } from 'node:crypto';
 import { reconcileTasks } from '../src/productivity.ts';
 import { randomUUID } from 'node:crypto';
@@ -85,6 +86,7 @@ export async function createApp(root: string, instance: string, preview = false,
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Не удалось прочитать data/workspace.json. Сохраните копию и проверьте файл; данные не перезаписаны.', { cause: e });
   }
+  const vault = await openPersonalVault(dataDir);
   let queue = Promise.resolve();
   const files: Record<string, [string, string]> = {
     '/': ['blank.html', 'text/html'], '/blank.css': ['blank.css', 'text/css'], '/blank.js': ['blank.js', 'text/javascript'],
@@ -251,6 +253,57 @@ export async function createApp(root: string, instance: string, preview = false,
         if(req.method==='GET')return send(200,{...workflows.view(),warning:workflowError});
         const input=await readJson(req,send,100000);if(!input)return;
         try{if(req.method==='PUT')return send(200,await workflows.configure(input.revision,input.rules));if(req.method==='POST')return send(200,await workflows.retry(input.id));return send(405,{error:'Метод не поддерживается'});}catch(e){return send(409,{error:e.message});}
+      }
+
+      // Persistent browser-independent chat and avatar storage. Only local-origin requests are accepted.
+      if (path === '/api/assistant/conversations') {
+        if (req.method === 'GET') return send(200, vault.chats());
+        if (req.method !== 'PUT') return send(405, { error: 'Метод не поддерживается' });
+        const input = await readJson(req, send, 8_000_000);
+        if (input === undefined) return;
+        try { return send(200, await vault.saveChats(input)); }
+        catch (e) { return send((e as { status?: number }).status || 500, { error: (e as Error).message }); }
+      }
+      if (path === '/api/assistant/preferences') {
+        if (req.method === 'GET') return send(200, vault.preferences());
+        if (req.method !== 'PATCH') return send(405, { error: 'Метод не поддерживается' });
+        const input = await readJson(req, send, 6000);
+        if (input === undefined) return;
+        try { return send(200, await vault.patchPreferences(input)); }
+        catch (e) { return send((e as { status?: number }).status || 500, { error: (e as Error).message }); }
+      }
+      if (path === '/api/assistant/avatars') {
+        if (req.method === 'GET') return send(200, { avatars: vault.avatars() });
+        if (req.method !== 'POST') return send(405, { error: 'Метод не поддерживается' });
+        const header = req.headers['x-avatar-name'];
+        const rawName = typeof header === 'string' ? header.slice(0, 400) : 'Аватар';
+        let name = 'Аватар';
+        try { name = decodeURIComponent(rawName).slice(0, 100); } catch { return send(400, { error: 'Неверное имя аватара.' }); }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of req) {
+          size += chunk.length;
+          if (size > AVATAR_LIMIT) return send(413, { error: 'Изображение больше 15 МБ.' });
+          chunks.push(chunk);
+        }
+        const bytes = Buffer.concat(chunks);
+        const type = sniffImage(bytes);
+        if (!type) return send(415, { error: 'Поддерживаются PNG, JPEG, WebP и GIF.' });
+        const id = req.headers['x-avatar-id'];
+        try { return send(201, { avatar: await vault.addAvatar(bytes, type, name, typeof id === 'string' ? id : undefined) }); }
+        catch (e) { return send((e as { status?: number }).status || 500, { error: (e as Error).message }); }
+      }
+      const libraryId = /^\\/api\\/assistant\\/avatars\\/([a-zA-Z0-9_-]{1,80})$/.exec(path)?.[1];
+      if (libraryId) {
+        if (req.method === 'DELETE') {
+          try { return send(await vault.removeAvatar(libraryId) ? 200 : 404, { ok: true }); }
+          catch (e) { return send(500, { error: 'Не удалось удалить аватар.' }); }
+        }
+        if (req.method !== 'GET' && req.method !== 'HEAD') return send(405, { error: 'Метод не поддерживается' });
+        const item = await vault.avatar(libraryId);
+        if (!item) return send(404, { error: 'Образ не найден.' });
+        res.writeHead(200, { 'Content-Type': item.entry.type, 'Cache-Control': 'no-store' });
+        return void res.end(req.method === 'HEAD' ? undefined : item.bytes);
       }
       if (path.startsWith('/api/assistant')) {
         const route = path.slice('/api/assistant'.length);
@@ -638,6 +691,7 @@ export async function createApp(root: string, instance: string, preview = false,
         await workflows?.shutdown();
         await disk?.shutdown();
         await queue;
+        await vault.shutdown();
       })();
       return shutdownPromise;
     }
