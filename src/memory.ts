@@ -39,6 +39,13 @@ export type CognitiveView = {
 export type MemoryView = { cognitiveAutonomy?:{
   state:'paused'|'working'|'queued'|'idle';pending:boolean;runs:number;failures:number;lastError:string;
   curiosity?:null|{open:number;answered:number;dismissed:number};
+  learning?:null|{
+    focus:{kind:'missing-source'|'conflict'|'temporal'|'association';priority:number;description:string;refs:string[]}[];
+    resolved:number;
+    quality:{total:number;checked:number;supported:number;blocked:number;uncertain:number;unverified:number;
+      userUndos:number;supportRate:number|null;recentRate:number|null;previousRate:number|null;
+      trend:'improving'|'declining'|'stable'|'insufficient';caveat:string};
+  };
   notebook?:null|{
     total:number;observed:number;hypotheses:number;topics:number;
     latest:{kind:string;state:string;title:string;refs:number;observations:number;firstSeen:string;lastSeen:string}[];
@@ -416,6 +423,25 @@ export function mountMemory(host: MemoryHost) {
       (auto.result?.conflicts.length?'<h4>Нужна проверка</h4>'+auto.result.conflicts.slice(0,6).map(a=>
       '<p class="memory-note">'+escape(a.left.text)+' / '+escape(a.right.text)+' <small>Возможное противоречие</small></p>').join(''):'')+
       '</section>'):'';
+    const study=auto?.learning;
+    const studyInfo=study?('<section class="memory-archive"><h3>Что изучать дальше</h3>'+
+      '<p class="memory-note">Миюнэя выбирает приоритетные вопросы по пробелам в источниках, противоречиям и датам. Это задачи проверки, а не новые факты.</p>'+
+      (study.focus.length?study.focus.map((x,i)=>'<p class="memory-note">'+(i+1)+'. '+
+      escape(x.description)+' · приоритет '+x.priority+' · записей: '+x.refs.length+'</p>').join('')
+      :'<p class="memory-note">Сейчас не найдено срочных проблем для повторной проверки.</p>')+
+      '<p class="memory-note">Закрыто задач проверки: '+study.resolved+'.</p>'+
+      '<h4>Качество ответов</h4>'+
+      '<p class="memory-note">Проверено ответов с источниками: '+study.quality.checked+
+      ' · прошли: '+study.quality.supported+' · заблокированы: '+study.quality.blocked+
+      ' · результат не определён: '+study.quality.uncertain+
+      ' · без проверки: '+study.quality.unverified+
+      ' · отмен пользователем: '+study.quality.userUndos+'.</p>'+
+      '<p class="memory-note">Доля успешных проверок источников: '+
+      (study.quality.supportRate===null?'недостаточно данных':study.quality.supportRate+'%')+
+      '. Динамика: '+(study.quality.trend==='improving'?'выше в новых ответах':
+      study.quality.trend==='declining'?'ниже в новых ответах':
+      study.quality.trend==='stable'?'без существенных изменений':'недостаточно двух серий проверок')+
+      '. Это не оценка фактической истинности или точности модели.</p></section>'):'';
     const curiosity=auto?.curiosity;
     const notebook=auto?.notebook;
     const selfWritten=notebook?('<section class="memory-archive"><h3>Собственная растущая память</h3>'+
@@ -475,7 +501,7 @@ export function mountMemory(host: MemoryHost) {
     return '<div class="cognitive-overview"><h3>Когнитивная память</h3>'+
       '<p class="memory-note">Сопоставляет уже сохранённые факты, эпизоды, темы и граф связей. '+
       'Новые выводы не объявляются истиной автоматически. Совместное упоминание не доказывает причинность.</p>'+
-      '<div class="cognitive-metrics">'+cards+'</div>'+autoInfo+selfWritten+growthInfo+ 
+      '<div class="cognitive-metrics">'+cards+'</div>'+autoInfo+selfWritten+growthInfo+studyInfo+ 
       (archiveCount?'<section class="memory-archive"><h3>Долговременный архив</h3>'+ 
       '<p class="memory-note">Сохранено вне активной памяти: фактов и правил — '+archiveCount.facts+', эпизодов — '+archiveCount.episodes+', связей — '+archiveCount.edges+'. Архив хранится локально и используется в ответах по релевантной теме.</p>'+ 
       '<form class="memory-archive-search"><label>Поиск старых записей <input type="search" name="query" maxlength="120" placeholder="Слово или тема" value="'+escape(archiveQuery)+'"></label> <button type="submit" class="button quiet">Найти в архиве</button></form>'+ 

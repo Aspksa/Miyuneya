@@ -941,6 +941,13 @@ export async function openMemory(dataDir: string, options: Options) {
       if(!question)return null;
       await save();
       return question.id;
+    },
+    (id)=>{
+      const original=memory.items.find(x=>x.id===id)||archive.get(id);
+      if(!original||original.kind!=='fact')return [];
+      return archive.search(original.text.slice(0,180),20,Date.now(),true)
+        .filter(x=>x.kind==='fact'||x.kind==='rule')
+        .map(x=>x.data as MemoryItem);
     });
   // Once, re-scan legacy notes: a global timestamp could previously skip unprocessed batches.
   memory.noteVersions ||= {};
@@ -1170,7 +1177,11 @@ export async function openMemory(dataDir: string, options: Options) {
       const dialog = memory.dialogs.find(d => d.id === id);
       if (!dialog || !this.recording) return false;
       dialog.signals = [...dialog.signals, clip(text, 200)].slice(-LIMITS.signals);
-      await save(); return true;
+      if(text.startsWith('Отменил созданную тобой запись'))cognitiveDaemon.recordUndo(digest('undo:'+id+':'+text));
+      await save();return true;
+    },
+    recordAnswerQuality(id:string,status:'supported'|'blocked'|'uncertain'|'unverified'){
+      return cognitiveDaemon.recordAnswerQuality(id,status);
     },
     async remember(text: string) { const at=new Date().toISOString(); memory.forgotten=(memory.forgotten || []).filter(q=>!q.every(h=>[...tokens(text)].map(digest).includes(h))); const added = upsert(memory, commandKind(text), text, { source: 'user', pinned: true, evidence:[{source:'manual-'+digest(text).slice(0,16),version:digest(text),quote:text.slice(0,1200),at,role:'user'}] }); await changed(); return added?.item ?? null; },
     async forget(text: string) {

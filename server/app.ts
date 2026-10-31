@@ -683,6 +683,12 @@ export async function createApp(root: string, instance: string, preview = false,
             }
             const exact = exactLines(plan, calcs).length;
             write({ done: true, model, ...(reviewed?{verification:reviewed.status}:{}), ...(hard ? { reasoning: true } : {}), ...(plan ? { planned: true } : {}), ...(exact ? { exact } : {}) });
+            // Record only a hash and the actual source-review verdict. Engagement
+            // or lack of verification must never be advertised as factual accuracy.
+            memory.recordAnswerQuality(
+              digest(JSON.stringify([dialog||'',messages.length,last,answer])),
+              reviewed?.status||'unverified'
+            );
             // A reminder counts as given only once the answer that carries it has arrived.
             await memory.delivered(recall,answer).catch(() => {});
             if (dialog) await memory.record(dialog, [...messages.map((m: ChatMessage) => ({ role: m.role, content: m.content })), { role: 'assistant', content: answer }], summary,recordingGeneration).catch(() => {});
