@@ -232,11 +232,11 @@
     releaseThumbnails();
     grid.replaceChildren();
     const builtin=document.createElement('button');builtin.type='button';builtin.className='kitsune-library-card';
-    const builtImg=document.createElement('img');builtImg.src='/avatars/hayumeri-kitsune.avif';builtImg.alt='';
+    const builtImg=document.createElement('img');builtImg.src='/avatars/avatar1.png';builtImg.alt='';
     const builtLabel=document.createElement('span');builtLabel.textContent='Исходная кицунэ';
     builtin.append(builtImg,builtLabel);
     builtin.setAttribute('aria-pressed',String(!lastSelected));
-    builtin.onclick=()=>{releaseURLs();lastSelected=null;store(selectedKey,null);image.removeAttribute('srcset');image.src='/avatars/hayumeri-kitsune.avif';void renderLibrary();};
+    builtin.onclick=()=>{releaseURLs();lastSelected=null;store(selectedKey,null);image.removeAttribute('srcset');image.src='/avatars/avatar1.png';void renderLibrary();};
     grid.append(builtin);
     for(const row of rows.slice(0,20)){
       const b=document.createElement('button');b.type='button';b.className='kitsune-library-card';
@@ -261,7 +261,7 @@
           await erase(row.id);
           if(lastSelected===row.id){
             releaseURLs();lastSelected=null;store(selectedKey,null);
-            image.removeAttribute('srcset');image.src='/avatars/hayumeri-kitsune.avif';
+            image.removeAttribute('srcset');image.src='/avatars/avatar1.png';
           }
           await renderLibrary();notify('Образ удалён из библиотеки.');
         }catch(e){notify(e.message,'error');}
@@ -300,7 +300,7 @@
   },true);
   $('kitsune-image-restore')?.addEventListener('click',()=>{
     releaseURLs();lastSelected=null;store(selectedKey,null);
-    image.removeAttribute('srcset');image.src='/avatars/hayumeri-kitsune.avif';void renderLibrary();
+    image.removeAttribute('srcset');image.src='/avatars/avatar1.png';void renderLibrary();
   },true);
   async function initialize(){
     try{
