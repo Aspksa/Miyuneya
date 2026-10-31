@@ -130,11 +130,20 @@ export function openCognitiveLearning(dataDir:string,resolve:(id:string)=>Memory
       const window={supported:0,blocked:0,uncertain:0,unverified:0};
       for(const row of recent.all() as {status:ReviewStatus}[])window[row.status]++;
       const checked=window.supported+window.blocked+window.uncertain;
+      const outcomes=(recent.all() as {status:ReviewStatus}[]).map(x=>x.status);
+      const pass=(part:ReviewStatus[])=>{
+        const checked=part.filter(x=>x!=='unverified');
+        return checked.length>=5?Math.round(100*checked.filter(x=>x==='supported').length/checked.length):null;
+      };
+      const recentRate=pass(outcomes.slice(0,25)),previousRate=pass(outcomes.slice(25,50));
+      const trend=recentRate===null||previousRate===null?'insufficient':
+        recentRate>=previousRate+5?'improving':recentRate<=previousRate-5?'declining':'stable';
       return {focus:focus(),resolved:(complete.get() as {n:number}).n,
         quality:{total:Object.values(counts).reduce((a,b)=>a+b,0),checked,
           supported:window.supported,blocked:window.blocked,uncertain:window.uncertain,
           unverified:window.unverified,userUndos:(feedbackCount.get() as {n:number}).n,
           supportRate:checked>=5?Math.round(100*window.supported/checked):null,
+          recentRate,previousRate,trend,
           caveat:'Доля ответов, прошедших формальную проверку источников, не истинная точность. Данные: последние 50 ответов.'}};
     }
     function clear(){if(!closed){db.exec('DELETE FROM study; DELETE FROM answer_checks; DELETE FROM feedback');}}
