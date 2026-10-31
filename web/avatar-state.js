@@ -82,9 +82,46 @@
     };
     if(document.readyState==='complete')requestAnimationFrame(ready);
     else window.addEventListener('load',ready,{once:true});
+    // Score a few stable candidates against critical workspace controls.
+    // Avoid a document-wide scan: large note/task lists can contain thousands of buttons.
+    function avoidAvatar(pos,size){
+      if(!pos||!Number.isFinite(pos.x)||!Number.isFinite(pos.y))return pos;
+      const obstacles=[...document.querySelectorAll(
+        '.topbar, .page-heading .heading-actions, .task-controls, #editor[open], #confirm[open], .sidebar.open'
+      )].filter(node=>node.getClientRects().length).map(node=>node.getBoundingClientRect());
+      if(!obstacles.length)return pos;
+      const pad=12;
+      const xMax=Math.max(pad,innerWidth-size-pad),yMax=Math.max(pad,innerHeight-size-pad);
+      const candidates=[
+        pos,{x:pad,y:pos.y},{x:xMax,y:pos.y},
+        {x:pad,y:pad},{x:xMax,y:pad},
+        {x:pad,y:yMax},{x:xMax,y:yMax},
+        {x:pos.x,y:Math.max(pad,Math.min(yMax,innerHeight*.52))}
+      ];
+      function score(candidate){
+        const p={left:candidate.x,right:candidate.x+size,top:candidate.y,bottom:candidate.y+size};
+        let overlap=0;
+        for(const r of obstacles){
+          const w=Math.max(0,Math.min(p.right,r.right+7)-Math.max(p.left,r.left-7));
+          const h=Math.max(0,Math.min(p.bottom,r.bottom+7)-Math.max(p.top,r.top-7));
+          overlap+=w*h;
+        }
+        const distance=Math.hypot(candidate.x-pos.x,candidate.y-pos.y);
+        return overlap*100+distance*.15;
+      }
+      let best={x:Math.max(pad,Math.min(xMax,pos.x)),y:Math.max(pad,Math.min(yMax,pos.y))};
+      let min=score(best);
+      for(const candidate of candidates.slice(1)){
+        const clipped={x:Math.max(pad,Math.min(xMax,candidate.x)),
+          y:Math.max(pad,Math.min(yMax,candidate.y))};
+        const value=score(clipped);
+        if(value<min){min=value;best=clipped;}
+      }
+      return best;
+    }
     setActivity(navigator.onLine===false?'offline':'idle');
     updateMotion();
-    return {restore,remember,setActivity,updateMotion};
+    return {restore,remember,setActivity,updateMotion,avoidAvatar};
   }
   window.MiyuneyaAvatarState=Object.freeze({mount});
 })();
