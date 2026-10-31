@@ -7,6 +7,7 @@ import { tokens, overlap, similarity, strength, expired, memoryContext, searchTe
 import type { Titles } from './recall.ts';
 import { growth } from './growth.ts';
 import { buildCognitiveSnapshot, cognitiveContext } from './cognitive.ts';
+import { openCognitiveDaemon } from './cognitive-daemon.ts';
 import { openMemoryArchive } from './memory-archive.ts';
 import { GOAL_PROMPT } from './logic.ts';
 import { canonical, compatible, digest, strictDate, evidence, savedEvidence, memoryResult, SOURCE_PROMPT } from './integrity.ts';
@@ -909,6 +910,7 @@ export async function openMemory(dataDir: string, options: Options) {
     archive.compact(memory,LIMITS);
     await atomicWrite(file,JSON.stringify(memory,null,2));
   } else archive.compact(memory,LIMITS);
+  const cognitiveDaemon = await openCognitiveDaemon(dataDir,()=>memory);
   // Once, re-scan legacy notes: a global timestamp could previously skip unprocessed batches.
   memory.noteVersions ||= {};
   const key = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
@@ -923,6 +925,7 @@ export async function openMemory(dataDir: string, options: Options) {
   const save = () => { const next = writing.then(async () => {
     archive.compact(memory,LIMITS);
     await atomicWrite(file,JSON.stringify(memory,null,2));
+    cognitiveDaemon.enqueue();
   }); writing = next.catch(() => {}); return next; };
   const saveVectors = () => write(vectorFile, () => ({ model: vectorModel, vectors: Object.fromEntries(vectors) }));
   // The app has just been opened, so the user is here: the quiet time before thinking starts counting now.
@@ -1079,7 +1082,7 @@ export async function openMemory(dataDir: string, options: Options) {
       episodes: [...memory.episodes].reverse(), entities: memory.entities.map(e => ({ ...e, degree: degree.get(e.id) || 0 })), edges: memory.edges,
       diary: [...memory.diary].reverse(), journal: [...memory.journal].reverse(),
       history:memory.history || [], noteProgress:memory.noteProgress || {}, topics: memory.topics, understanding: memory.understanding, questions: memory.questions, growth: growth(memory, now),
-      cognitive: buildCognitiveSnapshot(memory, now), archive: archive.stats(),
+      cognitive: buildCognitiveSnapshot(memory, now), cognitiveAutonomy: cognitiveDaemon.overview(), archive: archive.stats(),
       reminders: [...memory.reminders].reverse(), promises: [...memory.promises].reverse(),
       causes: [...memory.causes].sort((a, b) => b.hits - a.hits || b.confidence - a.confidence), goals: [...memory.goals].reverse().map(g => ({ ...g, next: nextStepsOf(g).map(s => s.id) })),
       predictions: [...memory.predictions].reverse(), mistakes: [...memory.mistakes].reverse(),
@@ -1103,7 +1106,7 @@ export async function openMemory(dataDir: string, options: Options) {
         ? memory.questions.filter(q => q.asked < 3).sort((a, b) => a.asked - b.asked || a.created.localeCompare(b.created))[0] : undefined;
       const thoughts = memory.thoughts.filter(t => !t.seen).slice(-3).map(t => t.text);
       const context = memoryContext(memory, query, titles(), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text, latest, thoughts });
-      const cognitive = cognitiveContext(memory, query, now);
+      const cognitive = cognitiveContext(memory, query, now, cognitiveDaemon.strategy());
       if (question && context.includes(question.text)) { question.asked++; question.lastAsked = new Date(now).toISOString(); await save(); }
       return [context, cognitive, memory.settings.enabled ? archive.recall(query,now) : ''].filter(Boolean).join('\n\n');
     },
@@ -1139,7 +1142,7 @@ export async function openMemory(dataDir: string, options: Options) {
       await save(); return true;
     },
     async remember(text: string) { const at=new Date().toISOString(); memory.forgotten=(memory.forgotten || []).filter(q=>!q.every(h=>[...tokens(text)].map(digest).includes(h))); const added = upsert(memory, commandKind(text), text, { source: 'user', pinned: true, evidence:[{source:'manual-'+digest(text).slice(0,16),version:digest(text),quote:text.slice(0,1200),at,role:'user'}] }); await changed(); return added?.item ?? null; },
-    async forget(text: string) { epoch++; const removed = forget(memory, text); await changed(); const archived = archive.forget(text); await indexing; await index(); return [...new Set([...removed,...archived])]; },
+    async forget(text: string) { epoch++; await cognitiveDaemon.clear(); const removed = forget(memory, text); await changed(); const archived = archive.forget(text); await indexing; await index(); return [...new Set([...removed,...archived])]; },
     // Thoughts shown to the user once («пока вас не было…») are no longer new.
     async seen() { let dirty = false; for (const t of memory.thoughts) if (!t.seen) { t.seen = true; dirty = true; } if (dirty) await save(); },
     // «Подумать сейчас» skips the wait for the user to be away but keeps the daily limit.
@@ -1147,6 +1150,7 @@ export async function openMemory(dataDir: string, options: Options) {
     async settings(change: Partial<Settings>) {
       if(change.private!==undefined || change.enabled!==undefined)epoch++;
       memory.settings = { ...memory.settings, ...change };
+      await cognitiveDaemon.modeChanged();
       if (memory.settings.private || !memory.settings.enabled) memory.dialogs = [];
       await save();
     },
@@ -1261,11 +1265,11 @@ export async function openMemory(dataDir: string, options: Options) {
       if (removed) { await save(); archive.unlink(from,to); }
       return removed > 0;
     },
-    async reset() { epoch++; memory = { ...emptyMemory(), settings: memory.settings }; vectors = new Map(); retrySleepAt = 0; await save(); archive.clear(); await saveVectors(); },
+    async reset() { epoch++; await cognitiveDaemon.clear(); memory = { ...emptyMemory(), settings: memory.settings }; vectors = new Map(); retrySleepAt = 0; await save(); archive.clear(); await saveVectors(); },
     close: (id: string) => memory.dialogs.some(d => d.id === id) ? run('reflect', () => reflect(id)) : Promise.resolve(0),
     sleepNow: () => run('sleep', sleep),
     archiveSearch: (query: string, limit = 20) => memory.settings.enabled ? archive.search(query,limit) : [],
     exportData: () => ({ ...memory, dialogs: undefined, marks: undefined, exportedAt: new Date().toISOString() }),
-    async shutdown() { closed = true; clearInterval(timer); await job?.done.catch(() => {}); await indexing; await writing; archive.close(); },
+    async shutdown() { closed = true; clearInterval(timer); await job?.done.catch(() => {}); await indexing; await writing; await cognitiveDaemon.shutdown(); archive.close(); },
   };
 }

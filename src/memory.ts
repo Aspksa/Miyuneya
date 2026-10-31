@@ -36,7 +36,16 @@ export type CognitiveView = {
   questions:{id:string;kind:'gap'|'conflict';text:string;facts:string[]}[];
   generatedAt:string;
 };
-export type MemoryView = { archive?:{active:{facts:number;episodes:number;edges:number};archived:{facts:number;episodes:number;edges:number}}; cognitive?:CognitiveView; history?:{id:string;before:string;after:string;at:string;reason:string}[]; noteProgress?:Record<string,{offset:number}>; enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | 'think' | null; lastSleep: string | null; pending: number; newEpisodes: number;
+export type MemoryView = { cognitiveAutonomy?:{
+  state:'paused'|'working'|'queued'|'idle';pending:boolean;runs:number;failures:number;lastError:string;
+  result:null|{
+    generatedAt:string;strategy:'lexical'|'graph';
+    metrics:{reviewed:number;verified:number;directLinks:number;candidateLinks:number;
+      potentialConflicts:number;retrievalExamples:number;lexicalRecallAt3:number;graphRecallAt3:number};
+    candidates:{id:string;left:{id:string;text:string};right:{id:string;text:string};reason:string}[];
+    conflicts:{id:string;left:{id:string;text:string};right:{id:string;text:string};reason:string}[];
+  };
+}; archive?:{active:{facts:number;episodes:number;edges:number};archived:{facts:number;episodes:number;edges:number}}; cognitive?:CognitiveView; history?:{id:string;before:string;after:string;at:string;reason:string}[]; noteProgress?:Record<string,{offset:number}>; enabled: boolean; private: boolean; available: boolean; busy: 'reflect' | 'sleep' | 'think' | null; lastSleep: string | null; pending: number; newEpisodes: number;
   search: 'meaning' | 'words'; searchError: string; indexed: number;
   items: MemoryItemView[]; episodes: EpisodeView[]; entities: EntityView[]; edges: EdgeView[]; diary: DiaryView[]; journal: JournalView[];
   topics: TopicView[]; understanding: { text: string; updated: string } | null; questions: QuestionView[]; growth: GrowthView; reminders: ReminderView[]; promises: PromiseView[]; thoughts: ThoughtView[]; thinking: ThinkingView;
@@ -373,6 +382,23 @@ export function mountMemory(host: MemoryHost) {
       ['Контекстных связей',c.summary.associations],
       ['Непроверенных',c.summary.inferred+c.summary.contested]
     ];
+    const auto=v.cognitiveAutonomy;
+    const autoInfo=auto?('<section class="memory-archive"><h3>Фоновый когнитивный процесс</h3>'+
+      '<p class="memory-note">Состояние: '+escape(({paused:'Приостановлен',working:'Анализирует',queued:'Ожидает обработки',idle:'Ожидает изменений'} as Record<string,string>)[auto.state]||auto.state)+
+      '. Завершено циклов: '+auto.runs+'.</p>'+
+      (auto.lastError?'<p class="memory-note">'+escape(auto.lastError)+'</p>':'')+
+      (auto.result?'<p class="memory-note">Проверенных записей: '+auto.result.metrics.verified+
+      ', явных связей: '+auto.result.metrics.directLinks+
+      ', кандидатов: '+auto.result.metrics.candidateLinks+
+      ', возможных противоречий: '+auto.result.metrics.potentialConflicts+
+      '. Поиск: '+(auto.result.strategy==='graph'?'графовый с проверкой':'лексический')+
+      '. Контрольный поиск: '+Math.round(auto.result.metrics.lexicalRecallAt3*100)+'% → '+
+      Math.round(auto.result.metrics.graphRecallAt3*100)+'% (приближённая оценка на связях).</p>':'')+
+      (auto.result?.candidates.length?'<h4>Кандидаты новых связей</h4>'+auto.result.candidates.slice(0,8).map(a=>
+      '<p class="memory-note">'+escape(a.left.text)+' ↔ '+escape(a.right.text)+' <small>Возможная связь — не подтверждена</small></p>').join(''):'')+
+      (auto.result?.conflicts.length?'<h4>Нужна проверка</h4>'+auto.result.conflicts.slice(0,6).map(a=>
+      '<p class="memory-note">'+escape(a.left.text)+' / '+escape(a.right.text)+' <small>Возможное противоречие</small></p>').join(''):'')+
+      '</section>'):'';
     const archiveCount=v.archive?.archived;
     const cards=counts.map(([name,value])=>
       '<div class="cognitive-metric"><strong>'+value+'</strong><span>'+name+'</span></div>').join('');
@@ -398,7 +424,7 @@ export function mountMemory(host: MemoryHost) {
     return '<div class="cognitive-overview"><h3>Когнитивная память</h3>'+
       '<p class="memory-note">Сопоставляет уже сохранённые факты, эпизоды, темы и граф связей. '+
       'Новые выводы не объявляются истиной автоматически. Совместное упоминание не доказывает причинность.</p>'+
-      '<div class="cognitive-metrics">'+cards+'</div>'+ 
+      '<div class="cognitive-metrics">'+cards+'</div>'+autoInfo+ 
       (archiveCount?'<section class="memory-archive"><h3>Долговременный архив</h3>'+ 
       '<p class="memory-note">Сохранено вне активной памяти: фактов и правил — '+archiveCount.facts+', эпизодов — '+archiveCount.episodes+', связей — '+archiveCount.edges+'. Архив хранится локально и используется в ответах по релевантной теме.</p>'+ 
       '<form class="memory-archive-search"><label>Поиск старых записей <input type="search" name="query" maxlength="120" placeholder="Слово или тема" value="'+escape(archiveQuery)+'"></label> <button type="submit" class="button quiet">Найти в архиве</button></form>'+ 
