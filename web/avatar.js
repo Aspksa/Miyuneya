@@ -83,6 +83,7 @@
     // Never erase the legacy browser copy: users can still recover after a failed disk write.
     if(!write(historyKey,history))setStatus('История не помещается в браузере; проверьте сохранение на сервере.');
     if(!remoteChats)return;
+    if(!activeConversation() && !history.length){persistChatState();return;}
     let row=activeConversation();
     if(!row){
       row={id:conversationId(),title:firstTitle(history),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),messages:[]};
@@ -91,6 +92,10 @@
     row.messages=history.map(m=>({role:m.role,content:m.content}));
     if(row.title==='Новый разговор' && history.some(m=>m.role==='user'))row.title=firstTitle(history);
     row.updatedAt=new Date().toISOString();
+    persistChatState();
+    renderConversationList();
+  }
+  function persistChatState(){
     const snapshot=structuredClone(chatState);
     saveQueue=saveQueue.then(async()=>{
       const response=await fetch('/api/assistant/conversations',{method:'PUT',headers:{'Content-Type':'application/json'},
@@ -99,7 +104,6 @@
       if(!response.ok)throw Error(body.error||'Не удалось сохранить переписку.');
       chatState.revision=body.revision;
     }).catch(error=>setStatus('История осталась в браузере. Сервер: '+error.message));
-    renderConversationList();
   }
   // Appearance is synchronized separately and cannot overwrite chat messages.
   function savePersistentPreference(field,value){
