@@ -7,6 +7,7 @@ import { tokens, overlap, similarity, strength, expired, memoryContext, searchTe
 import type { Titles } from './recall.ts';
 import { growth } from './growth.ts';
 import { buildCognitiveSnapshot, cognitiveContext } from './cognitive.ts';
+import { openMemoryArchive } from './memory-archive.ts';
 import { GOAL_PROMPT } from './logic.ts';
 import { canonical, compatible, digest, strictDate, evidence, savedEvidence, memoryResult, SOURCE_PROMPT } from './integrity.ts';
 import type { Evidence, Source } from './integrity.ts';
@@ -93,7 +94,7 @@ const day = (date: string) => new Date(date).toLocaleDateString('ru-RU', { day: 
 
 export const emptyMemory = (): Memory => ({ version: 1, settings: { enabled: true, private: false, thinking: true, intensity: 'normal' }, items: [], episodes: [], entities: [], edges: [], diary: [], topics: [], understanding: null, questions: [], reminders: [], promises: [], thoughts: [], thinks: [], causes: [], goals: [], predictions: [], mistakes: [], journal: [], lastSleep: null, notesSeen: null, dialogs: [], marks: [] });
 // Keeps every valid record of a hand-edited or older file instead of rejecting it whole.
-export function normalizeMemory(raw: any, now = new Date().toISOString()): Memory {
+export function normalizeMemory(raw: any, now = new Date().toISOString(), retainOverflow = false): Memory {
   if (!raw || typeof raw !== 'object' || raw.version !== 1) throw new Error('Неверный формат памяти');
   const memory = emptyMemory();
   const array = (value: unknown) => Array.isArray(value) ? value : [];
@@ -168,8 +169,8 @@ export function normalizeMemory(raw: any, now = new Date().toISOString()): Memor
   }
   for (const m of array(raw.marks)) if (validDialogId(m?.id) && typeof m.last === 'string') memory.marks.push({ id: m.id, last: m.last.slice(0, 40) });
   memory.marks = memory.marks.slice(-20);
-  memory.items = memory.items.slice(-LIMITS.items); memory.episodes = memory.episodes.slice(-LIMITS.episodes); memory.entities = memory.entities.slice(-LIMITS.entities);
-  memory.edges = memory.edges.slice(-LIMITS.edges); memory.diary = memory.diary.slice(-LIMITS.diary); memory.topics = memory.topics.slice(-LIMITS.topics); memory.questions = memory.questions.slice(-LIMITS.questions); memory.reminders = memory.reminders.slice(-LIMITS.reminders); memory.promises = memory.promises.slice(-LIMITS.promises); memory.thoughts = memory.thoughts.slice(-LIMITS.thoughts);
+  if (!retainOverflow) { memory.items = memory.items.slice(-LIMITS.items); memory.episodes = memory.episodes.slice(-LIMITS.episodes); memory.edges = memory.edges.slice(-LIMITS.edges); }
+  memory.entities = memory.entities.slice(-LIMITS.entities); memory.diary = memory.diary.slice(-LIMITS.diary); memory.topics = memory.topics.slice(-LIMITS.topics); memory.questions = memory.questions.slice(-LIMITS.questions); memory.reminders = memory.reminders.slice(-LIMITS.reminders); memory.promises = memory.promises.slice(-LIMITS.promises); memory.thoughts = memory.thoughts.slice(-LIMITS.thoughts);
   memory.journal = memory.journal.slice(-LIMITS.journal); memory.dialogs = memory.dialogs.slice(-LIMITS.dialogs);
   memory.lastSleep = typeof raw.lastSleep === 'string' && Number.isFinite(Date.parse(raw.lastSleep)) ? raw.lastSleep : null;
   memory.notesSeen = typeof raw.notesSeen === 'string' && Number.isFinite(Date.parse(raw.notesSeen)) ? raw.notesSeen : null;
@@ -206,11 +207,7 @@ export function upsert(memory: Memory, kind: MemoryKind, text: string, options: 
     journal(memory, 'reinforced', `Подтвердилось: ${same.text}`, now);
     return { item: same, created: false };
   }
-  if (memory.items.length >= LIMITS.items) {
-    const weakest = memory.items.filter(i => !i.pinned).sort((a, b) => strength(a) - strength(b))[0];
-    if (!weakest) return null;
-    memory.items = memory.items.filter(i => i !== weakest);
-  }
+  // Never evict during upsert: archival + active-tier selection happen on durable save.
   const item: MemoryItem = { id: newId(), kind, text: value, weight: options.pinned ? 1 : options.weight ?? 0.5, hits: 1, created: now, seen: now, pinned: !!options.pinned,
     status: options.source==='user' ? 'active' : options.evidence?.length ? 'active' : 'inferred', evidence: options.evidence || [], source: options.source || 'dialog', links: (options.links || []).slice(0, 20), category: kind === 'rule' ? 'other' : category(options.category), until, origin: options.origin ?? null };
   const conflict = memory.items.find(i=>i.kind===kind && i.status!=='superseded' && !compatible(i.text,value) && similarity(i.text,value)>=0.6);
@@ -255,7 +252,7 @@ export function addEdge(memory: Memory, from: string, to: string, type: unknown,
   if (!from || !to || from === to) return false;
   if (memory.edges.some(e => (e.from === from && e.to === to && e.type === kind) || (kind === 'related' && e.from === to && e.to === from))) return false;
   memory.edges.push({ from, to, type: kind, created: now });
-  if (memory.edges.length > LIMITS.edges) memory.edges = memory.edges.slice(-LIMITS.edges);
+  // Long-term edges are retained by the SQLite archive on the next save.
   return true;
 }
 // Drops what has faded or run out of date, and keeps the stores within their limits.
@@ -264,7 +261,7 @@ export function decay(memory: Memory, now = Date.now()) {
   const gone = memory.items.filter(i => !i.pinned && (strength(i, now) < FORGET_BELOW || expired(i, now)));
   for (const item of gone) journal(memory, 'forgot', `${expired(item, now) ? 'Устарело' : 'Забыла'}: ${item.text}`, at);
   memory.items = memory.items.filter(i => !gone.includes(i));
-  memory.episodes = memory.episodes.slice(-LIMITS.episodes);
+  // Previously saved episodes remain searchable in the cold archive.
   prune(memory);
   // An entity nothing points to and nobody mentioned for four months is let go.
   const used = new Set(memory.edges.flatMap(e => [e.from, e.to]));
@@ -744,7 +741,7 @@ export function applyReflection(memory: Memory, result: any, dialog: Dialog, kno
   for (const entry of list(result.answers)) if (typeof entry.question === 'string' && answer(memory, entry.question, entry.text, now, 'dialog', episode?.id ?? null)) changes++;
   for (const text of Array.isArray(result.questions) ? result.questions.slice(0, 2) : []) if (ask(memory, 'gap', text, {}, now)) changes++;
   findGaps(memory, now);
-  memory.episodes = memory.episodes.slice(-LIMITS.episodes);
+  // Compaction is performed after durable archival in openMemory.save().
   return changes;
 }
 
@@ -897,8 +894,9 @@ export async function openMemory(dataDir: string, options: Options) {
   const vectorFile = join(dataDir, 'memory-vectors.json');
   const idleMs = options.idleMs ?? 10 * 60_000;
   const thinkIdleMs = options.thinkIdleMs ?? 20 * 60_000;
+  const archive = await openMemoryArchive(dataDir);
   let memory = emptyMemory();
-  try { memory = normalizeMemory(JSON.parse(await readFile(file, 'utf8'))); }
+  try { memory = normalizeMemory(JSON.parse(await readFile(file, 'utf8')), new Date().toISOString(), true); }
   catch (e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
       // Keep the unreadable file for the user instead of overwriting it.
@@ -906,6 +904,11 @@ export async function openMemory(dataDir: string, options: Options) {
       console.error('Память помощницы не прочитана: data/memory.json сохранён как memory.broken-*.json, начата новая.');
     }
   }
+  // Migrate overflow from pre-existing JSON before writing any smaller hot-memory file.
+  if(memory.items.length>LIMITS.items || memory.episodes.length>LIMITS.episodes || memory.edges.length>LIMITS.edges) {
+    archive.compact(memory,LIMITS);
+    await atomicWrite(file,JSON.stringify(memory,null,2));
+  } else archive.compact(memory,LIMITS);
   // Once, re-scan legacy notes: a global timestamp could previously skip unprocessed batches.
   memory.noteVersions ||= {};
   const key = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 16);
@@ -917,7 +920,10 @@ export async function openMemory(dataDir: string, options: Options) {
   } catch {}
   let writing = Promise.resolve();
   const write = (path: string, value: () => unknown) => { const next = writing.then(() => atomicWrite(path, JSON.stringify(value(), null, path === file ? 2 : 0))); writing = next.catch(() => {}); return next; };
-  const save = () => write(file, () => memory);
+  const save = () => { const next = writing.then(async () => {
+    archive.compact(memory,LIMITS);
+    await atomicWrite(file,JSON.stringify(memory,null,2));
+  }); writing = next.catch(() => {}); return next; };
   const saveVectors = () => write(vectorFile, () => ({ model: vectorModel, vectors: Object.fromEntries(vectors) }));
   // The app has just been opened, so the user is here: the quiet time before thinking starts counting now.
   let lastActivity = Date.now();
@@ -1073,7 +1079,7 @@ export async function openMemory(dataDir: string, options: Options) {
       episodes: [...memory.episodes].reverse(), entities: memory.entities.map(e => ({ ...e, degree: degree.get(e.id) || 0 })), edges: memory.edges,
       diary: [...memory.diary].reverse(), journal: [...memory.journal].reverse(),
       history:memory.history || [], noteProgress:memory.noteProgress || {}, topics: memory.topics, understanding: memory.understanding, questions: memory.questions, growth: growth(memory, now),
-      cognitive: buildCognitiveSnapshot(memory, now),
+      cognitive: buildCognitiveSnapshot(memory, now), archive: archive.stats(),
       reminders: [...memory.reminders].reverse(), promises: [...memory.promises].reverse(),
       causes: [...memory.causes].sort((a, b) => b.hits - a.hits || b.confidence - a.confidence), goals: [...memory.goals].reverse().map(g => ({ ...g, next: nextStepsOf(g).map(s => s.id) })),
       predictions: [...memory.predictions].reverse(), mistakes: [...memory.mistakes].reverse(),
@@ -1099,7 +1105,7 @@ export async function openMemory(dataDir: string, options: Options) {
       const context = memoryContext(memory, query, titles(), now, { query: vector, vector: text => vectors.get(key(text)), question: question?.text, latest, thoughts });
       const cognitive = cognitiveContext(memory, query, now);
       if (question && context.includes(question.text)) { question.asked++; question.lastAsked = new Date(now).toISOString(); await save(); }
-      return [context, cognitive].filter(Boolean).join('\n\n');
+      return [context, cognitive, memory.settings.enabled ? archive.recall(query,now) : ''].filter(Boolean).join('\n\n');
     },
     // A reminder fires once, after the answer that carried it was delivered; it stays in the list as done.
     async delivered(context: string, answer: string = '') {
@@ -1133,7 +1139,7 @@ export async function openMemory(dataDir: string, options: Options) {
       await save(); return true;
     },
     async remember(text: string) { const at=new Date().toISOString(); memory.forgotten=(memory.forgotten || []).filter(q=>!q.every(h=>[...tokens(text)].map(digest).includes(h))); const added = upsert(memory, commandKind(text), text, { source: 'user', pinned: true, evidence:[{source:'manual-'+digest(text).slice(0,16),version:digest(text),quote:text.slice(0,1200),at,role:'user'}] }); await changed(); return added?.item ?? null; },
-    async forget(text: string) { epoch++; const removed = forget(memory, text); await changed(); await indexing; await index(); return removed; },
+    async forget(text: string) { epoch++; const removed = forget(memory, text); await changed(); const archived = archive.forget(text); await indexing; await index(); return [...new Set([...removed,...archived])]; },
     // Thoughts shown to the user once («пока вас не было…») are no longer new.
     async seen() { let dirty = false; for (const t of memory.thoughts) if (!t.seen) { t.seen = true; dirty = true; } if (dirty) await save(); },
     // «Подумать сейчас» skips the wait for the user to be away but keeps the daily limit.
@@ -1220,7 +1226,7 @@ export async function openMemory(dataDir: string, options: Options) {
       await changed(); return true;
     },
     async remove(id: string) { epoch++;
-      const target=memory.items.find(i=>i.id===id); if(target){forget(memory,target.text);await changed();return true;}
+      const target=memory.items.find(i=>i.id===id); if(target){forget(memory,target.text);await changed();archive.erase(id);return true;}
       if (id === 'understanding') { if (!memory.understanding) return false; memory.understanding = null; await changed(); return true; }
       const count = () => memory.items.length + memory.episodes.length + memory.entities.length + memory.diary.length + memory.topics.length + memory.questions.length + memory.reminders.length + memory.promises.length + memory.thoughts.length
         + memory.causes.length + memory.goals.length + memory.predictions.length + memory.mistakes.length;
@@ -1252,13 +1258,14 @@ export async function openMemory(dataDir: string, options: Options) {
         const other = record.id === from ? to : record.id === to ? from : null;
         if (other && record.links.includes(other)) { record.links = record.links.filter(l => l !== other); removed++; }
       }
-      if (removed) await save();
+      if (removed) { await save(); archive.unlink(from,to); }
       return removed > 0;
     },
-    async reset() { epoch++; memory = { ...emptyMemory(), settings: memory.settings }; vectors = new Map(); retrySleepAt = 0; await save(); await saveVectors(); },
+    async reset() { epoch++; memory = { ...emptyMemory(), settings: memory.settings }; vectors = new Map(); retrySleepAt = 0; await save(); archive.clear(); await saveVectors(); },
     close: (id: string) => memory.dialogs.some(d => d.id === id) ? run('reflect', () => reflect(id)) : Promise.resolve(0),
     sleepNow: () => run('sleep', sleep),
+    archiveSearch: (query: string, limit = 20) => memory.settings.enabled ? archive.search(query,limit) : [],
     exportData: () => ({ ...memory, dialogs: undefined, marks: undefined, exportedAt: new Date().toISOString() }),
-    async shutdown() { closed = true; clearInterval(timer); await job?.done.catch(() => {}); await indexing; await writing; },
+    async shutdown() { closed = true; clearInterval(timer); await job?.done.catch(() => {}); await indexing; await writing; archive.close(); },
   };
 }
