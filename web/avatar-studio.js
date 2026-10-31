@@ -171,8 +171,18 @@
 
   async function choose(id){
     const row=await get(id);if(!row)throw Error('Образ не найден');
+    if(!(row.original instanceof Blob) || !Array.isArray(row.variants)) throw Error('Повреждённая запись образа.');
+    // Older library entries may have duplicate width descriptors. De-duplicate
+    // on reading as well as at creation so migrated images keep rendering.
+    const candidates=new Map();
+    for(const v of row.variants){
+      if(Number.isSafeInteger(v?.width) && v.width>0 && v.blob instanceof Blob)
+        candidates.set(v.width,v.blob);
+    }
+    if(!candidates.size)throw Error('Нет доступных вариантов изображения.');
     releaseURLs();
-    const srcset=row.variants.map(v=>useURL(v.blob)+' '+v.width+'w').join(', ');
+    const srcset=[...candidates.entries()].sort((a,b)=>a[0]-b[0])
+      .map(([width,blob])=>useURL(blob)+' '+width+'w').join(', ');
     const original=useURL(row.original);
     // Set sizes for actual on-screen avatar width, not the 4K monitor width.
     image.sizes='(max-width: 450px) 160px, 300px';
