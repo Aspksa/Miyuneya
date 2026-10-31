@@ -1,6 +1,7 @@
 import { openWorkflows } from './workflows.ts';
 import { openPersonalVault } from './personal-vault.ts';
-import { openChatArchive } from './chat-archive.ts';
+import { openSqliteChatArchive } from './chat-sqlite.ts';
+import { openChatMaintenance } from './chat-maintenance.ts';
 import { createHash } from 'node:crypto';
 import { reconcileTasks } from '../src/productivity.ts';
 import { randomUUID } from 'node:crypto';
@@ -88,7 +89,8 @@ export async function createApp(root: string, instance: string, preview = false,
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error('Не удалось прочитать data/workspace.json. Сохраните копию и проверьте файл; данные не перезаписаны.', { cause: e });
   }
   const vault = await openPersonalVault(dataDir);
-  const chatArchive = await openChatArchive(dataDir);
+  const chatArchive = await openSqliteChatArchive(dataDir);
+  const chatMaintenance = openChatMaintenance(chatArchive, dataDir);
   let queue = Promise.resolve();
   const files: Record<string, [string, string]> = {
     '/': ['blank.html', 'text/html'], '/blank.css': ['blank.css', 'text/css'], '/blank.js': ['blank.js', 'text/javascript'],
@@ -313,6 +315,55 @@ export async function createApp(root: string, instance: string, preview = false,
         if (req.method !== 'POST') return send(405, { error: 'Метод не поддерживается' });
         try { return send(200, await chatArchive.importStream(req, String(req.headers['content-type'] || ''))); }
         catch (e) { return chatFailure(e); }
+      }
+      // Archive maintenance stays in existing chat settings; no new site section.
+      if (path === '/api/assistant/archive/status') {
+        if (req.method !== 'GET') return send(405,{error:'Метод не поддерживается'});
+        try { return send(200, await chatMaintenance.statistics()); } catch(e) { return chatFailure(e); }
+      }
+      if (path === '/api/assistant/archive/check' || path === '/api/assistant/archive/rebuild'
+        || path === '/api/assistant/archive/backup') {
+        if (req.method !== 'POST') return send(405,{error:'Метод не поддерживается'});
+        try {
+          if(path.endsWith('/check'))return send(200,await chatMaintenance.check());
+          if(path.endsWith('/rebuild'))return send(200,chatMaintenance.reindex());
+          const result=await chatMaintenance.backupNow();
+          return send(result.ok?200:503,result);
+        } catch(e){return chatFailure(e);}
+      }
+      const chatAttachments = /^\/api\/assistant\/conversations\/([a-zA-Z0-9_-]{1,80})\/attachments(?:\/([a-zA-Z0-9_-]{1,80}))?$/.exec(path);
+      if(chatAttachments) {
+        const id=chatAttachments[1],attachmentId=chatAttachments[2];
+        if(attachmentId) {
+          if(req.method!=='GET' && req.method!=='HEAD')return send(405,{error:'Метод не поддерживается'});
+          try {
+            const blob=await chatMaintenance.attachment(id,attachmentId);
+            if(!blob)return send(404,{error:'Вложение не найдено'});
+            const fileName=encodeURIComponent(blob.meta.name);
+            res.writeHead(200,{'Content-Type':'application/octet-stream','X-Content-Type-Options':'nosniff',
+              'Content-Disposition':"attachment; filename*=UTF-8''"+fileName,
+              'Content-Length':blob.bytes.length,'Cache-Control':'no-store'});
+            return void res.end(req.method==='HEAD'?undefined:blob.bytes);
+          }catch(e){return chatFailure(e);}
+        }
+        if(req.method==='GET') {
+          try {return send(200,{attachments:chatMaintenance.listAttachments(id)});}
+          catch(e){return chatFailure(e);}
+        }
+        if(req.method!=='POST')return send(405,{error:'Метод не поддерживается'});
+        let length=0;const chunks:Buffer[]=[];
+        for await(const chunk of req) {
+          length+=chunk.length;
+          if(length>15_000_000)return send(413,{error:'Вложение больше 15 МБ'});
+          chunks.push(chunk);
+        }
+        let fileName='Файл';
+        try {fileName=decodeURIComponent(String(req.headers['x-file-name']||'Файл').slice(0,600));}
+        catch{return send(400,{error:'Неверное имя файла'});}
+        const contentType=String(req.headers['content-type']||'application/octet-stream');
+        const messageId=typeof req.headers['x-message-id']==='string'?req.headers['x-message-id']:undefined;
+        try{return send(201,await chatMaintenance.saveAttachment(id,Buffer.concat(chunks),contentType,fileName,messageId));}
+        catch(e){return chatFailure(e);}
       }
       const chatMatch = /^\/api\/assistant\/conversations\/([a-zA-Z0-9_-]{1,80})(\/messages)?$/.exec(path);
       if (chatMatch) {
@@ -764,6 +815,7 @@ export async function createApp(root: string, instance: string, preview = false,
         await disk?.shutdown();
         await queue;
         await vault.shutdown();
+        await chatMaintenance.shutdown();
         await chatArchive.shutdown();
       })();
       return shutdownPromise;
