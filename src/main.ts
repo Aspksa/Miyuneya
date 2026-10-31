@@ -60,18 +60,8 @@ let aiBusy = false;
 let assistant: { draft(text: string): void; refresh(): void } | undefined;
 let memoryMode = { enabled: true, private: false };
 const pageNames: Record<Page,string> = { notes:'Заметки и задачи', disk:'Диск', settings:'Настройки' };
-const sidebarLayoutKey=()=> 'miyuneya.sidebar.'+(window.matchMedia('(max-width:620px)').matches?'phone':'desktop')+'.v1';
-const sidebarCollapsed=()=>{
-  try{return window.localStorage.getItem(sidebarLayoutKey())==='compact';}
-  catch{return false;}
-};
-function setSidebarCollapsed(value:boolean){
-  try{window.localStorage.setItem(sidebarLayoutKey(),value?'compact':'expanded');}catch{}
-  const shell=app.querySelector('.shell');
-  shell?.classList.toggle('miyu-nav-compact',value);
-  const button=app.querySelector<HTMLButtonElement>('[data-collapse-nav]');
-  if(button){button.setAttribute('aria-pressed',String(value));button.setAttribute('aria-label',value?'Развернуть боковое меню':'Свернуть боковое меню');}
-}
+// The existing workbench is the single source of truth for sidebar + panel geometry.
+const sidebarCollapsed=()=>workbench?.prefs().collapsed===true;
 
 // Old #home and #tasks links land on the shared list.
 function getPage(): Page { const hash = location.hash.slice(1); return hash === 'settings' || hash === 'disk' ? hash : 'notes'; }
@@ -220,7 +210,7 @@ app.addEventListener('click', async event => {
   if (target.hasAttribute('data-cycle-theme')) { data.settings.theme=document.documentElement.dataset.theme==='dark'?'light':'dark'; applyTheme(); await save(); }
   if (target.hasAttribute('data-ai-models')) return void await loadModels(true);
   if (target.hasAttribute('data-ai-forget') && await confirmDelete('Удалить ключ cloud.ru?')) { if(await saveAi({apiKey:null})) { aiModels=null; toast('Ключ удалён'); } }
-  if (target.hasAttribute('data-collapse-nav')) { setSidebarCollapsed(!sidebarCollapsed()); return; }
+  if (target.hasAttribute('data-collapse-nav')) { workbench.toggleSidebar(); return; }
   if (target.hasAttribute('data-menu')) { const isOpen=document.querySelector('#sidebar')!.classList.toggle('open'); target.setAttribute('aria-expanded',String(isOpen)); }
 });
 app.addEventListener('input', event => {
