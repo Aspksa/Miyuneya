@@ -84,6 +84,13 @@
   const currentRow=()=>activeMeta?.id===chatState.selectedId?activeMeta:
     chatState.conversations.find(c=>c.id===chatState.selectedId);
   const nowISO=()=>new Date().toISOString();
+  function trimVisibleHistory(){
+    if(history.length<=240)return;
+    const removed=history.length-200;
+    history=history.slice(removed);
+    nextBefore=(nextBefore??0)+removed;
+    updateOlderButton();
+  }
   function saveHistory(){
     // Only keep a small extra browser recovery window; disk archive is authoritative.
     if(!write(recoveryKey,history.slice(-40).map(({role,content})=>({role,content}))))
@@ -121,8 +128,8 @@
   historyButton.title='Предыдущие разговоры';historyButton.setAttribute('aria-expanded','false');
   const historyPanel=document.createElement('div');historyPanel.className='kitsune-history-panel';historyPanel.hidden=true;
   const searchHistory=document.createElement('input');searchHistory.type='search';
-  searchHistory.placeholder='Поиск по названию разговора';
-  searchHistory.setAttribute('aria-label','Поиск разговоров по названию');
+  searchHistory.placeholder='Поиск по всей переписке';
+  searchHistory.setAttribute('aria-label','Поиск по всем сохранённым сообщениям');
   const newButton=document.createElement('button');newButton.type='button';newButton.textContent='+ Новый разговор';
   const archiveToggle=document.createElement('button');archiveToggle.type='button';archiveToggle.textContent='Архив';
   const historyList=document.createElement('div');historyList.className='kitsune-history-list';
@@ -598,7 +605,9 @@
     function checkpoint(complete=false){
       if(!reply?.content)return Promise.resolve();
       const copy={...reply,version:++version,complete};
-      const job=checkpointChain.then(()=>persistMessage(conversation.id,copy));
+      const job=checkpointChain.then(()=>persistMessage(conversation.id,copy)).then(result=>{
+        checkpointError=null;return result;
+      });
       checkpointChain=job.catch(e=>{
         checkpointError=e;
         setStatus('Не удалось сохранить часть ответа на диск: '+e.message);
@@ -644,7 +653,7 @@
           if(event.done)complete=true;
           renderChat();
         }
-        if(reply.content && Date.now()-lastCheckpointAt>=2500){
+        if(reply.content && Date.now()-lastCheckpointAt>=1000){
           lastCheckpointAt=Date.now();
           // A bounded number of checkpoints protects streamed text on a crash.
           void checkpoint(false).catch(()=>{});
@@ -654,7 +663,7 @@
       if(!complete)throw Error('Ответ прервался до завершения.');
       await checkpointChain;
       if(reply.content)await checkpoint(true);
-      saveHistory();
+      trimVisibleHistory();saveHistory();
       if(checkpointError)setStatus('Ответ получен. Проверьте сохранение истории на диск.');
     }catch(error){
       if(!savedUser){
@@ -670,7 +679,7 @@
           history=history.filter(m=>m!==reply);
         }
         if(!checkpointError)setStatus(current.signal.aborted?'Запрос остановлен.':error?.message||'Нет связи с сервером.');
-        saveHistory();renderChat();
+        trimVisibleHistory();saveHistory();renderChat();
       }
     }finally{
       stream=null;sendButton.disabled=false;stopButton.hidden=true;
