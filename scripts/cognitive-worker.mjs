@@ -75,6 +75,7 @@ export function analyzeCognitive(snapshot, now=Date.now()) {
 }
 
 if (typeof process.send==='function') {
+  process.on('disconnect',()=>process.exit(0));
   process.on('message',msg=>{
     if(msg?.type==='stop'){process.exit(0);return;}
     if(msg?.type!=='analyze'||typeof msg.jobId!=='string')return;
