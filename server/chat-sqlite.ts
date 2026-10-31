@@ -109,15 +109,33 @@ export async function openSqliteChatArchive(dataDir:string){
       && ['settings','conversations','messages','attachments'].some(name=>!present.has(name)))
       throw Error('Не найдена таблица пользовательской базы. Автоматическая перезапись запрещена.');
     const missingSearch=previousSize>0 && formerVersion>=3 && !present.has('message_fts');
-    db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;');
+    if(formerVersion>4)throw Error('База создана более новой версией. Обновите Miyuneya.');
+    const configured=Number(process.env.MIYUNEYA_SQLITE_BUSY_MS||5000);
+    busyMs=Number.isSafeInteger(configured)?Math.max(1000,Math.min(12000,configured)):5000;
+    db.exec('PRAGMA busy_timeout='+busyMs+'; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;');
     const mode=(db.prepare('PRAGMA journal_mode=WAL').get() as Row).journal_mode;
     if(mode!=='wal')throw Error('Режим SQLite WAL недоступен: нужен локальный диск.');
-    db.exec(schema.join('\n'));
-    if(missingSearch)db.prepare("INSERT INTO message_fts(message_fts) VALUES('rebuild')").run();
-    const version=Number((db.prepare('PRAGMA user_version').get() as Row).user_version);
-    if(version>3)throw Error('База создана более новой версией. Обновите Miyuneya.');
-    db.exec('PRAGMA user_version=3');
-  }catch(e){db.close();throw e;}
+    if(previousSize>0&&formerVersion===3){
+      await ensureSpace(home,previousSize*1.25,'резервирование перед миграцией SQLite');
+      const snapshots=join(home,'migrations');
+      await mkdir(snapshots,{recursive:true});
+      const file=join(snapshots,'before-v4-'+new Date().toISOString().replace(/[:.]/g,'-')+'.sqlite');
+      await backup(db,file,{rate:64});
+      const safe=new DatabaseSync(file,{readOnly:true});
+      try{
+        if((safe.prepare('PRAGMA quick_check(1)').get() as Row).quick_check!=='ok'
+          ||safe.prepare('PRAGMA foreign_key_check').all().length)
+          throw Error('Проверка копии перед миграцией SQLite не пройдена. Миграция остановлена.');
+      }finally{safe.close();}
+    }
+    db.exec('BEGIN IMMEDIATE');
+    try{
+      db.exec(schema.join('\n'));
+      if(missingSearch)db.prepare("INSERT INTO message_fts(message_fts) VALUES('rebuild')").run();
+      db.exec('PRAGMA user_version=4');
+      db.exec('COMMIT');
+    }catch(e){try{db.exec('ROLLBACK');}catch{}throw e;}
+  }catch(e){throw e;}
   const getSetting=(key:string)=>(db.prepare('SELECT value FROM settings WHERE key=?').get(key) as Row|undefined)?.value||'';
   const setSetting=(key:string,val:string)=>db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key,val);
   const conversationStmt=db.prepare('SELECT * FROM conversations WHERE id=?');
@@ -424,7 +442,7 @@ export async function openSqliteChatArchive(dataDir:string){
         }
         setSetting('selectedId',legacy.list().selectedId||'');
         setSetting('jsonMigrated','yes');db.exec('COMMIT');
-      }catch(e){db.exec('ROLLBACK');db.close();throw e;}
+      }catch(e){db.exec('ROLLBACK');throw e;}
       await legacy.shutdown();
     }else setSetting('jsonMigrated','yes');
   }
@@ -433,6 +451,11 @@ export async function openSqliteChatArchive(dataDir:string){
     warnings,timings,timed,getSetting,setSetting,write,
     getConversation,formatConversation,visible,list,search:list,create,modify,select,
     saveMessage,page,exportLines,importLegacy,importStream,rebuildSearch,quickCheck,
-    shutdown:async()=>{if(!closed){closed=true;db.close();}}
+    shutdown:async()=>{if(!closed){closed=true;db.close();await releaseLock();}}
   };
+  }catch(e){
+    try{db.close();}catch{}
+    await releaseLock();
+    throw e;
+  }
 }
