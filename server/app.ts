@@ -324,7 +324,7 @@ export async function createApp(root: string, instance: string, preview = false,
             catch (e) { return chatFailure(e); }
           }
           if (req.method !== 'POST') return send(405, { error: 'Метод не поддерживается' });
-          const data = await readJson(req, send, 2_500_000);
+          const data = await readJson(req, send, 12_000_000);
           if (data === undefined) return;
           try { return send(200, await chatArchive.saveMessage(id, data?.message, data?.expectedCount)); }
           catch (e) { return chatFailure(e); }
