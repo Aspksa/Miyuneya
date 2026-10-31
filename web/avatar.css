@@ -425,3 +425,47 @@
 @media (max-width: 700px) {
   .kitsune-settings-tabs { position: relative; top: auto; }
 }
+
+/* Chat history shares the existing floating chat; no new site navigation. */
+.kitsune-history-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  max-height: min(45dvh, 360px);
+  overflow-y: auto;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.kitsune-history-panel[hidden] { display: none; }
+.kitsune-history-panel > input {
+  width: 100%;
+  border: 1px solid var(--line);
+  color: var(--text);
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 8px 11px;
+}
+.kitsune-history-panel button, .kitsune-history-actions button,
+.kitsune-history-actions label {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--icon-hover);
+  color: var(--text);
+  cursor: pointer;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: .85em;
+}
+.kitsune-history-list { display: grid; gap: 5px; min-height: 0; }
+.kitsune-history-entry { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 5px; }
+.kitsune-history-entry button:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.kitsune-history-entry button[aria-current="true"] { font-weight: 740; outline: 1px solid var(--focus-ring); }
+.kitsune-history-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.kitsune-history-actions label { position: relative; overflow: hidden; display: inline-flex; align-items: center; }
+.kitsune-history-actions input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.kitsune-history-panel button:focus-visible, .kitsune-history-actions button:focus-visible,
+.kitsune-history-actions label:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+@media (max-width: 420px) {
+  .kitsune-history-panel { max-height: 35dvh; }
+  .kitsune-history-entry { gap: 3px; }
+}
