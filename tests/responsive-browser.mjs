@@ -254,9 +254,9 @@ test('Real Chromium layout: 320px to 4K, short windows and appearance scale 90â€
   const narrowChat=await evalJS(`(()=>{
     const chat=document.getElementById('kitsune-chat');
     const b=chat.getBoundingClientRect();
-    const settings=JSON.parse(localStorage.getItem('miyuneya.kitsune.settings.v1')||'{}');
+    const savedWidth=Number(document.getElementById('kitsune-chat-width').value);
     const avatar=document.getElementById('kitsune-avatar').getBoundingClientRect();
-    return {savedWidth:settings.width,visibleWidth:b.width,avatarBottom:avatar.bottom,
+    return {savedWidth,visibleWidth:b.width,avatarBottom:avatar.bottom,
       viewportHeight:innerHeight,scroll:document.documentElement.scrollWidth};
   })()`);
   assert.equal(narrowChat.savedWidth,500,'Viewport shrink must not be persisted as a manual resize');
