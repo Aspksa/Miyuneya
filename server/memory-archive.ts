@@ -61,7 +61,7 @@ export async function openMemoryArchive(dataDir: string) {
     // First persist all current records, *then* reduce only the hot in-memory tier.
     // A crash between SQLite COMMIT and writing memory.json leaves duplicates, not loss.
     function compact(memory: Memory, caps: { items: number; episodes: number; edges: number }, now = Date.now()) {
-      const items = [...memory.items];
+      const items = [...memory.items].reverse();
       const pinned = items.filter(x => x.pinned).length;
       const keepItems = new Set(items
         .sort((a,b)=>Number(b.pinned)-Number(a.pinned) ||
