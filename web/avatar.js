@@ -103,7 +103,7 @@
     placeChat();
   }
   function placeAvatar(){
-    const size=avatar.getBoundingClientRect().width || Math.min(config.size,innerWidth-20);
+    const size=avatar.getBoundingClientRect().width || Math.min(config.size,innerWidth-20,innerHeight-20);
     const safeW=Math.max(10,innerWidth-size-10),safeH=Math.max(10,innerHeight-size-10);
     if(!avatarPos)avatarPos={x:Math.min(32,safeW),y:safeH};
     avatarPos={x:clamp(avatarPos.x,10,safeW),y:clamp(avatarPos.y,10,safeH)};
@@ -206,7 +206,11 @@
     function end(event){
       if(!pointer||event.pointerId!==pointer.id)return;
       const moved=pointer.moved;pointer=null;
-      if(handle===avatar)suppressClick=moved;
+      if(handle===avatar) {
+        // Cancelled drags and pointer-capture loss must not eat a later click.
+        suppressClick=moved && event.type==='pointerup';
+        if(suppressClick) setTimeout(()=>{suppressClick=false;},0);
+      }
       if(moved)onSave();
     }
     handle.addEventListener('pointerup',end);
@@ -322,10 +326,17 @@
       if(sizing||chat.hidden||chat.classList.contains('mini'))return;
       const rect=entries[0]?.contentRect;
       if(!rect||rect.width<310||rect.height<200)return;
+      // CSS min() contracts the chat to fit a small viewport; this is NOT
+      // a user resize. Preserve the chosen desktop dimensions across zoom
+      // and window-size changes. Native drag resize writes pixel values.
+      const changedWidth=/^\\d+(?:\\.\\d+)?px$/.test(chat.style.width);
+      const changedHeight=/^\\d+(?:\\.\\d+)?px$/.test(chat.style.height);
+      if(!changedWidth && !changedHeight)return;
       const width=Math.round(rect.width),height=Math.round(rect.height);
-      if(Math.abs(config.width-width)>12||Math.abs(config.height-height)>12){
-        config.width=clamp(Math.round(width/10)*10,320,800);
-        config.height=clamp(Math.round(height/10)*10,350,900);
+      if((changedWidth && Math.abs(config.width-width)>12) ||
+         (changedHeight && Math.abs(config.height-height)>12)){
+        if(changedWidth)config.width=clamp(Math.round(width/10)*10,320,800);
+        if(changedHeight)config.height=clamp(Math.round(height/10)*10,350,900);
         widthInput.value=String(config.width);
         heightInput.value=String(config.height);
         widthValue.textContent=config.width+' px';heightValue.textContent=config.height+' px';
