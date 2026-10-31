@@ -13,7 +13,7 @@ function make(){
   const m=emptyMemory();
   const valid=upsert(m,'fact','Водители оформляют путевые листы для рейса',{source:'user',category:'work'}).item;
   const conflict=upsert(m,'fact','Водители не оформляют путевые листы для рейса',{source:'user',category:'work'}).item;
-  conflict.status='active';
+  valid.status='active';conflict.status='active';
   const weak=upsert(m,'fact','Непроверенная стоимость технического ремонта',{source:'dialog',category:'work'}).item;
   weak.status='active';
   return {m,valid,conflict,weak};
