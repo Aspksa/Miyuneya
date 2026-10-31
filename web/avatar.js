@@ -189,7 +189,7 @@
     history=result.messages;nextBefore=result.nextBefore;
     updateOlderButton();saveHistory();
     openChat();renderConversationList();closeHistory();
-    const target=[...log.querySelectorAll('.kitsune-message')].find(node=>
+    const target=[...log.querySelectorAll('.kitsune-bubble')].find(node=>
       node.dataset.messageId===result.targetMessageId);
     if(target){
       target.scrollIntoView({block:'center',behavior:'smooth'});
