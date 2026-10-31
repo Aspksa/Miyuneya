@@ -16,6 +16,8 @@ function sample(){
   const c=upsert(memory,'fact','Не запланирована поездка в Японию на 2027 год',{source:'user'}).item;
   const d=upsert(memory,'fact','Изучение японского языка для поездки в Японию',{source:'user'}).item;
   const e=upsert(memory,'fact','Путешествие в Японию и японский язык',{source:'user'}).item;
+  // Test a historic contradictory snapshot: automatic corrections normally supersede older statements.
+  for(const x of [a,b,c,d,e])x.status='active';
   a.links.push(d.id); d.links.push(e.id); b.links.push(e.id);
   return {memory,a,b,c,d,e};
 }
