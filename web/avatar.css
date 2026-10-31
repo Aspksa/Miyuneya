@@ -469,3 +469,14 @@
   .kitsune-history-panel { max-height: 35dvh; }
   .kitsune-history-entry { gap: 3px; }
 }
+
+#kitsune-history { font-size: 1.45em; padding: 0 3px; line-height: 1; }
+.kitsune-chat.mini .kitsune-history-panel,
+.kitsune-chat.mini #kitsune-history { display: none !important; }
+@media (max-width: 420px) {
+  .kitsune-chat-title small { display: none; }
+  .kitsune-chat-header { gap: 4px; padding-inline: 7px; }
+  .kitsune-chat-tools { gap: 2px; flex-shrink: 0; }
+  .kitsune-chat-tools button { min-width: 30px; min-height: 32px; }
+  #kitsune-clear { padding-inline: 3px; font-size: .72em; }
+}
