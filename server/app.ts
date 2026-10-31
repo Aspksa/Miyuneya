@@ -265,9 +265,10 @@ export async function createApp(root: string, instance: string, preview = false,
       if (path === chatRoot) {
         if (req.method === 'GET') {
           const query = new URL(req.url || '/', origin).searchParams;
-          return send(200, chatArchive.list({ query: query.get('q') || '',
+          try { return send(200, await chatArchive.search({ query: query.get('q') || '',
             archived: query.get('archived') === '1',
-            offset: Number(query.get('offset') || 0), limit: Number(query.get('limit') || 60) }));
+            offset: Number(query.get('offset') || 0), limit: Number(query.get('limit') || 60) })); }
+          catch (e) { return chatFailure(e); }
         }
         if (req.method === 'POST') {
           const data = await readJson(req, send, 2000);
