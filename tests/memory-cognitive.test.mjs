@@ -90,14 +90,15 @@ test('Older version 1 memories still normalize and export without a cognitive DB
 });
 test('Open memory exposes cognitive view and adds relevant cognitive context to the next answer',async t=>{
   const root=await mkdtemp(join(tmpdir(),'Miyuneya cognitive '));
-  t.after(()=>removeTemp(root));
+  let engine;
+  t.after(async()=>{await engine?.shutdown();await removeTemp(root);});
   const {m}=seeded();
   await mkdir(join(root,'data'));
   await writeFile(join(root,'data','memory.json'),JSON.stringify(m));
-  const engine=await openMemory(join(root,'data'),{
+  engine=await openMemory(join(root,'data'),{
     ask:async()=>'{ }',available:()=>false,workspace:()=>null,tickMs:60_000
   });
-  t.after(()=>engine.shutdown());
+
   const view=engine.view(now);
   assert.ok(view.cognitive?.associations.length>=2);
   assert.equal(view.cognitive.summary.active,2);
