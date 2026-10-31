@@ -6,7 +6,8 @@ const words = text => new Set((String(text).toLocaleLowerCase('ru').match(/[\p{L
 const STOP=new Set(['что','это','как','для','или','она','они','его','еще','уже','есть','будет','было','были','если','при','под','без','мне','нас','свои','свой','всех','через','этот','эти','того','после','между']);
 const shared=(a,b)=>{let n=0;for(const w of a)if(b.has(w))n++;return n;};
 const valid=item=>item && typeof item.id==='string' && typeof item.text==='string';
-const active=(item,now)=>item.status==='active' && (!item.until || Date.parse(item.until)>now);
+const active=(item,now)=>item.status==='active' && (!item.until || Date.parse(item.until)>now) &&
+  (item.source==='user' || (Array.isArray(item.evidence)&&item.evidence.some(e=>typeof e?.source==='string' && typeof e?.quote==='string' && e.quote.trim().length>=3)));
 const clamp=(n,min,max)=>Math.min(max,Math.max(min,n));
 const id=(a,b)=>createHash('sha256').update([a,b].sort().join(':')).digest('hex').slice(0,16);
 const negated=text=>/(?:^|\s)(?:не|нет|никогда|без)\s/iu.test(text);
