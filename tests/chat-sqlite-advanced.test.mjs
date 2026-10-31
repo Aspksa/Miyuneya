@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,readdir,mkdir,rm,utimes,stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {spawn} from 'node:child_process';
 import {openSqliteChatArchive} from '../server/chat-sqlite.ts';
 import {openChatMaintenance} from '../server/chat-maintenance.ts';
 import {ensureSpace} from '../server/chat-db-safety.ts';
@@ -151,4 +152,24 @@ test('Отчёт SQLite показывает WAL и аномалии роста 
   assert.ok(stats.warnings.some(w=>w.includes('резко вырос')));
   assert.ok(!JSON.stringify(stats).includes('Текст отчёта'));
   await maint.shutdown();await store.shutdown();
+});
+
+test('Аварийное завершение процесса: WAL и запись пользователя восстанавливаются при новом запуске',async t=>{
+  const root=await fixture(t);
+  const moduleUrl=new URL('../server/chat-sqlite.ts',import.meta.url).href;
+  const script="const {openSqliteChatArchive}=await import("+JSON.stringify(moduleUrl)+");"+
+    "const s=await openSqliteChatArchive("+JSON.stringify(root)+");"+
+    "s.create({id:'crash'});s.saveMessage('crash',{id:'durable',role:'user',content:'Сохранено до аварии',"+
+    "createdAt:'2026-10-31T08:12:00.000Z',version:1,complete:true});process.exit(0);";
+  const proc=spawn(process.execPath,['--input-type=module','-e',script],{
+    stdio:['ignore','pipe','pipe'],windowsHide:true});
+  let output='';
+  proc.stderr.on('data',chunk=>{output+=chunk.toString();});
+  const code=await new Promise((resolve,reject)=>{
+    proc.once('error',reject);proc.once('exit',resolve);
+  });
+  assert.equal(code,0,output);
+  const restored=await openSqliteChatArchive(root);
+  assert.equal(restored.page('crash').messages[0].content,'Сохранено до аварии');
+  await restored.shutdown();
 });
