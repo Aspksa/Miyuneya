@@ -84,6 +84,14 @@ test('Архивирование обратимо: старые сообщени
     'application/x-ndjson');
   assert.equal(again.imported,1);
   assert.equal((await restored.page('old')).total,1); // repeated import is idempotent
+  await assert.rejects(restored.importStream(
+    Readable.from(exportContent.slice(0,-1).map(line=>Buffer.from(line))),'application/x-ndjson'),
+    /контрольная запись/);
+  const tampered=exportContent.map(line=>line.replace('Очень важное','Подменённое содержимое'));
+  await assert.rejects(restored.importStream(
+    Readable.from(tampered.map(line=>Buffer.from(line))),'application/x-ndjson'),
+    /Импорт не может заменить/);
+  assert.equal((await restored.page('old')).messages[0].content,'Очень важное');
 });
 
 test('Переносит старый index.json без удаления оригинала, даже после прерванного обновления',async t=>{
