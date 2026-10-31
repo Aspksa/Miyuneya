@@ -14,6 +14,7 @@ import type { AssistantStatus, EntryKind } from './assistant.js';
 
 type Page = 'notes' | 'disk' | 'settings';
 const icons: Record<string, string> = {
+  home: '<path d="m3 11 9-8 9 8v9h-6v-6H9v6H3z"/>',
   disk: '<path d="M3 7h7l2 2h9v11H3z"/><path d="M3 7V4h7l2 3"/>',
   notes: '<rect x="5" y="3" width="15" height="18" rx="2"/><path d="M9 8h7M9 12h7M9 16h4M3 7h3M3 12h3M3 17h3"/>',
   tasks: '<rect x="4" y="3" width="16" height="18" rx="3"/><path d="m8 8 1 1 2-2m2 2h3m-8 5 1 1 2-2m2 2h3"/>',
