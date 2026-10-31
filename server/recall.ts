@@ -81,7 +81,7 @@ export function timeRange(text: string, now = Date.now()) {
 }
 export const reminderLine = (x: Pick<Reminder, 'about' | 'text'>) => `Ты обещала напомнить, когда речь зайдёт о «${x.about}». Напомни сейчас, естественно, в начале или в конце ответа: «${x.text}».`;
 // Loose stems for a reminder topic, so «о Кате» meets «Катя» and «поездке» meets «поездка».
-const stems = (text: string) => new Set<string>((text.toLocaleLowerCase('ru').replaceAll('ё', 'е').match(/[\p{L}\p{N}]+/gu) || []).filter(w => w.length >= 3 && !STOP.has(w)).map(w => w.slice(0, Math.max(3, Math.min(5, w.length - 1)))));
+const stems = (text: string) => new Set<string>((text.toLocaleLowerCase('ru').replaceAll('ё', 'е').match(/[\p{L}\p{N}]+/gu) || []).filter((w:string) => w.length >= 3 && !STOP.has(w)).map((w:string) => w.slice(0, Math.max(3, Math.min(5, w.length - 1)))));
 export function reminderDue(reminder: Pick<Reminder, 'about' | 'said'>, query: string, semantic: number | null) {
   const flat = query.replace(/\s+/g, ' ');
   const setNow = !!reminder.said && flat.includes(reminder.said);
