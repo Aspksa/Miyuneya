@@ -325,7 +325,10 @@ export async function openSqliteChatArchive(dataDir:string){
       yield JSON.stringify({kind:'end',conversations,messages,sha256:h.digest('hex')})+'\n';
     }finally{
       reader?.close();
-      await rm(snapshot,{force:true}).catch(()=>{});
+      // WAL-mode snapshots can leave sidecars even after read-only close.
+      // They contain private chat data: remove the COMPLETE temp triplet.
+      for(const suffix of ['', '-wal', '-shm'])
+        await rm(snapshot+suffix,{force:true}).catch(()=>{});
     }
   }
   // Legacy JSON restore is a single transaction: corrupted late messages
