@@ -77,7 +77,7 @@
   let chatState={conversations:[],selectedId:null,total:0};
   let remoteChats=false, loadingOlder=false, nextBefore=null, showArchived=false, activeMeta=null;
   let userChangedSettings=false, userTouchedChats=false;
-  let saveQueue=Promise.resolve(), preferenceQueue=Promise.resolve();
+  let saveQueue=Promise.resolve(), preferenceQueue=Promise.resolve(), listRequest=0;
   const base='/api/assistant/conversations';
   const conversationId=()=>crypto.randomUUID?.()||'chat-'+Date.now()+'-'+Math.floor(Math.random()*1e8);
   const firstTitle=messages=>(messages.find(m=>m.role==='user')?.content||'Новый разговор').slice(0,90);
@@ -154,9 +154,11 @@
     updateOlderButton();saveHistory();renderChat();renderConversationList();
   }
   async function fetchConversationList(){
+    const ticket=++listRequest;
     const query=new URLSearchParams({offset:'0',limit:'60',q:searchHistory.value,
       archived:showArchived?'1':'0'});
     const data=await requestArchive(base+'?'+query);
+    if(ticket!==listRequest)return;
     chatState.conversations=data.conversations;
     chatState.total=data.total;
     renderConversationList();
@@ -244,6 +246,7 @@
   };
   async function ensureConversation(title){
     if(!remoteChats)throw Error('Нет связи с локальным архивом. Сообщение не отправлено во избежание потери.');
+    await saveQueue; // finish pending selection changes before creating a new dialog
     let row=currentRow();
     if(row)return row;
     const created=await requestArchive(base,jsonOptions('POST',{title:title.slice(0,140)}));
@@ -617,6 +620,7 @@
     try{
       await archiveReady;
       if(!remoteChats)throw Error('Хранилище переписки недоступно. Отправка остановлена, чтобы не потерять сообщение.');
+      if(current.signal.aborted)throw Error('Отправка остановлена.');
       userTouchedChats=true;
       const outgoing=[...history,{role:'user',content}].slice(-40)
         .map(m=>({role:m.role,content:m.content}));
