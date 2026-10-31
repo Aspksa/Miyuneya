@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { atomicWrite } from '../scripts/runtime.mjs';
 import type { Memory } from './memory.ts';
+import { openCognitiveJobs } from './cognitive-jobs.ts';
 
 type Insight = {
   version: number; generatedAt: string; strategy: 'lexical' | 'graph';
@@ -14,8 +15,10 @@ type Insight = {
     retrievalExamples:number;lexicalRecallAt3:number;graphRecallAt3:number};
 };
 type State = {version:1;completed:string;pending:string|null;runs:number;failures:number;lastError:string;
+  archiveOffset:number;lastArchiveAt:number;lastEvaluationAt:number;
   result:Insight|null};
-const blank=():State=>({version:1,completed:'',pending:null,runs:0,failures:0,lastError:'',result:null});
+const blank=():State=>({version:1,completed:'',pending:null,runs:0,failures:0,lastError:'',
+  archiveOffset:0,lastArchiveAt:0,lastEvaluationAt:0,result:null});
 const childFile=fileURLToPath(new URL('../scripts/cognitive-worker.mjs',import.meta.url));
 const checksum=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 function snapshot(memory:Memory){
@@ -35,7 +38,9 @@ function validResult(x:any):x is Insight {
 /** Parent owns all user data. Child only sees bounded copies for read-only analysis.
  * The queue is durable by fingerprint and replayed from the current memory after restart.
  */
-export async function openCognitiveDaemon(dataDir:string, getMemory:()=>Memory) {
+export async function openCognitiveDaemon(dataDir:string,getMemory:()=>Memory,
+  getArchivePage?: (offset:number,limit:number)=>{total:number;offset:number;items:Memory['items']},
+  isIdle:()=>boolean=()=>true) {
   const file=join(dataDir,'cognitive-daemon.json');
   let state:State=blank();
   try {
@@ -49,6 +54,7 @@ export async function openCognitiveDaemon(dataDir:string, getMemory:()=>Memory) 
       await rename(file,join(dataDir,'cognitive-daemon.broken-'+Date.now()+'.json')).catch(()=>{});
     }
   }
+  const jobs=openCognitiveJobs(dataDir);
   let child:ChildProcess|null=null;
   let pendingSnapshot:ReturnType<typeof snapshot>|null=null;
   let timer:ReturnType<typeof setTimeout>|null=null;
